@@ -1,0 +1,275 @@
+"""The design spec — the single most important file in this project.
+
+Everything upstream produces one of these; everything downstream consumes one.
+Get the shape right and the rest is plumbing.
+
+Two layers, deliberately separated:
+
+  DesignDNA  — the reusable grammar of a design. Grid, palette relationships,
+               type scale, motif vocabulary, mood. This is what we rebuild from.
+  Element[]  — one concrete arrangement of that grammar on a canvas.
+
+We never store "the original pixels" or a traced path. We store an
+understanding. A rebuild is a fresh interpretation of the DNA, not a copy of
+the source, which is the whole point of the project.
+
+All geometry is normalised to 0..1 of the canvas, so a spec renders at any size
+without touching the numbers.
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+
+# --------------------------------------------------------------------------
+# primitives
+# --------------------------------------------------------------------------
+
+class Box(BaseModel):
+    """Normalised bounding box. (0,0) is top-left of the canvas."""
+
+    x: float = Field(ge=-0.2, le=1.2)
+    y: float = Field(ge=-0.2, le=1.2)
+    w: float = Field(gt=0, le=1.4)
+    h: float = Field(gt=0, le=1.4)
+
+    @property
+    def cx(self) -> float:
+        return self.x + self.w / 2
+
+    @property
+    def cy(self) -> float:
+        return self.y + self.h / 2
+
+
+class ColourRole(str, Enum):
+    """Colours are referenced by role, never by literal hex, so a whole design
+    can be recoloured by swapping one palette."""
+
+    BACKGROUND = "background"
+    SURFACE = "surface"
+    INK = "ink"
+    INK_MUTED = "ink_muted"
+    ACCENT = "accent"
+    ACCENT_ALT = "accent_alt"
+    METALLIC = "metallic"
+    LINE = "line"
+
+
+class Swatch(BaseModel):
+    role: ColourRole
+    hex: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
+    coverage: float = Field(ge=0, le=1, description="fraction of canvas area")
+
+    @field_validator("hex")
+    @classmethod
+    def _lower(cls, v: str) -> str:
+        return v.lower()
+
+
+class Palette(BaseModel):
+    swatches: list[Swatch]
+    temperature: Literal["warm", "cool", "neutral"] = "neutral"
+    contrast: Literal["low", "medium", "high"] = "medium"
+
+    def get(self, role: ColourRole, fallback: str = "#000000") -> str:
+        for s in self.swatches:
+            if s.role == role:
+                return s.hex
+        return fallback
+
+
+# --------------------------------------------------------------------------
+# type
+# --------------------------------------------------------------------------
+
+class TypeRole(str, Enum):
+    EYEBROW = "eyebrow"       # small line above the title — "together with their families"
+    TITLE = "title"           # the names, the big statement
+    SUBTITLE = "subtitle"
+    BODY = "body"             # date, venue, the meat
+    DETAIL = "detail"         # rsvp, dress code, small print
+    SIGNOFF = "signoff"       # a closing flourish line
+    ORNAMENTAL = "ornamental"  # type used as decoration (a monogram, a big numeral)
+
+
+class FontClass(BaseModel):
+    """We describe the *shape* of the type, never the original font's name.
+
+    The matcher scores our own licensed library against this description. That
+    is a deliberate constraint, not a limitation: it keeps every output
+    redistributable and it is what stops the tool becoming a font laundering
+    machine.
+    """
+
+    category: Literal["serif", "sans", "script", "display", "slab", "mono", "blackletter"]
+    weight: int = Field(ge=100, le=900, description="nearest CSS weight")
+    contrast: Literal["low", "medium", "high"] = "medium"
+    width: Literal["condensed", "normal", "extended"] = "normal"
+    mood: list[str] = Field(default_factory=list, description="e.g. elegant, playful, rustic, modern")
+
+
+class TextElement(BaseModel):
+    kind: Literal["text"] = "text"
+    role: TypeRole
+    content: str
+    box: Box
+    font: FontClass
+    size_ratio: float = Field(gt=0, le=0.6, description="cap height as a fraction of canvas height")
+    tracking: float = Field(default=0.0, ge=-0.1, le=1.0, description="letter-spacing in em")
+    line_height: float = Field(default=1.25, ge=0.6, le=3.0)
+    align: Literal["left", "center", "right", "justify"] = "center"
+    case: Literal["as-is", "upper", "lower", "title"] = "as-is"
+    colour: ColourRole = ColourRole.INK
+    rotation: float = Field(default=0.0, ge=-180, le=180)
+    # editable text is the whole point of the deliverable, so we keep it live
+    # right up until export, where stock sites want it outlined
+    placeholder: bool = Field(default=False, description="generic sample text, safe to swap")
+
+
+# --------------------------------------------------------------------------
+# non-type elements
+# --------------------------------------------------------------------------
+
+class MotifKind(str, Enum):
+    BOTANICAL = "botanical"
+    FLORAL = "floral"
+    FRAME = "frame"
+    BORDER = "border"
+    RULE = "rule"
+    FLOURISH = "flourish"
+    GEOMETRIC = "geometric"
+    ICON = "icon"
+    SEASONAL = "seasonal"     # pumpkin, holly, bunny, heart
+    TEXTURE = "texture"
+
+
+class MotifElement(BaseModel):
+    """A decorative element. `description` is what the analyser saw;
+    `library_id` is what the matcher picked from our own motif library.
+
+    We never trace the source artwork. If nothing in the library is a decent
+    match the element is flagged and it goes to the human queue — that is how
+    the library grows."""
+
+    kind: Literal["motif"] = "motif"
+    motif: MotifKind
+    description: str = Field(description="plain-English description of the shape and its role")
+    box: Box
+    rotation: float = Field(default=0.0, ge=-180, le=180)
+    flip_x: bool = False
+    colour: ColourRole = ColourRole.ACCENT
+    library_id: str | None = Field(default=None, description="resolved by the motif matcher")
+    match_score: float | None = Field(default=None, ge=0, le=1)
+
+
+class ShapeElement(BaseModel):
+    """Honest primitive geometry — the frames, rules and blocks that make up
+    most of a card. Drawn, not traced, so the paths are clean."""
+
+    kind: Literal["shape"] = "shape"
+    primitive: Literal["rect", "ellipse", "line", "arch", "polygon"]
+    box: Box
+    fill: ColourRole | None = None
+    stroke: ColourRole | None = ColourRole.LINE
+    stroke_ratio: float = Field(default=0.002, ge=0, le=0.1, description="stroke width / canvas height")
+    corner_radius: float = Field(default=0.0, ge=0, le=0.5)
+    rotation: float = Field(default=0.0, ge=-180, le=180)
+    sides: int | None = Field(default=None, ge=3, le=24, description="for polygon")
+
+
+Element = TextElement | MotifElement | ShapeElement
+
+
+# --------------------------------------------------------------------------
+# background & layout grammar
+# --------------------------------------------------------------------------
+
+class Background(BaseModel):
+    treatment: Literal["solid", "linear-gradient", "radial-gradient", "panel", "texture"] = "solid"
+    base: ColourRole = ColourRole.BACKGROUND
+    secondary: ColourRole | None = None
+    angle: float = Field(default=90.0, ge=0, le=360)
+    texture_hint: str | None = Field(default=None, description="e.g. watercolour wash, linen, speckle")
+
+
+class Grid(BaseModel):
+    margin_x: float = Field(default=0.08, ge=0, le=0.4)
+    margin_y: float = Field(default=0.08, ge=0, le=0.4)
+    symmetry: Literal["centred", "left", "right", "asymmetric", "split"] = "centred"
+    vertical_rhythm: Literal["tight", "even", "airy"] = "even"
+
+
+class Canvas(BaseModel):
+    width_mm: float = Field(gt=0)
+    height_mm: float = Field(gt=0)
+    bleed_mm: float = Field(default=3.0, ge=0)
+
+    @property
+    def aspect(self) -> float:
+        return self.width_mm / self.height_mm
+
+
+class DesignDNA(BaseModel):
+    """The reusable grammar. This is what makes 5k assets tractable: a family of
+    forty listings usually shares one DNA and differs only in palette and text.
+    """
+
+    category: str = Field(description="invitation, greeting card, banner, poster, menu, ...")
+    occasion: str = Field(description="wedding, halloween, christmas, easter, valentines, birthday, ...")
+    style_tags: list[str] = Field(default_factory=list, description="minimal, botanical, art-deco, boho, vintage")
+    grid: Grid = Field(default_factory=Grid)
+    background: Background = Field(default_factory=Background)
+    palette: Palette
+    type_pairing: list[FontClass] = Field(default_factory=list, description="the 1-3 type voices in play")
+    motif_vocabulary: list[str] = Field(default_factory=list, description="recurring decorative themes")
+
+
+# --------------------------------------------------------------------------
+# the spec itself
+# --------------------------------------------------------------------------
+
+class DesignSpec(BaseModel):
+    schema_version: int = 1
+    source_asset_id: str
+    cluster_id: str | None = None
+
+    canvas: Canvas
+    dna: DesignDNA
+    elements: list[Element] = Field(default_factory=list)
+
+    confidence: float = Field(ge=0, le=1, description="the analyser's own read on how well it understood this")
+    notes: str = Field(default="", description="anything the analyser was unsure about — feeds the review queue")
+    warnings: list[str] = Field(default_factory=list)
+
+    def texts(self) -> list[TextElement]:
+        return [e for e in self.elements if isinstance(e, TextElement)]
+
+    def motifs(self) -> list[MotifElement]:
+        return [e for e in self.elements if isinstance(e, MotifElement)]
+
+    def unresolved_motifs(self) -> list[MotifElement]:
+        return [m for m in self.motifs() if m.library_id is None]
+
+
+class CritiquePatch(BaseModel):
+    """One correction the critique stage wants applied. Deliberately narrow —
+    a patch names an element and a field, it never hands back a whole new spec.
+    That keeps the loop convergent instead of oscillating."""
+
+    element_index: int | None = Field(default=None, description="None means the patch targets the DNA")
+    path: str = Field(description="dotted field path, e.g. 'box.y' or 'dna.palette.swatches.0.hex'")
+    value: str | float | int | bool
+    reason: str
+
+
+class Critique(BaseModel):
+    similarity: float = Field(ge=0, le=1, description="how close the rebuild is to the source's intent")
+    polish: float = Field(ge=0, le=1, description="is the rebuild actually *better* than the source")
+    verdict: Literal["ship", "patch", "escalate"]
+    patches: list[CritiquePatch] = Field(default_factory=list)
+    commentary: str = ""

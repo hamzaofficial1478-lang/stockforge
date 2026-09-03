@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+workspace/
+assets/fonts/*
+!assets/fonts/.gitkeep
+!assets/fonts/manifest.json
+*.db
+*.db-wal
+*.db-shm
+.DS_Store

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Motifs are authored on a 0..100 unit square so the renderer can place
+       them with a single scale. Draw with `fill="currentColor"`-free shapes:
+       the renderer sets fill on a wrapping group from the spec's colour role. -->
+  <path d="M50 96 C50 70 50 40 50 6" stroke="#000" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <ellipse cx="38" cy="72" rx="11" ry="6.5" transform="rotate(-28 38 72)"/>
+  <ellipse cx="62" cy="64" rx="11" ry="6.5" transform="rotate(28 62 64)"/>
+  <ellipse cx="38" cy="52" rx="10" ry="6"   transform="rotate(-32 38 52)"/>
+  <ellipse cx="62" cy="43" rx="10" ry="6"   transform="rotate(32 62 43)"/>
+  <ellipse cx="41" cy="31" rx="8"  ry="5"   transform="rotate(-38 41 31)"/>
+  <ellipse cx="59" cy="22" rx="8"  ry="5"   transform="rotate(38 59 22)"/>
+  <ellipse cx="50" cy="10" rx="6"  ry="4.5"/>
+</svg>

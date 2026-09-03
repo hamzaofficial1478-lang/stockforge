@@ -1,0 +1,26 @@
+[project]
+name = "stockforge"
+version = "0.1.0"
+description = "Reads a design image, recovers its design DNA, and rebuilds it from scratch as a polished editable vector file."
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40",
+    "pydantic>=2.7",
+    "opencv-python-headless>=4.9",
+    "numpy>=1.26",
+    "fonttools>=4.50",
+    "cairosvg>=2.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+stockforge = "stockforge.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["stockforge*"]
