@@ -233,27 +233,82 @@ class DesignDNA(BaseModel):
 # the spec itself
 # --------------------------------------------------------------------------
 
-class DesignSpec(BaseModel):
-    schema_version: int = 1
-    source_asset_id: str
-    cluster_id: str | None = None
+class Page(BaseModel):
+    """One printed surface.
 
+    A greeting card is two pages (front, inside). A wedding suite can be five
+    — cover, invitation, RSVP, details, menu. They share one DNA and differ
+    only in their elements, which is exactly the relationship the schema needs
+    to express: rebuild the suite, not five unrelated files.
+    """
+
+    name: str = Field(description="cover, inside, invitation, rsvp, details, back, ...")
     canvas: Canvas
-    dna: DesignDNA
     elements: list[Element] = Field(default_factory=list)
+
+
+class Provenance(BaseModel):
+    """Where the ingredients came from, and therefore where the output may go.
+
+    This is not paperwork. Stock agencies require you to hold redistribution
+    rights to every element in a submitted file, and a design assembled from a
+    template library's stock art does not qualify however much of it you
+    redraw. Getting this wrong does not cost a rejection — it costs the
+    contributor account.
+
+    So the pipeline tracks it per design and refuses to publish anything it
+    cannot clear. Designs that fail the check still produce an editable master,
+    which is the other half of why this project exists.
+    """
+
+    built_with: str | None = Field(default=None, description="canva, illustrator, procreate, unknown")
+    raster_elements: list[str] = Field(
+        default_factory=list,
+        description="photographic or illustrated elements that cannot be rebuilt as clean vector",
+    )
+    third_party_suspected: bool = Field(
+        default=False,
+        description="true when the design appears to lean on a template library or bought clipart",
+    )
+    stock_safe: bool | None = Field(
+        default=None,
+        description="None = not yet assessed. False = editable master only, never published.",
+    )
+    reason: str = ""
+
+
+class DesignSpec(BaseModel):
+    schema_version: int = 2
+    source_asset_id: str
+    design_id: str | None = None
+    listing_url: str | None = None
+
+    dna: DesignDNA
+    pages: list[Page] = Field(default_factory=list)
+    provenance: Provenance = Field(default_factory=Provenance)
 
     confidence: float = Field(ge=0, le=1, description="the analyser's own read on how well it understood this")
     notes: str = Field(default="", description="anything the analyser was unsure about — feeds the review queue")
     warnings: list[str] = Field(default_factory=list)
 
-    def texts(self) -> list[TextElement]:
-        return [e for e in self.elements if isinstance(e, TextElement)]
+    # -- convenience over all pages, or one -------------------------------
 
-    def motifs(self) -> list[MotifElement]:
-        return [e for e in self.elements if isinstance(e, MotifElement)]
+    def elements(self, page: int | None = None) -> list[Element]:
+        pages = self.pages if page is None else [self.pages[page]]
+        return [e for p in pages for e in p.elements]
+
+    def texts(self, page: int | None = None) -> list[TextElement]:
+        return [e for e in self.elements(page) if isinstance(e, TextElement)]
+
+    def motifs(self, page: int | None = None) -> list[MotifElement]:
+        return [e for e in self.elements(page) if isinstance(e, MotifElement)]
 
     def unresolved_motifs(self) -> list[MotifElement]:
         return [m for m in self.motifs() if m.library_id is None]
+
+    @property
+    def publishable(self) -> bool:
+        return self.provenance.stock_safe is True
 
 
 class CritiquePatch(BaseModel):
@@ -261,6 +316,7 @@ class CritiquePatch(BaseModel):
     a patch names an element and a field, it never hands back a whole new spec.
     That keeps the loop convergent instead of oscillating."""
 
+    page_index: int = Field(default=0)
     element_index: int | None = Field(default=None, description="None means the patch targets the DNA")
     path: str = Field(description="dotted field path, e.g. 'box.y' or 'dna.palette.swatches.0.hex'")
     value: str | float | int | bool

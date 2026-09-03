@@ -1,4 +1,4 @@
-"""Settings. Everything tunable lives here, read from env with sane defaults."""
+"""Settings. Everything tunable in one place, read from env with sane defaults."""
 
 from __future__ import annotations
 
@@ -26,46 +26,35 @@ class Settings:
     fonts_dir: Path = field(default_factory=lambda: _p("SF_FONTS", "./assets/fonts"))
     motifs_dir: Path = field(default_factory=lambda: _p("SF_MOTIFS", "./assets/motifs"))
 
-    # --- model -----------------------------------------------------------
-    # Opus 5 is the default deliberately. This pipeline lives or dies on how
-    # well one call reads a layout; a weaker read costs more in critique
-    # rounds and human review than it saves per token.
-    model: str = os.environ.get("SF_MODEL", "claude-opus-5")
-    effort: str = os.environ.get("SF_EFFORT", "high")
-    max_tokens: int = _i("SF_MAX_TOKENS", 16000)
-
     # --- pipeline --------------------------------------------------------
-    max_critique_rounds: int = _i("SF_CRITIQUE_ROUNDS", 3)
-    ship_threshold: float = _f("SF_SHIP_THRESHOLD", 0.88)
-    escalate_threshold: float = _f("SF_ESCALATE_THRESHOLD", 0.62)
-    concurrency: int = _i("SF_CONCURRENCY", 4)
+    max_critique_rounds: int = _i("SF_CRITIQUE_ROUNDS", 2)
+    ship_threshold: float = _f("SF_SHIP_THRESHOLD", 0.85)
+    escalate_threshold: float = _f("SF_ESCALATE_THRESHOLD", 0.60)
 
-    # --- clustering ------------------------------------------------------
-    phash_distance: int = _i("SF_PHASH_DISTANCE", 12)
-    aspect_tolerance: float = _f("SF_ASPECT_TOLERANCE", 0.04)
-
-    # --- spend -----------------------------------------------------------
-    # A hard stop. 5,000 assets is enough volume that a bug in the critique
-    # loop could burn real money before anyone notices.
-    daily_usd_cap: float = _f("SF_DAILY_USD_CAP", 40.0)
+    # --- derivation ------------------------------------------------------
+    # How far to push a new design away from the one it learned from. Low
+    # values produce near-copies, which agencies match against and reject;
+    # high values lose the character that made the original work.
+    derive_strength: float = _f("SF_DERIVE_STRENGTH", 0.5)
+    distinct_threshold: float = _f("SF_DISTINCT_THRESHOLD", 0.70)
+    max_derive_rounds: int = _i("SF_DERIVE_ROUNDS", 2)
 
     # --- output ----------------------------------------------------------
-    target_dpi: int = _i("SF_TARGET_DPI", 300)
     preview_px: int = _i("SF_PREVIEW_PX", 1400)
+
+    # --- publishing ------------------------------------------------------
+    # Off by default. Turning it on still cannot publish a design whose
+    # provenance check failed — that gate is in the code, not in a setting.
+    publish_enabled: bool = os.environ.get("SF_PUBLISH", "0") == "1"
 
     @property
     def db_path(self) -> Path:
         return self.root / "stockforge.db"
 
     def ensure_dirs(self) -> None:
-        for d in (
-            self.root,
-            self.root / "flats",
-            self.root / "renders",
-            self.root / "out",
-            self.fonts_dir,
-            self.motifs_dir,
-        ):
+        for d in (self.root, self.root / "flats", self.root / "renders",
+                  self.root / "out", self.root / "downloads",
+                  self.fonts_dir, self.motifs_dir):
             d.mkdir(parents=True, exist_ok=True)
 
 

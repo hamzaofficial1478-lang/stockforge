@@ -24,34 +24,41 @@ CREATE TABLE IF NOT EXISTS assets (
     aspect        REAL,
     phash         TEXT,
     is_mockup     INTEGER DEFAULT 0,
-    cluster_id    TEXT,
+    design_id     TEXT,
     state         TEXT NOT NULL DEFAULT 'ingested',
     error         TEXT,
     created_at    REAL NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS clusters (
-    id            TEXT PRIMARY KEY,
-    representative TEXT,                 -- asset id we actually analyse
-    member_count  INTEGER DEFAULT 0,
+CREATE TABLE IF NOT EXISTS designs (
+    id            TEXT PRIMARY KEY,      -- stable hash of the source's design id
+    design_key    TEXT,                  -- listing id, url or folder name
+    title         TEXT,
+    tags          TEXT,
+    listing_url   TEXT,
+    source        TEXT,
+    image_count   INTEGER DEFAULT 0,
+    page_count    INTEGER DEFAULT 0,
+    stock_safe    INTEGER,               -- NULL until provenance runs
     state         TEXT NOT NULL DEFAULT 'pending',
     created_at    REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS specs (
-    cluster_id    TEXT PRIMARY KEY,
+    design_id     TEXT PRIMARY KEY,
     spec_json     TEXT NOT NULL,
     round         INTEGER DEFAULT 0,
     similarity    REAL,
     polish        REAL,
+    distinctness  REAL,
     verdict       TEXT,
     updated_at    REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS builds (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    cluster_id    TEXT NOT NULL,
-    asset_id      TEXT,                  -- variants build per member asset
+    design_id     TEXT NOT NULL,
+    page_name     TEXT,
     svg_path      TEXT,
     pdf_path      TEXT,
     preview_path  TEXT,
@@ -60,29 +67,17 @@ CREATE TABLE IF NOT EXISTS builds (
 );
 
 CREATE TABLE IF NOT EXISTS review (
-    cluster_id    TEXT PRIMARY KEY,
+    design_id     TEXT PRIMARY KEY,
     reason        TEXT,
     score         REAL,
     decision      TEXT,                  -- NULL until a human touches it
     decided_at    REAL
 );
 
-CREATE TABLE IF NOT EXISTS spend (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    day           TEXT NOT NULL,
-    stage         TEXT NOT NULL,
-    cluster_id    TEXT,
-    input_tokens  INTEGER DEFAULT 0,
-    cached_tokens INTEGER DEFAULT 0,
-    output_tokens INTEGER DEFAULT 0,
-    usd           REAL DEFAULT 0,
-    at            REAL NOT NULL
-);
 
 CREATE INDEX IF NOT EXISTS idx_assets_state   ON assets(state);
-CREATE INDEX IF NOT EXISTS idx_assets_cluster ON assets(cluster_id);
-CREATE INDEX IF NOT EXISTS idx_clusters_state ON clusters(state);
-CREATE INDEX IF NOT EXISTS idx_spend_day      ON spend(day);
+CREATE INDEX IF NOT EXISTS idx_assets_design  ON assets(design_id);
+CREATE INDEX IF NOT EXISTS idx_designs_state  ON designs(state);
 """
 
 
@@ -129,81 +124,62 @@ class Store:
         with self.tx() as c:
             c.execute("UPDATE assets SET state=?, error=? WHERE id=?", (state, error, asset_id))
 
-    # -- clusters --------------------------------------------------------
+    # -- designs ---------------------------------------------------------
 
-    def upsert_cluster(self, cid: str, representative: str, member_count: int) -> None:
+    def add_design(self, **row) -> None:
+        row.setdefault("created_at", time.time())
+        cols = ", ".join(row)
+        marks = ", ".join("?" for _ in row)
         with self.tx() as c:
-            c.execute(
-                "INSERT INTO clusters (id, representative, member_count, created_at) "
-                "VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
-                "representative=excluded.representative, member_count=excluded.member_count",
-                (cid, representative, member_count, time.time()),
-            )
+            c.execute(f"INSERT OR REPLACE INTO designs ({cols}) VALUES ({marks})",
+                      tuple(row.values()))
 
-    def clusters(self, state: str | None = None) -> list[sqlite3.Row]:
+    def designs(self, state: str | None = None) -> list[sqlite3.Row]:
         if state:
-            return self.conn.execute("SELECT * FROM clusters WHERE state=?", (state,)).fetchall()
-        return self.conn.execute("SELECT * FROM clusters").fetchall()
+            return self.conn.execute("SELECT * FROM designs WHERE state=?", (state,)).fetchall()
+        return self.conn.execute("SELECT * FROM designs").fetchall()
 
-    def set_cluster_state(self, cid: str, state: str) -> None:
+    def set_design_state(self, did: str, state: str, stock_safe: bool | None = None) -> None:
         with self.tx() as c:
-            c.execute("UPDATE clusters SET state=? WHERE id=?", (state, cid))
+            if stock_safe is None:
+                c.execute("UPDATE designs SET state=? WHERE id=?", (state, did))
+            else:
+                c.execute("UPDATE designs SET state=?, stock_safe=? WHERE id=?",
+                          (state, int(stock_safe), did))
 
     # -- specs -----------------------------------------------------------
 
-    def save_spec(self, cid: str, spec: Any, round_: int = 0, **scores: Any) -> None:
+    def save_spec(self, did: str, spec: Any, round_: int = 0, **scores: Any) -> None:
         payload = spec if isinstance(spec, str) else json.dumps(spec, default=str)
         with self.tx() as c:
             c.execute(
-                "INSERT INTO specs (cluster_id, spec_json, round, similarity, polish, verdict, updated_at) "
-                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(cluster_id) DO UPDATE SET "
+                "INSERT INTO specs (design_id, spec_json, round, similarity, polish, distinctness, "
+                "verdict, updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(design_id) DO UPDATE SET "
                 "spec_json=excluded.spec_json, round=excluded.round, similarity=excluded.similarity, "
-                "polish=excluded.polish, verdict=excluded.verdict, updated_at=excluded.updated_at",
+                "polish=excluded.polish, distinctness=excluded.distinctness, verdict=excluded.verdict, "
+                "updated_at=excluded.updated_at",
                 (
-                    cid, payload, round_,
+                    did, payload, round_,
                     scores.get("similarity"), scores.get("polish"),
-                    scores.get("verdict"), time.time(),
+                    scores.get("distinct"), scores.get("verdict"), time.time(),
                 ),
             )
 
-    def get_spec(self, cid: str) -> dict | None:
-        row = self.conn.execute("SELECT spec_json FROM specs WHERE cluster_id=?", (cid,)).fetchone()
+    def get_spec(self, did: str) -> dict | None:
+        row = self.conn.execute("SELECT spec_json FROM specs WHERE design_id=?", (did,)).fetchone()
         return json.loads(row["spec_json"]) if row else None
 
     # -- review ----------------------------------------------------------
 
-    def queue_review(self, cid: str, reason: str, score: float) -> None:
+    def queue_review(self, did: str, reason: str, score: float) -> None:
         with self.tx() as c:
             c.execute(
-                "INSERT INTO review (cluster_id, reason, score) VALUES (?,?,?) "
-                "ON CONFLICT(cluster_id) DO UPDATE SET reason=excluded.reason, score=excluded.score",
-                (cid, reason, score),
+                "INSERT INTO review (design_id, reason, score) VALUES (?,?,?) "
+                "ON CONFLICT(design_id) DO UPDATE SET reason=excluded.reason, score=excluded.score",
+                (did, reason, score),
             )
 
     def pending_review(self) -> list[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM review WHERE decision IS NULL ORDER BY score ASC"
         ).fetchall()
-
-    # -- spend -----------------------------------------------------------
-
-    def record_spend(self, stage: str, cid: str | None, usage: dict, usd: float) -> None:
-        with self.tx() as c:
-            c.execute(
-                "INSERT INTO spend (day, stage, cluster_id, input_tokens, cached_tokens, "
-                "output_tokens, usd, at) VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    time.strftime("%Y-%m-%d"), stage, cid,
-                    usage.get("input_tokens", 0),
-                    usage.get("cache_read_input_tokens", 0),
-                    usage.get("output_tokens", 0),
-                    usd, time.time(),
-                ),
-            )
-
-    def spend_today(self) -> float:
-        row = self.conn.execute(
-            "SELECT COALESCE(SUM(usd), 0) AS t FROM spend WHERE day=?",
-            (time.strftime("%Y-%m-%d"),),
-        ).fetchone()
-        return float(row["t"])

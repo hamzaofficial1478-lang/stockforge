@@ -1,60 +1,140 @@
 # stockforge
 
-Reads a design image, works out what the design actually *is*, and rebuilds it
-from scratch as a clean, editable vector file.
+Reads your own design images, works out how each design was built, and produces
+two things: **an editable vector master** you can open and change, and — where
+the licensing allows it — **a new design in the same style**, ready to submit to
+a stock agency.
 
-Built for one job: recovering a large back catalogue of Etsy artwork whose
-source files are gone, and turning it into files that are good enough to submit
-to Adobe Stock and Shutterstock — and good enough to edit again.
+Runs entirely on your own hardware. No paid API anywhere in the pipeline.
 
 ---
 
-## The one idea this rests on
+## Read this part first
 
-**It does not trace.**
+The program does two different jobs and it is important not to confuse them.
 
-Run a PNG through Illustrator's Image Trace and you get thousands of jagged
-sub-paths, muddy anti-aliased edges and text that is no longer text. Adobe Stock
-and Shutterstock both reject auto-traced vectors, and a reviewer spots one in
-seconds.
+**Getting your files back.** You lost the source files for a catalogue you
+built. stockforge reads each design and rebuilds it as a clean layered vector
+you can edit — change the names, resize it, make variants, keep selling it. This
+works on **everything**, whatever the design was originally made with. You own
+the right to use those designs; nobody is arguing otherwise.
 
-So the program reads the artwork the way a designer would — format, grid,
-palette, type hierarchy, decoration — writes that down as a structured spec, and
-then **draws a fresh piece from that spec** using our own licensed fonts and our
-own drawn motifs. Same idea, same layout, same mood, better execution. A recipe,
-not a photograph.
+**Making new files to submit.** A stock agency requires you to hold
+redistribution rights to *every element* in a file you submit. Redrawing does
+not change where a composition came from. So a design assembled from a template
+library's stock art cannot go to Adobe Stock or Shutterstock, however much of it
+gets rebuilt.
 
-That is also why the output is legitimately ours to submit: nothing from the
-source file survives into the rebuild except the design thinking, which was
-already the owner's.
+So the pipeline checks each design and sorts it into one of the two piles. Both
+piles get an editable master. Only the cleared pile ever reaches an upload
+queue. That gate lives in the code, not in a config file, because the cost of
+getting it wrong lands on your contributor account rather than on one file.
 
 ---
 
 ## How it runs
 
 ```
-ingest    5,000 images  ->  flat artwork      no model, minutes
-cluster                 ->  ~1,200 families   no model, seconds
-analyse   one per family->  DesignSpec        one Opus 5 vision call
-render                  ->  layered SVG       deterministic
-critique  render vs src ->  patches           vision call, up to 3 rounds
-export                  ->  PDF / EPS / JPEG  Inkscape
-review    worst first   ->  you               only what needs you
+source  -> shop | links | folder
+flatten -> mockup detection, perspective correction, colour balance
+analyse -> five small passes: survey, palette, type, structure, provenance
+derive  -> new copy, new palette, new type, new rhythm
+check   -> does it stand on its own, or still read as a copy?
+render  -> layered SVG, one per printed surface
+critique-> compare, patch, repeat
+export  -> editable PDF master + outlined EPS + JPEG preview
+publish -> FTP to both agencies, cleared designs only
 ```
 
-Fully automatic. You are not in the loop per design — you are in the loop at the
-end, working a queue sorted worst-first. At 5,000 files that is the only review
-model that survives contact with reality.
+### Three doors in
 
-### Clustering is the whole economy of this thing
+```bash
+stockforge pull shop   your-shop-name        # walks the whole Etsy catalogue
+stockforge pull links  ./urls.txt            # bulk listing links
+stockforge pull folder ~/exports             # images already on disk
+```
 
-A shop with 5,000 uploads does not have 5,000 designs. It has a few hundred
-templates, each shipped in six colourways, three sizes, with the names swapped.
-Perceptual-hash clustering collapses that before a single token is spent, and
-then one spec generates the whole family — different palette, different text,
-same grammar. Which is precisely what an editable vector file is *for*.
+The shop door answers the question you actually asked — *how many uploads do I
+have?* Set `SF_ETSY_API_KEY` from etsy.com/developers and it reads the listing
+count straight from Etsy, then walks every listing with its images, title and
+tags. Without a key it falls back to parsing public pages, which is slower and
+breaks whenever Etsy changes their markup.
 
-Skip this step and you pay full price to learn the same layout forty times.
+`stockforge count shop your-shop-name` answers it without pulling anything.
+
+### One listing is one design
+
+A listing carries four to six images of the same product: one or two flat
+artwork files and the rest staged photographs and marketing frames. They are
+grouped as one design and read together, so the mockups become extra evidence
+rather than four extra jobs.
+
+And a design can have several printed surfaces. A greeting card is a front and
+an inside. A wedding suite is an invitation, an RSVP and a details card. Each
+becomes its own file, sharing one palette and one type system — which is how a
+print shop wants them anyway.
+
+---
+
+## Analysis, built for local models
+
+A hosted frontier model will fill a hundred-field nested schema in one shot. A
+model on your own card will not, and pretending otherwise produces confident
+rubbish. So the read is split into five small passes, each with a schema a local
+model can actually hit:
+
+| pass | what it does | who does the work |
+|---|---|---|
+| survey | how many surfaces, which image is which, real print dimensions | model |
+| palette | the colours | **k-means**, model only assigns roles |
+| typography | the text | **OCR** for the strings, model for the letterforms |
+| structure | frames, rules, and every decorative element | model |
+| provenance | can this be published, or is it master-only | model advises, **code decides** |
+
+Two of those deliberately take work off the model. A model asked to eyeball a
+hex value guesses; k-means measures it. A model asked to transcribe an address
+gets it nearly right, and nearly right is wrong on something someone prints.
+
+Any OpenAI-compatible server works — NVIDIA NIM, vLLM, Ollama, LM Studio. Two
+environment variables and you are running:
+
+```bash
+SF_VISION_BASE_URL=http://localhost:8000/v1
+SF_VISION_MODEL=nvidia/llama-3.2-90b-vision-instruct
+```
+
+Local models wrap their JSON in prose, leave trailing commas and occasionally
+drop a brace. The provider layer extracts, validates and hands the validation
+errors straight back for a repair round. Two retries fixes almost everything.
+
+---
+
+## Derivation — the part that decides if this is worth doing
+
+The source design tells us a *style that sold*: this palette temperature, this
+type hierarchy, this density of decoration. We keep the style and build a new
+piece in it. That is what a design series is, and coordinated series are exactly
+what stock buyers search for.
+
+What does **not** work is nudging a hue, swapping one font and calling it new.
+Reviewers see hundreds of those a day and agencies run similarity matching on
+submission — a near-duplicate flagged against something already in the library
+takes the whole batch down with it.
+
+So there are four levers, in order of how much they change how a piece reads:
+
+- **content** — new names, dates, venues. Cosmetic on its own, necessary anyway.
+- **colour** — the whole palette rotates *together*, so the relationships
+  survive. Shifting each colour independently is what makes a recolour look
+  wrong.
+- **type** — a different pairing with the same voice.
+- **layout** — margins, rhythm, the spread of the type hierarchy. This is the
+  one that actually makes it a different design.
+
+Then it looks at both and scores two things that pull against each other: is it
+distinct enough to stand alone, and does it still belong to the same family? A
+result that is still too close goes round again. One that has lost the character
+gets dialled back.
 
 ---
 
@@ -62,73 +142,59 @@ Skip this step and you pay full price to learn the same layout forty times.
 
 ```bash
 pip install -e .
-cp .env.example .env          # add your ANTHROPIC_API_KEY
-apt install inkscape          # needed for live-text PDF and EPS export
+cp .env.example .env
+apt install inkscape tesseract-ocr        # export and OCR
 ```
 
-Then fill `assets/fonts/` with families **you hold redistribution rights to**
-(SIL OFL, or purchased with an extended licence) and bootstrap the manifest:
+Fonts are the one manual step, and it is worth the hour:
 
 ```bash
 stockforge fonts scan
 ```
 
-Open `assets/fonts/manifest.json`, correct the tags, and set `embeddable: true`
-only where you have actually checked the licence. Nothing is used until you do.
-It is a one-off afternoon that pays back across the whole catalogue.
+Drop families you hold redistribution rights to into `assets/fonts/`, run the
+scan, then open `assets/fonts/manifest.json` and set `embeddable: true` only
+where you have checked the licence. Nothing is used until you do. Google Fonts
+and anything under the SIL OFL are the easy wins here.
 
 ## Use
 
 ```bash
-stockforge ingest ~/etsy-exports
-stockforge cluster
-stockforge run --limit 20        # start small, look at the output
+stockforge count  shop your-shop-name
+stockforge pull   shop your-shop-name --limit 20
+stockforge run    --limit 20
 stockforge status
 stockforge review
+stockforge publish --dry-run
 ```
 
-Every stage is resumable. Ctrl-C and re-run; finished work is skipped, not
-repeated.
-
----
-
-## What it costs
-
-Roughly **$0.30–0.40 per design family** on Opus 5 at high effort — one analysis
-call plus two critique rounds, with the system prompts cached.
-
-For 5,000 assets that clusters down to ~1,200 families, call it **$350–500** for
-the whole catalogue. Without clustering the same job is nearer $1,800. On
-Sonnet 5 it is about 40% of those figures, at some cost in read quality.
-
-`SF_DAILY_USD_CAP` is a hard stop, enforced before every model call. Measure the
-real number on your first fifty families before turning the rest loose.
+Every stage is resumable. Ctrl-C and re-run; finished work is skipped.
 
 ---
 
 ## What it will not do
 
-Worth being straight about the edges:
-
-- **Photographs, foil, emboss and die-cuts.** These are flagged, not faked. They
-  go to the review queue.
-- **Exact font recovery.** Deliberately never attempted. The analyser describes
-  letterforms and the matcher picks the nearest thing we are allowed to embed.
-- **Complex illustration.** A hand-drawn floral wreath with sixty petals is not
-  a spec, it is an illustration. It gets flagged, and the fix is to add a good
-  one to the motif library once and reuse it everywhere.
-- **Judging its own taste.** The critique loop scores against the source and
-  against basic craft. It does not know your market. That is what the review
-  queue is for.
+- **Rebuild a photograph.** A photorealistic or AI-generated scene used as the
+  artwork is flagged, not faked. It gets an editable master with the scene left
+  as a placed image, and it never goes near a publish queue.
+- **Recover an exact font.** Deliberately never attempted. The analyser
+  describes letterforms; the matcher picks the nearest thing you are allowed to
+  embed.
+- **Invent a motif library.** A detailed painted character is not a spec, it is
+  an illustration. It gets flagged, and the fix is to add a good one to
+  `assets/motifs/` once and reuse it across hundreds of files. That library is
+  what decides whether output looks professional.
+- **Judge your market.** The loops score against craft and against
+  distinctiveness. They do not know what sells. That is what the review queue is
+  for.
 
 ## Formats
 
-Two exports from the same SVG, for two different audiences:
+Two exports from the same SVG, for two different jobs:
 
-- **`*-master.pdf`** — layered, **live text**. This is your file, the one you
-  lost. Open it, change the names, re-export.
-- **`*.eps` + `*-preview.jpg`** — text outlined, no font references. This is
-  what stock sites ingest; neither takes PDF as a vector submission.
+- **`*-master.pdf`** — layered, with editable text. Yours, for changing.
+- **`*.eps` + `*-preview.jpg`** — text outlined, no font references. What the
+  agencies ingest; neither takes PDF as a vector submission.
 
-Contributor requirements change. Check each site's current guidelines before a
-large upload rather than trusting these notes.
+Agency requirements and CSV layouts change. Check the current contributor
+documentation before a large upload rather than trusting these notes.

@@ -20,7 +20,7 @@ import numpy as np
 
 from .cluster import hamming  # noqa: F401  (re-exported for convenience)
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}
+from ..constants import IMAGE_EXTS  # noqa: F401  (re-exported)
 
 
 @dataclass

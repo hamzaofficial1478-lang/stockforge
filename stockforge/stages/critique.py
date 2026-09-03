@@ -21,15 +21,12 @@ never converges.
 
 from __future__ import annotations
 
-import base64
 from pathlib import Path
 
-import anthropic
 import cv2
 import numpy as np
 
-from ..config import settings
-from ..pricing import cost_usd, usage_dict
+from ..providers import VisionProvider, vision
 from ..schema import Critique, DesignSpec
 
 
@@ -113,53 +110,32 @@ missing element, a misread layout, an effect we cannot draw. Escalating is not \
 a failure; it routes the design to a human, which is exactly what should happen."""
 
 
-def _img(path: Path) -> dict:
-    media = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
-    return {
-        "type": "image",
-        "source": {
-            "type": "base64",
-            "media_type": media,
-            "data": base64.standard_b64encode(path.read_bytes()).decode(),
-        },
-    }
-
-
 def critique(
     source: Path,
     rebuild: Path,
     spec: DesignSpec,
-    client: anthropic.Anthropic | None = None,
-) -> tuple[Critique, dict, float]:
-    client = client or anthropic.Anthropic()
+    page_index: int = 0,
+    provider: VisionProvider | None = None,
+) -> Critique:
+    provider = provider or vision()
 
+    elements = spec.pages[page_index].elements if spec.pages else []
     element_index = "\n".join(
         f"{i}: {getattr(el, 'kind', '?')} "
         f"{getattr(el, 'role', getattr(el, 'motif', getattr(el, 'primitive', '')))} "
         f"{repr(getattr(el, 'content', getattr(el, 'description', '')))[:60]}"
-        for i, el in enumerate(spec.elements)
+        for i, el in enumerate(elements)
     )
 
-    response = client.messages.parse(
-        model=settings.model,
-        max_tokens=settings.max_tokens,
-        thinking={"type": "adaptive"},
-        output_config={"effort": settings.effort},
-        system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
-        messages=[{
-            "role": "user",
-            "content": [
-                _img(source),
-                _img(rebuild),
-                {"type": "text", "text":
-                    "First image: the source. Second: our rebuild.\n\n"
-                    f"Elements in the spec, by index:\n{element_index}\n\n"
-                    "Score it and return patches."},
-            ],
-        }],
-        output_format=Critique,
+    return provider.structured(
+        SYSTEM,
+        "First image: the source. Second: our rebuild.\n\n"
+        f"Elements on page {page_index}, by index:\n{element_index}\n\n"
+        "Score it and return patches. Set page_index to "
+        f"{page_index} on every patch that targets an element.",
+        [source, rebuild],
+        Critique,
     )
-    return response.parsed_output, usage_dict(response.usage), cost_usd(settings.model, response.usage)
 
 
 # --------------------------------------------------------------------------
@@ -175,7 +151,7 @@ def apply_patches(spec_dict: dict, crit: Critique) -> tuple[dict, list[str]]:
             if p.element_index is None:
                 keys = p.path.split(".")
             else:
-                target = spec_dict["elements"][p.element_index]
+                target = spec_dict["pages"][p.page_index]["elements"][p.element_index]
                 keys = p.path.split(".")
             for k in keys[:-1]:
                 target = target[int(k)] if k.isdigit() else target[k]

@@ -16,7 +16,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from ..schema import (
-    Box, ColourRole, DesignSpec, MotifElement, ShapeElement, TextElement,
+    Box, ColourRole, DesignSpec, MotifElement, Page, ShapeElement, TextElement,
 )
 from .fonts import FontEntry, load_manifest, match
 
@@ -167,15 +167,19 @@ def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
 
 # --------------------------------------------------------------------------
 
-def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path) -> RenderResult:
-    w = spec.canvas.width_mm / MM_PER_PX
-    h = spec.canvas.height_mm / MM_PER_PX
+def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
+           page_index: int = 0) -> RenderResult:
+    """Render one surface. A greeting card is two calls, a wedding suite five —
+    each becomes its own file, which is how a print shop wants them anyway."""
+    page: Page = spec.pages[page_index]
+    w = page.canvas.width_mm / MM_PER_PX
+    h = page.canvas.height_mm / MM_PER_PX
     library = load_manifest(fonts_dir)
 
     parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{spec.canvas.width_mm}mm" '
-        f'height="{spec.canvas.height_mm}mm" viewBox="0 0 {w:.2f} {h:.2f}">',
-        f"<title>{escape(spec.dna.occasion)} {escape(spec.dna.category)}</title>",
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{page.canvas.width_mm}mm" '
+        f'height="{page.canvas.height_mm}mm" viewBox="0 0 {w:.2f} {h:.2f}">',
+        f"<title>{escape(spec.dna.occasion)} {escape(spec.dna.category)} — {escape(page.name)}</title>",
         '<g id="background">', _background(spec, w, h), "</g>",
     ]
 
@@ -183,13 +187,13 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path) -> RenderResult:
     scores: list[float] = []
 
     parts.append('<g id="structure">')
-    for el in spec.elements:
+    for el in page.elements:
         if isinstance(el, ShapeElement):
             parts.append(_shape(spec, el, w, h))
     parts.append("</g>")
 
     parts.append('<g id="decoration">')
-    for el in spec.elements:
+    for el in page.elements:
         if isinstance(el, MotifElement):
             node = _motif(spec, el, w, h, motifs_dir)
             if node:
@@ -199,7 +203,7 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path) -> RenderResult:
     parts.append("</g>")
 
     parts.append('<g id="type">')
-    for el in spec.elements:
+    for el in page.elements:
         if isinstance(el, TextElement):
             node, s = _text(spec, el, w, h, library)
             parts.append(node)

@@ -1,0 +1,70 @@
+"""Door 2 — a list of listing URLs, pasted in bulk.
+
+Takes a file with one URL per line, or a comma-separated string. Each listing's
+images are downloaded into the cache and grouped as one design.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import time
+import urllib.request
+from pathlib import Path
+from typing import Iterator
+
+from .base import Design, Source
+
+log = logging.getLogger("stockforge.sources.links")
+
+UA = "Mozilla/5.0 (compatible; stockforge/1.0; own-catalogue-recovery)"
+
+
+def read_links(target: str) -> list[str]:
+    path = Path(target).expanduser()
+    raw = path.read_text() if path.exists() else target
+    links = [ln.strip() for ln in re.split(r"[\n,]", raw)]
+    return [ln for ln in links if ln.startswith("http")]
+
+
+def fetch(url: str, dest: Path, timeout: int = 60) -> Path | None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and dest.stat().st_size > 0:
+        return dest
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            dest.write_bytes(resp.read())
+        return dest
+    except Exception as exc:
+        log.warning("could not fetch %s: %s", url, exc)
+        return None
+
+
+class LinksSource(Source):
+    """Each link is one listing. Where the link points straight at an image we
+    take it as a single-image design; where it points at a listing page we hand
+    off to the shop scraper to pull that listing's images."""
+
+    def count(self) -> int:
+        return len(read_links(self.target))
+
+    def designs(self) -> Iterator[Design]:
+        from .shop import listing_images         # local import, avoids a cycle
+
+        cache = self.cache_dir or Path("./workspace/downloads")
+        for i, url in enumerate(read_links(self.target)):
+            if self.limit and i >= self.limit:
+                return
+
+            if re.search(r"\.(jpe?g|png|webp)(\?|$)", url, re.I):
+                dest = cache / f"link-{i:05d}" / Path(url.split("?")[0]).name
+                got = fetch(url, dest)
+                if got:
+                    yield Design(design_id=url, images=[got], listing_url=url, source="links")
+                continue
+
+            listing = listing_images(url, cache / f"listing-{i:05d}")
+            if listing.images:
+                yield listing
+            time.sleep(1.0)                      # be a good citizen
