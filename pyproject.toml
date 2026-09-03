@@ -23,3 +23,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["stockforge*"]
+
+# The control panel is one HTML file with no build step and no CDN, so it
+# ships inside the package rather than being served from anywhere.
+[tool.setuptools.package-data]
+stockforge = ["ui/*.html"]

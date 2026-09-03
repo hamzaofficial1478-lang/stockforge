@@ -1,6 +1,10 @@
 """Command line.
 
-    stockforge pull shop   infinitedesignhive     # door 1 — a whole Etsy shop
+Everything here is also in the control panel, which is the easier way in:
+
+    stockforge ui                                 # start here
+
+    stockforge pull shop   your-shop-name         # door 1 — a whole Etsy shop
     stockforge pull links  ./listing-urls.txt     # door 2 — bulk links
     stockforge pull folder ~/etsy-exports         # door 3 — images on disk
 
@@ -108,11 +112,20 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("publish", help="send cleared files to the agencies")
     s.add_argument("--dry-run", action="store_true")
 
+    s = sub.add_parser("ui", help="open the control panel in a browser")
+    s.add_argument("--port", type=int, default=8770)
+    s.add_argument("--no-browser", action="store_true")
+
     f = sub.add_parser("fonts", help="manage the font library")
     f.add_argument("action", choices=["scan", "list"])
 
     args = p.parse_args(argv)
     _log(args.verbose)
+
+    if args.cmd == "ui":
+        from .ui.server import serve
+        serve(settings, port=args.port, open_browser=not args.no_browser)
+        return 0
 
     if args.cmd == "fonts":
         if args.action == "scan":

@@ -31,10 +31,13 @@ class Settings:
     ship_threshold: float = _f("SF_SHIP_THRESHOLD", 0.85)
     escalate_threshold: float = _f("SF_ESCALATE_THRESHOLD", 0.60)
 
-    # --- derivation ------------------------------------------------------
-    # How far to push a new design away from the one it learned from. Low
-    # values produce near-copies, which agencies match against and reject;
-    # high values lose the character that made the original work.
+    # --- making it a new design ------------------------------------------
+    # Two levers. `mix` borrows ingredients from your OTHER designs — grid from
+    # one, palette from another, decoration from a third — so the result has no
+    # single original. `derive_strength` then moves that result further on its
+    # own terms. Mixing is the stronger of the two; deriving alone only ever
+    # walks away from one starting point.
+    mix: float = _f("SF_MIX", 0.5)
     derive_strength: float = _f("SF_DERIVE_STRENGTH", 0.5)
     distinct_threshold: float = _f("SF_DISTINCT_THRESHOLD", 0.70)
     max_derive_rounds: int = _i("SF_DERIVE_ROUNDS", 2)
@@ -43,9 +46,13 @@ class Settings:
     preview_px: int = _i("SF_PREVIEW_PX", 1400)
 
     # --- publishing ------------------------------------------------------
-    # Off by default. Turning it on still cannot publish a design whose
-    # provenance check failed — that gate is in the code, not in a setting.
     publish_enabled: bool = os.environ.get("SF_PUBLISH", "0") == "1"
+    # The provenance check flags designs that lean on third-party library
+    # content. By default those stop at an editable master. This sends them
+    # through anyway — your catalogue, your call. Either way the flag and its
+    # reason stay recorded on every design, so you can always see what went
+    # out and what it was marked as.
+    publish_all: bool = os.environ.get("SF_PUBLISH_ALL", "0") == "1"
 
     @property
     def db_path(self) -> Path:

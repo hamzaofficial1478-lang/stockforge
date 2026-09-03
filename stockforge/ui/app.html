@@ -1,0 +1,484 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stockforge</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --panel:#ffffff; --line:#e5e1da; --line-soft:#efece6;
+    --ink:#1b1a18; --ink-2:#5d5952; --ink-3:#8d877e;
+    --accent:#b4551f; --accent-soft:#fdf1e7;
+    --ok:#2f7a4f; --warn:#a8761a; --fail:#b03a2e;
+    --radius:10px; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme=light]){
+      --bg:#131211; --panel:#1b1a18; --line:#302d29; --line-soft:#252320;
+      --ink:#f0ede8; --ink-2:#a8a29a; --ink-3:#78726a;
+      --accent:#e0873f; --accent-soft:#2a1f14;
+      --ok:#5fb884; --warn:#d8a44a; --fail:#e0705f;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent)}
+  h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.01em}
+
+  header{position:sticky;top:0;z-index:10;background:var(--bg);
+    border-bottom:1px solid var(--line);padding:0 22px}
+  .brand{display:flex;align-items:baseline;gap:12px;padding:18px 0 14px}
+  .brand h1{font-size:19px}
+  .brand span{color:var(--ink-3);font-size:13px}
+  nav{display:flex;gap:2px;overflow-x:auto}
+  nav button{appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+    color:var(--ink-2);font:inherit;font-size:14px;padding:9px 14px;cursor:pointer;white-space:nowrap}
+  nav button:hover{color:var(--ink)}
+  nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent);font-weight:550}
+
+  main{max-width:1000px;margin:0 auto;padding:26px 22px 80px}
+  section[hidden]{display:none!important}
+  .lede{color:var(--ink-2);font-size:14px;max-width:62ch;margin:0 0 22px}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px 20px;margin-bottom:16px}
+  .card > h3{font-size:14px;margin-bottom:4px}
+  .card > .hint{color:var(--ink-3);font-size:13px;margin:0 0 14px}
+
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+
+  label{display:block;font-size:12px;color:var(--ink-2);margin-bottom:5px;
+    text-transform:uppercase;letter-spacing:.05em}
+  input,select,textarea{width:100%;background:var(--bg);color:var(--ink);
+    border:1px solid var(--line);border-radius:7px;padding:8px 10px;font:inherit;font-size:14px}
+  input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+  input[type=range]{padding:0;border:0;background:none}
+
+  button.btn{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--ink);
+    border-radius:7px;padding:8px 15px;font:inherit;font-size:14px;cursor:pointer}
+  button.btn:hover{border-color:var(--ink-3)}
+  button.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.btn.primary:hover{filter:brightness(1.08)}
+  button.btn:disabled{opacity:.45;cursor:not-allowed}
+  button.btn.small{padding:5px 11px;font-size:13px}
+
+  .dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px;display:inline-block}
+  .ok .dot{background:var(--ok)} .warn .dot{background:var(--warn)} .fail .dot{background:var(--fail)}
+
+  .check{display:grid;grid-template-columns:8px 1fr auto;gap:12px;align-items:start;
+    padding:13px 0;border-bottom:1px solid var(--line-soft)}
+  .check:last-child{border-bottom:0}
+  .check .dot{margin-top:7px}
+  .check b{font-weight:550;font-size:14px}
+  .check .detail{color:var(--ink-2);font-size:13px;font-family:var(--mono);word-break:break-word}
+  .check .fix{color:var(--ink-2);font-size:13px;margin-top:5px;
+    background:var(--accent-soft);border-left:2px solid var(--accent);padding:7px 10px;border-radius:0 5px 5px 0}
+  .check .tag{color:var(--ink-3);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+  .stat .n{font-size:26px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .stat .k{font-size:12px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
+
+  .banner{border-radius:var(--radius);padding:12px 15px;font-size:14px;margin-bottom:18px;
+    border:1px solid var(--line);background:var(--panel);display:flex;gap:10px;align-items:flex-start}
+  .banner.good{border-color:var(--ok)} .banner.bad{border-color:var(--fail)}
+
+  .bar{height:5px;background:var(--line-soft);border-radius:3px;overflow:hidden;margin:12px 0 4px}
+  .bar > i{display:block;height:100%;background:var(--accent);transition:width .4s ease}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--ink-3);font-weight:550;padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
+  td{padding:9px 10px 9px 0;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  .mono{font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+  .pill{display:inline-block;font-size:11.5px;padding:2px 8px;border-radius:20px;
+    border:1px solid var(--line);color:var(--ink-2);white-space:nowrap}
+  .pill.ready{border-color:var(--ok);color:var(--ok)}
+  .pill.review{border-color:var(--warn);color:var(--warn)}
+  .pill.failed{border-color:var(--fail);color:var(--fail)}
+
+  .compare{display:grid;gap:14px;grid-template-columns:1fr 1fr;margin:14px 0}
+  .compare figure{margin:0}
+  .compare figcaption{font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--ink-3);margin-bottom:6px}
+  .compare img{width:100%;border:1px solid var(--line);border-radius:7px;background:var(--bg);display:block}
+  .empty{color:var(--ink-3);font-size:14px;padding:26px 0;text-align:center}
+  .log{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);max-height:170px;
+    overflow:auto;border-top:1px solid var(--line-soft);margin-top:12px;padding-top:10px}
+  .log div{padding:2px 0}
+  @media (max-width:640px){ .compare{grid-template-columns:1fr} }
+</style>
+
+<header>
+  <div class="brand">
+    <h1>stockforge</h1>
+    <span id="tagline">control panel</span>
+  </div>
+  <nav id="tabs">
+    <button data-tab="setup" aria-selected="true">Setup</button>
+    <button data-tab="sources">Sources</button>
+    <button data-tab="queue">Queue</button>
+    <button data-tab="review">Review</button>
+    <button data-tab="deliver">Deliver</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ── SETUP ─────────────────────────────────────────────── -->
+  <section id="setup">
+    <div id="health-banner"></div>
+    <div class="card">
+      <h3>What's working</h3>
+      <p class="hint">Anything red has to be fixed before a design can be processed. Amber is optional but usually worth having.</p>
+      <div id="checks"><div class="empty">checking…</div></div>
+      <div class="row" style="margin-top:16px">
+        <button class="btn small" onclick="loadHealth()">Re-check</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Model</h3>
+      <p class="hint">Any OpenAI-compatible server — NVIDIA NIM, vLLM, Ollama, LM Studio. Saved to <code>.env</code> and applied immediately.</p>
+      <div class="grid">
+        <div><label>Vision base URL</label><input id="SF_VISION_BASE_URL" placeholder="http://localhost:8000/v1"></div>
+        <div><label>Vision model</label><input id="SF_VISION_MODEL" placeholder="nvidia/llama-3.2-90b-vision-instruct"></div>
+        <div><label>API key (hosted only)</label><input id="SF_VISION_API_KEY" type="password" placeholder="leave blank for local"></div>
+        <div><label>Text model (optional)</label><input id="SF_REASON_MODEL" placeholder="falls back to the vision model"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>How far to move a design</h3>
+      <p class="hint">Mix borrows ingredients from your other designs. Change is how hard the layout, type and palette shift. Distinct is the score a result must reach before it's accepted.</p>
+      <div class="grid">
+        <div><label>Mix from other designs — <b id="mix-v">0.5</b></label>
+          <input type="range" id="SF_MIX" min="0" max="1" step="0.05" value="0.5"
+                 oninput="mixV.textContent=this.value"></div>
+        <div><label>Change strength — <b id="str-v">0.5</b></label>
+          <input type="range" id="SF_DERIVE_STRENGTH" min="0" max="1" step="0.05" value="0.5"
+                 oninput="strV.textContent=this.value"></div>
+        <div><label>Distinct threshold — <b id="dist-v">0.70</b></label>
+          <input type="range" id="SF_DISTINCT_THRESHOLD" min="0" max="1" step="0.05" value="0.7"
+                 oninput="distV.textContent=this.value"></div>
+        <div><label>Rounds before review</label><input id="SF_DERIVE_ROUNDS" type="number" min="1" max="6" value="2"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Etsy &amp; delivery</h3>
+      <p class="hint">An Etsy API key makes the shop crawler reliable and gives you an exact upload count. FTP details are only needed when you're ready to send files.</p>
+      <div class="grid">
+        <div><label>Etsy API key</label><input id="SF_ETSY_API_KEY" type="password"></div>
+        <div><label>Adobe FTP host</label><input id="SF_FTP_ADOBE_HOST" placeholder="ftp.contributor.adobestock.com"></div>
+        <div><label>Adobe user</label><input id="SF_FTP_ADOBE_USER"></div>
+        <div><label>Adobe password</label><input id="SF_FTP_ADOBE_PASS" type="password"></div>
+        <div><label>Shutterstock FTP host</label><input id="SF_FTP_SHUTTERSTOCK_HOST" placeholder="ftp.shutterstock.com"></div>
+        <div><label>Shutterstock user</label><input id="SF_FTP_SHUTTERSTOCK_USER"></div>
+        <div><label>Shutterstock password</label><input id="SF_FTP_SHUTTERSTOCK_PASS" type="password"></div>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <button class="btn primary" onclick="saveConfig()">Save settings</button>
+        <span id="save-msg" class="mono"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── SOURCES ───────────────────────────────────────────── -->
+  <section id="sources" hidden>
+    <p class="lede">Three ways in. Whichever you use, a listing's images are grouped as one design and read together.</p>
+    <div class="card">
+      <h3>Bring designs in</h3>
+      <p class="hint" id="source-hint">A shop name or URL. Set an Etsy API key on the Setup tab first — without it this falls back to parsing public pages.</p>
+      <div class="grid">
+        <div><label>Door</label>
+          <select id="pull-kind" onchange="sourceHint()">
+            <option value="shop">Etsy shop — walk the whole catalogue</option>
+            <option value="links">Bulk links — a file or a pasted list</option>
+            <option value="folder">Folder — images already on disk</option>
+          </select></div>
+        <div><label id="pull-label">Shop name or URL</label><input id="pull-target" placeholder="your-shop-name"></div>
+        <div><label>Limit (blank = everything)</label><input id="pull-limit" type="number" min="1" placeholder=""></div>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <button class="btn" onclick="doCount()">Count first</button>
+        <button class="btn primary" onclick="doPull()">Pull designs</button>
+        <span id="pull-msg" class="mono"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Catalogue</h3>
+      <div id="totals" class="grid"></div>
+    </div>
+  </section>
+
+  <!-- ── QUEUE ─────────────────────────────────────────────── -->
+  <section id="queue" hidden>
+    <p class="lede">One design at a time, with a breather between each. Meant to be left running, not watched.</p>
+    <div class="card">
+      <h3>Worker</h3>
+      <p class="hint" id="worker-line">idle</p>
+      <div class="bar"><i id="worker-bar" style="width:0%"></i></div>
+      <div class="grid" style="margin-top:14px">
+        <div class="stat"><div class="n" id="w-done">0</div><div class="k">done</div></div>
+        <div class="stat"><div class="n" id="w-review">0</div><div class="k">to review</div></div>
+        <div class="stat"><div class="n" id="w-failed">0</div><div class="k">failed</div></div>
+        <div class="stat"><div class="n" id="w-rate">—</div><div class="k">per hour</div></div>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <button class="btn primary" id="w-start" onclick="worker('start')">Start</button>
+        <button class="btn" onclick="worker('pause')">Pause</button>
+        <button class="btn" onclick="worker('resume')">Resume</button>
+        <button class="btn" onclick="worker('stop')">Stop</button>
+        <span style="min-width:180px">
+          <label>Breather — <b id="pace-v">2</b>s between designs</label>
+          <input type="range" id="pace" min="0" max="30" step="1" value="2"
+                 oninput="paceV.textContent=this.value" onchange="setPace(this.value)">
+        </span>
+      </div>
+      <div class="log" id="w-log"></div>
+    </div>
+    <div class="card">
+      <h3>Designs</h3>
+      <div id="design-table"><div class="empty">nothing pulled in yet</div></div>
+    </div>
+  </section>
+
+  <!-- ── REVIEW ────────────────────────────────────────────── -->
+  <section id="review" hidden>
+    <p class="lede">Worst first. Everything the program was confident about has already gone through — this is only what it wants a second opinion on.</p>
+    <div id="review-list"><div class="empty">loading…</div></div>
+  </section>
+
+  <!-- ── DELIVER ───────────────────────────────────────────── -->
+  <section id="deliver" hidden>
+    <p class="lede">Metadata is generated from each design's spec, so the keywords describe what's actually in the file.</p>
+    <div class="card">
+      <h3>Send to the agencies</h3>
+      <p class="hint">Run a dry run first — it writes both CSVs and tells you the file count without uploading anything.</p>
+      <div class="row">
+        <button class="btn" onclick="doPublish(true)">Dry run</button>
+        <button class="btn primary" onclick="doPublish(false)">Upload now</button>
+      </div>
+      <div id="publish-out" class="log" style="border:0;margin-top:14px"></div>
+    </div>
+    <div class="card">
+      <h3>Cleared for delivery</h3>
+      <div id="ready-table"><div class="empty">nothing yet</div></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const api = async (path, body) => {
+  const opts = body ? {method:'POST', headers:{'Content-Type':'application/json'},
+                       body:JSON.stringify(body)} : {};
+  const r = await fetch(path, opts);
+  return r.json();
+};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fileURL = p => '/file?path=' + encodeURIComponent(p);
+
+/* ── tabs ─────────────────────────────────────────── */
+let active = 'setup';
+$('tabs').addEventListener('click', e => {
+  const b = e.target.closest('button[data-tab]');
+  if (!b) return;
+  active = b.dataset.tab;
+  [...$('tabs').children].forEach(x => x.setAttribute('aria-selected', x === b));
+  ['setup','sources','queue','review','deliver'].forEach(s => $(s).hidden = s !== active);
+  refresh();
+});
+
+/* ── setup ────────────────────────────────────────── */
+async function loadHealth(){
+  const h = await api('/api/health');
+  $('health-banner').innerHTML = h.workable
+    ? `<div class="banner good"><span class="ok"><span class="dot"></span></span>
+       <div>Ready to run. Head to <b>Sources</b> and bring some designs in.</div></div>`
+    : `<div class="banner bad"><span class="fail"><span class="dot"></span></span>
+       <div>Not workable yet — ${esc(h.blocking.join(', '))}. The fixes are below.</div></div>`;
+  $('checks').innerHTML = h.checks.map(c => `
+    <div class="check ${c.state}">
+      <span class="dot"></span>
+      <div>
+        <b>${esc(c.name)}</b>
+        <div class="detail">${esc(c.detail)}</div>
+        ${c.fix ? `<div class="fix">${esc(c.fix)}</div>` : ''}
+      </div>
+      <span class="tag">${c.required ? 'required' : 'optional'}</span>
+    </div>`).join('');
+  $('tagline').textContent = h.workable ? 'ready' : 'setup needed';
+}
+
+const CFG_KEYS = ['SF_VISION_BASE_URL','SF_VISION_MODEL','SF_VISION_API_KEY','SF_REASON_MODEL',
+  'SF_ETSY_API_KEY','SF_MIX','SF_DERIVE_STRENGTH','SF_DISTINCT_THRESHOLD','SF_DERIVE_ROUNDS',
+  'SF_FTP_ADOBE_HOST','SF_FTP_ADOBE_USER','SF_FTP_ADOBE_PASS',
+  'SF_FTP_SHUTTERSTOCK_HOST','SF_FTP_SHUTTERSTOCK_USER','SF_FTP_SHUTTERSTOCK_PASS'];
+
+async function loadConfig(){
+  const c = await api('/api/config');
+  for (const k of CFG_KEYS){
+    const el = $(k);
+    if (el && c.values[k]) el.value = c.values[k];
+  }
+  $('mix-v').textContent  = $('SF_MIX').value;
+  $('str-v').textContent  = $('SF_DERIVE_STRENGTH').value;
+  $('dist-v').textContent = $('SF_DISTINCT_THRESHOLD').value;
+}
+
+async function saveConfig(){
+  const payload = {};
+  for (const k of CFG_KEYS){
+    const el = $(k);
+    if (el && el.value && el.value !== '••••••••') payload[k] = el.value;
+  }
+  const r = await api('/api/config', payload);
+  $('save-msg').textContent = `saved ${r.saved} setting${r.saved === 1 ? '' : 's'}`;
+  setTimeout(() => $('save-msg').textContent = '', 3000);
+  loadHealth();
+}
+
+/* ── sources ──────────────────────────────────────── */
+const HINTS = {
+  shop:   ['Shop name or URL', 'A shop name or URL. Set an Etsy API key on the Setup tab first — without it this falls back to parsing public pages.'],
+  links:  ['Path to a file, or paste URLs', 'One listing URL per line, or comma separated. Direct image URLs work too.'],
+  folder: ['Folder path', 'Images grouped by filename or parent folder — haunted-invite-1.jpg through -5.jpg becomes one design.'],
+};
+function sourceHint(){
+  const [label, hint] = HINTS[$('pull-kind').value];
+  $('pull-label').textContent = label;
+  $('source-hint').textContent = hint;
+}
+async function doCount(){
+  $('pull-msg').textContent = 'counting…';
+  const r = await api('/api/count', {kind:$('pull-kind').value, target:$('pull-target').value});
+  $('pull-msg').textContent = r.error ? 'error: ' + r.error
+    : (r.count == null ? 'unknown — set an Etsy API key for an exact figure' : r.count + ' designs');
+}
+async function doPull(){
+  $('pull-msg').textContent = 'pulling — this downloads and flattens images, give it a minute…';
+  const r = await api('/api/pull', {kind:$('pull-kind').value, target:$('pull-target').value,
+                                    limit:$('pull-limit').value || null});
+  $('pull-msg').textContent = r.error ? 'error: ' + r.error : `pulled ${r.pulled} designs`;
+  loadTotals();
+}
+async function loadTotals(){
+  const s = await api('/api/status');
+  const labels = {images:'images', designs:'designs', ready_to_publish:'cleared',
+    editable_master_only:'master only', awaiting_review:'to review', failed:'failed'};
+  $('totals').innerHTML = Object.entries(labels).map(([k, v]) =>
+    `<div class="stat"><div class="n">${s[k] ?? 0}</div><div class="k">${v}</div></div>`).join('');
+}
+
+/* ── queue ────────────────────────────────────────── */
+async function worker(action){
+  const body = {action};
+  if (action === 'start' && $('pull-limit').value) body.limit = $('pull-limit').value;
+  paintWorker(await api('/api/worker', body));
+}
+const setPace = pace => api('/api/worker', {pace: Number(pace)});
+
+function paintWorker(w){
+  const total = w.done + w.review + w.failed + w.remaining;
+  const pct = total ? Math.round((w.done + w.review + w.failed) / total * 100) : 0;
+  $('worker-bar').style.width = pct + '%';
+  $('worker-line').textContent = w.current_design
+    ? `${w.state} — ${w.current_design} (${w.current_step})`
+    : `${w.state}${w.current_step ? ' — ' + w.current_step : ''}`;
+  $('w-done').textContent = w.done;
+  $('w-review').textContent = w.review;
+  $('w-failed').textContent = w.failed;
+  $('w-rate').textContent = w.per_hour || '—';
+  $('w-start').disabled = w.state === 'running';
+  $('w-log').innerHTML = (w.recent || []).slice().reverse()
+    .map(l => `<div>${esc(l)}</div>`).join('')
+    + (w.last_error ? `<div class="fail">last error: ${esc(w.last_error)}</div>` : '');
+}
+
+async function loadDesigns(){
+  const rows = await api('/api/designs?limit=300');
+  if (!rows.length){ $('design-table').innerHTML = '<div class="empty">nothing pulled in yet</div>'; return; }
+  $('design-table').innerHTML = `<table><thead><tr>
+      <th>Design</th><th>Source</th><th>Images</th><th>Pages</th><th>State</th></tr></thead><tbody>
+    ${rows.map(r => `<tr>
+      <td>${r.listing_url ? `<a href="${esc(r.listing_url)}" target="_blank" rel="noreferrer">${esc((r.title || r.design_key || r.id).slice(0,60))}</a>`
+                          : esc((r.title || r.design_key || r.id).slice(0,60))}</td>
+      <td class="mono">${esc(r.source)}</td>
+      <td>${r.image_count}</td><td>${r.page_count || '—'}</td>
+      <td><span class="pill ${esc(r.state)}">${esc(r.state)}</span></td></tr>`).join('')}
+    </tbody></table>`;
+}
+
+/* ── review ───────────────────────────────────────── */
+async function loadReview(){
+  const rows = await api('/api/review');
+  if (!rows.length){
+    $('review-list').innerHTML = '<div class="card"><div class="empty">Nothing waiting on you.</div></div>';
+    return;
+  }
+  $('review-list').innerHTML = rows.map(r => `
+    <div class="card">
+      <h3>${esc((r.title || r.design_id).slice(0,80))}</h3>
+      <p class="hint">${esc(r.reason)} &nbsp;·&nbsp; score ${(r.score ?? 0).toFixed(2)}</p>
+      <div class="compare">
+        <figure><figcaption>your design</figcaption>
+          ${r.source_image ? `<img loading="lazy" src="${fileURL(r.source_image)}" alt="">`
+                           : '<div class="empty">no flat image</div>'}</figure>
+        <figure><figcaption>rebuild</figcaption>
+          ${r.rebuilds?.length ? `<img loading="lazy" src="${fileURL(r.rebuilds[0])}" alt="">`
+                               : '<div class="empty">not rendered</div>'}</figure>
+      </div>
+      <div class="row">
+        <button class="btn primary small" onclick="decide('${r.design_id}','approve')">Clear for delivery</button>
+        <button class="btn small" onclick="decide('${r.design_id}','retry')">Run again</button>
+        <button class="btn small" onclick="decide('${r.design_id}','reject')">Keep as master only</button>
+        ${r.listing_url ? `<a class="mono" href="${esc(r.listing_url)}" target="_blank" rel="noreferrer">listing ↗</a>` : ''}
+      </div>
+    </div>`).join('');
+}
+async function decide(id, decision){
+  await api('/api/decide', {design_id:id, decision});
+  loadReview(); loadTotals();
+}
+
+/* ── deliver ──────────────────────────────────────── */
+async function doPublish(dry){
+  $('publish-out').textContent = dry ? 'writing metadata…' : 'uploading…';
+  const r = await api('/api/publish', {dry_run: dry});
+  $('publish-out').innerHTML = r.error
+    ? `<div class="fail">${esc(r.error)}</div>`
+    : `<div>${r.files} files</div>` +
+      Object.entries(r.metadata || {}).map(([k, v]) => `<div>${esc(k)}: ${esc(v)}</div>`).join('') +
+      Object.entries(r.targets || {}).map(([k, v]) => `<div>${esc(k)}: ${esc(JSON.stringify(v))}</div>`).join('');
+  loadTotals();
+}
+async function loadReady(){
+  const rows = await api('/api/designs?state=ready&limit=300');
+  $('ready-table').innerHTML = rows.length
+    ? `<table><thead><tr><th>Design</th><th>Pages</th></tr></thead><tbody>${rows.map(r =>
+        `<tr><td>${esc((r.title || r.design_key || r.id).slice(0,70))}</td>
+             <td>${r.page_count || '—'}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">nothing cleared yet</div>';
+}
+
+/* ── loop ─────────────────────────────────────────── */
+function refresh(){
+  if (active === 'setup')   { loadHealth(); loadConfig(); }
+  if (active === 'sources') { loadTotals(); }
+  if (active === 'queue')   { loadDesigns(); }
+  if (active === 'review')  { loadReview(); }
+  if (active === 'deliver') { loadReady(); loadTotals(); }
+}
+setInterval(async () => {
+  const w = await api('/api/worker');
+  paintWorker(w);
+  if (active === 'queue' && w.state === 'running') loadDesigns();
+}, 2500);
+
+sourceHint();
+refresh();
+</script>

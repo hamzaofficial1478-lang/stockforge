@@ -29,6 +29,7 @@ from .db import Store
 from .schema import DesignSpec
 from .sources import Design, Source
 from .stages import critique as critique_stage
+from .stages import compose as compose_stage
 from .stages import derive as derive_stage
 from .stages import export as export_stage
 from .stages import ingest as ingest_stage
@@ -105,13 +106,27 @@ class Pipeline:
             return "review"
 
         # --- make it our own ------------------------------------------
+        # Mix first, then derive. Mixing takes the grid from one of your
+        # designs, the palette from another and the decoration from a third,
+        # so the result has no single original; deriving then moves that
+        # result on its own terms. Mixing does the heavier lifting.
         source_flat = images[0]
+        pool = self._spec_pool(exclude=design_id)
         derived = spec
         distinct = 0.0
+        recipe = None
 
         for round_ in range(1, self.cfg.max_derive_rounds + 1):
             strength = self.cfg.derive_strength * round_
-            derived = derive_stage.derive(spec, strength=strength, seed=round_)
+            base = spec
+            if pool and self.cfg.mix > 0:
+                base, recipe = compose_stage.compose(
+                    spec, pool,
+                    mix=min(1.0, self.cfg.mix * round_),
+                    seed=abs(hash((design_id, round_))) % 2**31,
+                )
+                log.info("[%s] mixed: %s", design_id[:8], recipe.summary())
+            derived = derive_stage.derive(base, strength=strength, seed=round_)
             preview = self._render_preview(derived, design_id, page=0)
             if preview is None:
                 self.store.queue_review(design_id, "could not render page 0", 0.0)
@@ -123,7 +138,7 @@ class Pipeline:
                      design_id[:8], round_, check.distinct, check.same_family, check.verdict)
 
             if check.verdict == "too_far":
-                derived = derive_stage.derive(spec, strength=strength * 0.5, seed=round_)
+                derived = derive_stage.derive(base, strength=strength * 0.5, seed=round_)
                 break
             if check.verdict == "ship" or check.distinct >= self.cfg.distinct_threshold:
                 break
@@ -181,11 +196,35 @@ class Pipeline:
             self.store.set_design_state(design_id, "review")
             return "review"
 
-        state = "master_only" if not derived.publishable else "ready"
+        state = "ready" if (derived.publishable or self.cfg.publish_all) else "master_only"
         self.store.set_design_state(design_id, state)
         if state == "master_only":
             log.info("[%s] editable master only — %s", design_id[:8], derived.provenance.reason)
+        elif not derived.publishable:
+            log.info("[%s] flagged (%s) but cleared by SF_PUBLISH_ALL",
+                     design_id[:8], derived.provenance.reason)
         return state
+
+    def _spec_pool(self, exclude: str, cap: int = 60) -> list[DesignSpec]:
+        """Other designs of yours already read, available to mix from.
+
+        Capped because a pool of five thousand adds nothing over a pool of
+        sixty — donors are drawn at random from whatever matches the family.
+        """
+        rows = self.store.conn.execute(
+            "SELECT design_id FROM specs WHERE design_id != ? ORDER BY updated_at DESC LIMIT ?",
+            (exclude, cap),
+        ).fetchall()
+        pool: list[DesignSpec] = []
+        for row in rows:
+            raw = self.store.get_spec(row["design_id"])
+            if not raw:
+                continue
+            try:
+                pool.append(DesignSpec.model_validate(raw))
+            except Exception:
+                continue
+        return pool
 
     def _render_preview(self, spec: DesignSpec, design_id: str, page: int) -> Path | None:
         try:
