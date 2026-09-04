@@ -9,15 +9,13 @@ from __future__ import annotations
 import logging
 import re
 import time
-import urllib.request
 from pathlib import Path
 from typing import Iterator
 
 from .base import Design, Source
+from .http import UA, download  # noqa: F401  (UA re-exported)
 
 log = logging.getLogger("stockforge.sources.links")
-
-UA = "Mozilla/5.0 (compatible; stockforge/1.0; own-catalogue-recovery)"
 
 
 def read_links(target: str) -> list[str]:
@@ -28,17 +26,8 @@ def read_links(target: str) -> list[str]:
 
 
 def fetch(url: str, dest: Path, timeout: int = 60) -> Path | None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists() and dest.stat().st_size > 0:
-        return dest
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            dest.write_bytes(resp.read())
-        return dest
-    except Exception as exc:
-        log.warning("could not fetch %s: %s", url, exc)
-        return None
+    """One image. Retries are handled in `sources.http`."""
+    return download(url, dest, timeout=timeout)
 
 
 class LinksSource(Source):

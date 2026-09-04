@@ -87,12 +87,15 @@ def clean_environment():
     """
     import os
 
+    from stockforge.config import settings
+
     before = dict(os.environ)
     try:
         yield
     finally:
         os.environ.clear()
         os.environ.update(before)
+        settings.reload()
 
 
 @pytest.fixture

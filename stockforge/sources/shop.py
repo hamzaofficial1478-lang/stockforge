@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .base import Design, Source
-from .links import UA, fetch
+from .http import UA, Unavailable, download as fetch, get as http_get  # noqa: F401
 
 log = logging.getLogger("stockforge.sources.shop")
 
@@ -42,14 +42,27 @@ API = "https://openapi.etsy.com/v3/application"
 
 
 def _get(url: str, headers: dict | None = None, timeout: int = 45) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
+    """A request that survives a rate limit. See `sources.http`."""
+    return http_get(url, headers, timeout)
 
 
 # --------------------------------------------------------------------------
 # the good route
 # --------------------------------------------------------------------------
+
+def _report(seen: int, dropped: int) -> None:
+    """Say once, at the end, how much of the shop actually made it.
+
+    A listing we could not get a single image for never reaches the pipeline,
+    so without this it simply is not there and nothing says why. Across five
+    thousand listings a handful will do this and you want to know the number.
+    """
+    if dropped:
+        log.warning("walked %d listings; %d had no usable image and are not in "
+                    "the pull", seen, dropped)
+    else:
+        log.info("walked %d listings, every one with images", seen)
+
 
 def _api_headers() -> dict | None:
     key = os.environ.get("SF_ETSY_API_KEY")
@@ -88,9 +101,7 @@ def api_listings(shop: str, headers: dict, limit: int | None = None) -> Iterator
         batch = json.loads(_get(url, headers)).get("results") or []
         if not batch:
             return
-        for listing in batch:
-            yield listing
-            offset += 0
+        yield from batch
         offset += len(batch)
         if limit and offset >= limit:
             return
@@ -172,9 +183,11 @@ class EtsyShopSource(Source):
         headers = _api_headers()
 
         if headers:
+            seen = dropped = 0
             for i, listing in enumerate(api_listings(self.target, headers, self.limit)):
                 if self.limit and i >= self.limit:
-                    return
+                    break
+                seen += 1
                 lid = listing["listing_id"]
                 dest = cache / f"etsy-{lid}"
                 images = []
@@ -188,15 +201,25 @@ class EtsyShopSource(Source):
                         title=listing.get("title"), tags=listing.get("tags") or [],
                         listing_url=listing.get("url"), source="etsy-api",
                     )
+                else:
+                    dropped += 1
+                    log.warning("listing %s: not one image could be fetched", lid)
                 time.sleep(0.3)
+            _report(seen, dropped)
             return
 
         log.warning("no SF_ETSY_API_KEY set — falling back to page parsing, which is "
                     "slower and fragile. An API key is worth the ten minutes.")
+        seen = dropped = 0
         for i, url in enumerate(scrape_listing_urls(self.target)):
             if self.limit and i >= self.limit:
-                return
+                break
+            seen += 1
             design = listing_images(url, cache / f"listing-{i:05d}")
             if design.images:
                 yield design
+            else:
+                dropped += 1
+                log.warning("%s: not one image could be fetched", url)
             time.sleep(1.5)
+        _report(seen, dropped)

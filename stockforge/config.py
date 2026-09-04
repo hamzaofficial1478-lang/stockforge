@@ -120,6 +120,12 @@ class Settings:
     # mistake, so the default leans towards refusing.
     motif_threshold: float = field(default_factory=lambda: _f("SF_MOTIF_THRESHOLD", 0.45))
 
+    # --- fetching ---------------------------------------------------------
+    # A long crawl meets a rate limit and a bad gateway whatever time of day it
+    # starts. These decide how patient it is before it gives up on one request.
+    http_retries: int = field(default_factory=lambda: _i("SF_HTTP_RETRIES", 4))
+    http_backoff: float = field(default_factory=lambda: _f("SF_HTTP_BACKOFF", 2.0))
+
     # --- output ----------------------------------------------------------
     preview_px: int = field(default_factory=lambda: _i("SF_PREVIEW_PX", 1400))
 

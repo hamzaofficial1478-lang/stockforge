@@ -63,6 +63,17 @@ count straight from Etsy, then walks every listing with its images, title and
 tags. Without a key it falls back to parsing public pages, which is slower and
 breaks whenever Etsy changes their markup.
 
+Walking five thousand listings is hours of requests, and somewhere in there
+Etsy will rate limit you and a CDN will hand back a bad gateway. None of that
+is exceptional — it's what a crawl that length looks like — so a 429 or a 5xx
+costs a pause and a retry rather than the whole pull. A 404 doesn't: asking
+again politely won't make a missing listing appear, so it gives up on that one
+and carries on. `SF_HTTP_RETRIES` and `SF_HTTP_BACKOFF` set how patient it is.
+
+At the end it says how many listings it walked and how many had no usable
+image, because those never reach the pipeline and you'd otherwise have no way
+to know they were missing.
+
 `stockforge count shop your-shop-name` answers it without pulling anything.
 
 ### One listing is one design

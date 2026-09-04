@@ -307,6 +307,18 @@ The traversal guard on `/file` has a test now rather than a claim, and the
 worker's start, pause, resume, stop and limit are exercised for the first
 time.
 
+The Etsy door has tests too, against a local server that behaves the way Etsy
+does on a long crawl. It needed them: `_get` was a bare `urlopen` with no error
+handling of any kind, so the first rate limit or bad gateway anywhere in a
+five-thousand listing pull raised and ended it. `sources/http.py` now retries
+what is worth retrying — 429 honouring `Retry-After`, 5xx, dropped connections
+— and does not retry what is not, since a 404 will not become a 200 by asking
+again. `SF_HTTP_RETRIES` and `SF_HTTP_BACKOFF` tune it.
+
+A listing whose images all failed used to vanish from the pull with nothing
+said; the crawl now reports how many listings it walked and how many had no
+usable image.
+
 The export path has since been run for real against Inkscape 1.2.2, not just
 reasoned about. From one spec: `*-master.pdf` comes out with live, extractable
 text and our own three faces subset-embedded; `*.eps` carries no font
