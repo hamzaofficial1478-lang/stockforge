@@ -247,8 +247,10 @@ TODO_DIR = "todo"
 
 # How much two descriptions must have in common to be the same missing thing.
 # Measured against the shorter of the two, so a terse wording still lands in
-# the cluster of a fuller one.
-SAME_GAP = 0.5
+# the cluster of a fuller one. Low, because a catalogue's wordings overlap less
+# than you would think: "a grinning carved pumpkin" and "carved gourd with a
+# grinning face" share only two words out of five.
+SAME_GAP = 0.4
 
 
 @dataclass
@@ -281,10 +283,32 @@ class Gap:
                 f"{self.description[:64]:<64}  {near}")
 
 
+def _same_word(w: str, other: set[str]) -> bool:
+    """Equal, or one is a compound of the other.
+
+    Half the near-misses in real descriptions are compounds — cobweb and web,
+    starburst and star, snowflake and flake. Only at the ends, so "rat" does
+    not quietly match "grate".
+    """
+    if w in other:
+        return True
+    return any(len(o) > len(w) and (o.startswith(w) or o.endswith(w))
+               or len(w) > len(o) and (w.startswith(o) or w.endswith(o))
+               for o in other)
+
+
 def _overlap(a: set[str], b: set[str]) -> float:
+    """How much two descriptions have in common, against the shorter of them.
+
+    Words are all this has to go on, so two names for one thing that share no
+    words stay apart: "jack-o-lantern, lit from inside" and "a grinning carved
+    pumpkin" are the same drawing and will sit on two rows. That costs a longer
+    list, not wasted work — drawing either one collapses both the next time you
+    ask, because the matcher will then answer them both.
+    """
     if not a or not b:
         return 0.0
-    return len(a & b) / min(len(a), len(b))
+    return min(1.0, sum(1 for w in a if _same_word(w, b)) / min(len(a), len(b)))
 
 
 def gaps(specs: Iterable[DesignSpec], motifs_dir: Path,

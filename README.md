@@ -34,7 +34,9 @@ it rests between designs. Live counts of done, to-review and failed, a rate per
 hour, and a rolling log of what just happened.
 
 **Review** — your design and the rebuild side by side, worst first, with three
-buttons: clear it, run it again, or keep it as a master only.
+buttons: clear it, run it again, or keep it as a master only. Above them, what
+to draw next: every decorative element nothing in your library could answer,
+ranked by how many designs are waiting on it.
 
 **Deliver** — dry run writes both agencies' CSVs and tells you the file count
 without uploading. Then send. Titles and keywords are drafted once and kept, so
@@ -186,6 +188,11 @@ cp .env.example .env
 apt install inkscape tesseract-ocr        # export and OCR
 ```
 
+`.env` is read at startup, from the directory you run `stockforge` in, and it's
+the same file the Setup screen writes back to. Anything already exported in
+your shell wins over it, so you can override one setting for a single run.
+`SF_ENV_FILE` points at a different file if you'd rather keep it elsewhere.
+
 Fonts are the one manual step, and it's worth the hour. Drop families you can
 use into `assets/fonts/`, then:
 
@@ -254,7 +261,11 @@ stockforge motifs match "grinning carved pumpkin" --kind seasonal
 `todo` is how the library actually gets built. It reads every decorative
 element nothing could answer, across the whole catalogue, clusters the
 descriptions that mean the same thing — a catalogue words one pumpkin a dozen
-ways — and ranks them by how many designs are waiting on each. Eight hundred
+ways — and ranks them by how many designs are waiting on each. It clusters on
+words, so two names for one thing that share none stay on separate rows:
+"jack-o-lantern, lit from inside" and "a grinning carved pumpkin" are the same
+drawing and it can't tell. That costs a longer list, not wasted work — drawing
+either one collapses both the next time you ask. Eight hundred
 designs blocked on one drawing is a morning's work; the review queue can only
 tell you that as eight hundred separate sentences. `--scaffold` writes a
 tagged stub SVG for each one, into `assets/motifs/todo/`, which the matcher

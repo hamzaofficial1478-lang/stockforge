@@ -9,7 +9,6 @@ from stockforge.schema import (
 )
 from stockforge.sources.base import group_by_stem
 from stockforge.stages import derive as derive_stage
-from stockforge.stages.cluster import Member, cluster, representative
 from stockforge.stages.fonts import FontEntry, match, score
 
 
@@ -244,16 +243,7 @@ def test_listing_images_group_into_one_design():
     assert max(len(v) for v in groups.values()) == 5
 
 
-# --- clustering and fonts -------------------------------------------------
-
-def test_clustering_splits_on_aspect_even_when_hashes_match():
-    a = Member("a", "1" * 32 + "0" * 32, 0.714, 2000)
-    b = Member("b", "1" * 30 + "01" + "0" * 32, 0.714, 1500)
-    c = Member("c", "1" * 32 + "0" * 32, 1.000, 2000)
-    groups = cluster([a, b, c], max_distance=12, aspect_tol=0.04)
-    assert len(groups) == 2
-    assert representative(max(groups.values(), key=len)).asset_id == "a"
-
+# --- fonts ----------------------------------------------------------------
 
 def test_font_matching_prefers_category_over_weight():
     want = FontClass(category="serif", weight=400, contrast="high")

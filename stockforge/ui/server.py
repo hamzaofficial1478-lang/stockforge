@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ..config import Settings, settings as default_settings
+from ..config import Settings, env_file, settings as default_settings
 from ..health import report as health_report
 from ..pipeline import Pipeline
 from ..sources import open_source
@@ -60,7 +60,11 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 def write_env(path: Path, updates: dict[str, str]) -> None:
-    """Rewrite .env, preserving comments and the order of what is already there."""
+    """Rewrite .env, preserving comments and the order of what is already there.
+
+    Written to the same place `config.load_env` reads from, which was the other
+    half of the problem: settings were saved to a file nothing ever loaded.
+    """
     existing = path.read_text().splitlines() if path.exists() else []
     seen: set[str] = set()
     out: list[str] = []
@@ -129,7 +133,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(health_report(self.cfg).as_dict())
 
         if route == "/api/config":
-            env = read_env(Path(".env"))
+            env = read_env(env_file())
             merged = {k: os.environ.get(k, env.get(k, "")) for k in EDITABLE}
             return self._json({
                 "values": {k: ("••••••••" if k in SECRET and v else v)
@@ -150,6 +154,16 @@ class Handler(BaseHTTPRequestHandler):
             limit = int((query.get("limit") or [200])[0])
             rows = pipe.store.designs(state=state)[:limit]
             return self._json([dict(r) for r in rows])
+
+        if route == "/api/motif-gaps":
+            pipe = Pipeline(self.cfg)
+            limit = int((query.get("limit") or [12])[0])
+            return self._json([
+                {"description": g.description, "kind": g.kind, "designs": g.designs,
+                 "seen": g.seen, "variants": g.variants,
+                 "nearest_id": g.nearest_id, "nearest_score": g.nearest_score}
+                for g in pipe.motif_gaps(limit=limit)
+            ])
 
         if route == "/api/review":
             pipe = Pipeline(self.cfg)
@@ -206,8 +220,13 @@ class Handler(BaseHTTPRequestHandler):
                        if k in EDITABLE and v not in ("", "••••••••", None)}
             if not updates:
                 return self._json({"saved": 0})
-            write_env(Path(".env"), updates)
-            return self._json({"saved": len(updates), "keys": sorted(updates)})
+            path = env_file()
+            write_env(path, updates)
+            # The pipeline and the worker hold this object. Without refreshing
+            # it the sliders wrote a file and changed nothing that was running.
+            self.cfg.reload()
+            return self._json({"saved": len(updates), "keys": sorted(updates),
+                               "file": str(path)})
 
         if route == "/api/pull":
             kind, target = body.get("kind"), body.get("target")

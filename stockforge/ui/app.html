@@ -46,6 +46,11 @@
   .card > .hint{color:var(--ink-3);font-size:13px;margin:0 0 14px}
 
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .gap{padding:10px 0;border-top:1px solid var(--line)}
+  .gap:first-of-type{border-top:0}
+  .gap b{font-variant-numeric:tabular-nums}
+  .gap .what{margin-left:6px}
+  .gap .hint{margin:3px 0 0}
   .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
 
   label{display:block;font-size:12px;color:var(--ink-2);margin-bottom:5px;
@@ -251,6 +256,13 @@
   <!-- ── REVIEW ────────────────────────────────────────────── -->
   <section id="review" hidden>
     <p class="lede">Worst first. Everything the program was confident about has already gone through — this is only what it wants a second opinion on.</p>
+
+    <div class="card" id="gaps-card" hidden>
+      <h3>What to draw next</h3>
+      <p class="hint">Every decorative element nothing in your library could answer, gathered across the whole catalogue and ranked by how many designs are waiting on it. The same thing described a dozen ways is one row. <span class="mono">stockforge motifs todo --scaffold</span> writes a tagged stub for each.</p>
+      <div id="gaps-list"></div>
+    </div>
+
     <div id="review-list"><div class="empty">loading…</div></div>
   </section>
 
@@ -423,6 +435,26 @@ async function loadDesigns(){
 }
 
 /* ── review ───────────────────────────────────────── */
+async function loadGaps(){
+  const gaps = await api('/api/motif-gaps');
+  $('gaps-card').hidden = gaps.length === 0;
+  if (!gaps.length) return;
+  const blocked = gaps.reduce((n, g) => n + g.designs, 0);
+  $('gaps-list').innerHTML = gaps.map(g => `
+    <div class="gap">
+      <div class="row">
+        <b>${g.designs}</b> design${g.designs === 1 ? '' : 's'} waiting
+        <span class="tag">${esc(g.kind)}</span>
+        <span class="what">${esc(g.description)}</span>
+      </div>
+      <p class="hint">${g.nearest_id
+        ? `nearest you have: <span class="mono">${esc(g.nearest_id)}</span> at ${g.nearest_score.toFixed(2)}`
+        : 'nothing in the library is close'}${
+        g.variants.length ? ` · also seen as “${esc(g.variants[0])}”` : ''}</p>
+    </div>`).join('')
+    + `<p class="hint" style="margin-top:12px">${gaps.length} to draw, ${blocked} design-slots waiting.</p>`;
+}
+
 async function loadReview(){
   const rows = await api('/api/review');
   if (!rows.length){
@@ -451,7 +483,7 @@ async function loadReview(){
 }
 async function decide(id, decision){
   await api('/api/decide', {design_id:id, decision});
-  loadReview(); loadTotals();
+  loadReview(); loadGaps(); loadTotals();
 }
 
 /* ── deliver ──────────────────────────────────────── */
@@ -479,7 +511,7 @@ function refresh(){
   if (active === 'setup')   { loadHealth(); loadConfig(); }
   if (active === 'sources') { loadTotals(); }
   if (active === 'queue')   { loadDesigns(); }
-  if (active === 'review')  { loadReview(); }
+  if (active === 'review')  { loadReview(); loadGaps(); }
   if (active === 'deliver') { loadReady(); loadTotals(); }
 }
 setInterval(async () => {

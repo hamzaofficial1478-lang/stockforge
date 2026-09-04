@@ -18,8 +18,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .cluster import hamming  # noqa: F401  (re-exported for convenience)
-
 from ..constants import IMAGE_EXTS  # noqa: F401  (re-exported)
 
 

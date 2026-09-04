@@ -76,6 +76,25 @@ def build_motif_library(motifs_dir: Path) -> Path:
     return motifs_dir
 
 
+@pytest.fixture(autouse=True)
+def clean_environment():
+    """Give every test the environment it started with.
+
+    Two things here reach for os.environ on purpose: the panel sets a saved
+    setting on the running process so it takes effect without a restart, and
+    the font stage puts our own folder on fontconfig's search path. Both are
+    right, and both leak between tests without this.
+    """
+    import os
+
+    before = dict(os.environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(before)
+
+
 @pytest.fixture
 def fonts_dir(tmp_path):
     return build_font_library(tmp_path / "fonts")

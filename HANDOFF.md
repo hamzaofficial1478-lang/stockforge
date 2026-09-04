@@ -214,7 +214,6 @@ environment, never the database.
 - `health.py` — the readiness checks behind the Setup screen.
 - `stages/ingest.py` — mockup detection, perspective correction, grey-world
   white balance, perceptual hashing.
-- `stages/cluster.py` — union-find over phash gated on aspect ratio.
 - `stages/render.py` — spec → layered SVG, one call per page.
 - `stages/export.py` — Inkscape for editable-text PDF and EPS; cairosvg fallback.
 - `stages/fonts.py` — manifest-driven matching; refuses any face not explicitly
@@ -242,7 +241,10 @@ and export outlines all text, so no font file ever travels. Settled.
 
 **Clustering.** An early assumption that 5,000 files meant far fewer unique
 designs was **wrong** — they are 5,000 distinct designs. Clustering was
-repurposed to group the 4–6 images belonging to one listing.
+repurposed to group the 4–6 images belonging to one listing, and `group_by_stem`
+in `sources/base.py` does that on filenames alone, so `stages/cluster.py` has
+been deleted. The perceptual hash it worked on is still computed and stored on
+every asset; nothing reads it yet.
 
 ---
 
@@ -284,6 +286,26 @@ skipping what was already there. That found three more bugs.
 Still not checked against the agencies themselves: the CSV column layouts are
 written from general knowledge, and contributor requirements change. Read the
 current documentation before a large upload.
+
+The panel, the settings and the worker now have tests too, and that found the
+last big one: **`.env` was never read.** Nothing in the codebase loaded it.
+The Setup screen wrote your model URL, your Etsy key, your FTP credentials and
+every slider into a file, set them on the running process so they appeared to
+work, and lost the lot on restart — Setup back to red with nothing to explain
+why. `config.load_env()` runs at import now, before anything reads a setting,
+and an exported variable still wins over the file.
+
+Underneath that was a second layer: every scalar setting was a plain dataclass
+default, which Python evaluates once when the class is defined. So a value put
+into the environment after the first `import stockforge.config` could never
+take effect, and the sliders were inert even within a single run. They are
+`default_factory` now, and `Settings.reload()` refreshes the shared instance in
+place — in place because the pipeline, the worker and the panel all hold the
+same one.
+
+The traversal guard on `/file` has a test now rather than a claim, and the
+worker's start, pause, resume, stop and limit are exercised for the first
+time.
 
 The export path has since been run for real against Inkscape 1.2.2, not just
 reasoned about. From one spec: `*-master.pdf` comes out with live, extractable
