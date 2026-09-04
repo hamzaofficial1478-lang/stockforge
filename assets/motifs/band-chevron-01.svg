@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
+     data-kind="geometric"
+     data-tags="chevron, zigzag, band, border, geometric, pattern, repeat">
+  <title>Chevron band</title>
+  <desc>a zigzag band running the full width, for a border or a divider</desc>
+  <path d="M0.0 38.0 L12.5 62.0 L25.0 38.0 L37.5 62.0 L50.0 38.0 L62.5 62.0 L75.0 38.0 L87.5 62.0 L100.0 38.0 L100 49.0 L100.0 49.0 L87.5 73.0 L75.0 49.0 L62.5 73.0 L50.0 49.0 L37.5 73.0 L25.0 49.0 L12.5 73.0 L0.0 49.0 Z"/>
+</svg>

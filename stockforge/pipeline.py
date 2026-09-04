@@ -20,6 +20,7 @@ off:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -45,6 +46,18 @@ log = logging.getLogger("stockforge")
 CRAMPED = 0.65
 
 
+def _seed(*parts: object) -> int:
+    """A seed that is the same next week as it is today.
+
+    Python salts str hashing per process, so `hash(design_id)` gives a
+    different number every run. Compose records a recipe so you can re-run a
+    mix you liked with one ingredient swapped — that promise needs a seed that
+    does not move when the interpreter restarts.
+    """
+    blob = ":".join(str(p) for p in parts).encode()
+    return int.from_bytes(hashlib.sha256(blob).digest()[:4], "big")
+
+
 class Pipeline:
     def __init__(self, cfg: Settings | None = None):
         self.cfg = cfg or default_settings
@@ -67,12 +80,23 @@ class Pipeline:
                 # images we already hold.
                 try:
                     known = self.store.conn.execute(
-                        "SELECT flat_path FROM assets WHERE id=?",
+                        "SELECT * FROM assets WHERE id=? LIMIT 1",
                         (ingest_stage.sha256_file(image),)).fetchone()
                 except OSError as exc:
                     log.warning("skipped %s: %s", image.name, exc)
                     continue
                 if known and known["flat_path"] and Path(known["flat_path"]).exists():
+                    # Flattened already, for this design or for another one.
+                    # Record that it belongs to this design as well: a shared
+                    # size chart or mockup backdrop belongs to every listing
+                    # that uses it, not just the first one pulled.
+                    self.store.add_asset(
+                        id=known["id"], src_path=str(image), flat_path=known["flat_path"],
+                        width=known["width"], height=known["height"],
+                        aspect=known["aspect"], phash=known["phash"],
+                        is_mockup=known["is_mockup"], design_id=design.stable_id,
+                        state="ingested",
+                    )
                     flats.append(Path(known["flat_path"]))
                     continue
 
@@ -153,10 +177,16 @@ class Pipeline:
                 base, recipe = compose_stage.compose(
                     spec, pool,
                     mix=min(1.0, self.cfg.mix * round_),
-                    seed=abs(hash((design_id, round_))) % 2**31,
+                    seed=_seed("mix", design_id, round_),
                 )
                 log.info("[%s] mixed: %s", design_id[:8], recipe.summary())
-            derived = derive_stage.derive(base, strength=strength, seed=round_)
+            # Seeded from the design, not just the round. Seeding on the
+            # round alone gave every design in the catalogue the identical
+            # derivation — the same hue rotation, the same weight jitter — so
+            # five thousand pieces got one transformation between them, which
+            # is the opposite of what this stage is for.
+            derived = derive_stage.derive(base, strength=strength,
+                                          seed=_seed("derive", design_id, round_))
             preview = self._render_preview(derived, design_id, page=0)
             if preview is None:
                 self.store.queue_review(design_id, "could not render page 0", 0.0)
@@ -177,7 +207,8 @@ class Pipeline:
                      design_id[:8], round_, check.distinct, check.same_family, check.verdict)
 
             if check.verdict == "too_far":
-                derived = derive_stage.derive(base, strength=strength * 0.5, seed=round_)
+                derived = derive_stage.derive(
+                    base, strength=strength * 0.5, seed=_seed("derive", design_id, round_))
                 break
             if check.verdict == "ship" or check.distinct >= self.cfg.distinct_threshold:
                 break
@@ -257,26 +288,51 @@ class Pipeline:
                      design_id[:8], derived.provenance.reason)
         return state
 
-    def _spec_pool(self, exclude: str, cap: int = 60) -> list[DesignSpec]:
-        """Other designs of yours already read, available to mix from.
+    def _specs(self, exclude: str | None = None, cap: int | None = None) -> list[DesignSpec]:
+        """Every design already read, newest first.
 
-        Capped because a pool of five thousand adds nothing over a pool of
-        sixty — donors are drawn at random from whatever matches the family.
+        A spec that will not load is said out loud. Swallowing it silently is
+        how an empty donor pool looks exactly like a catalogue of one.
         """
-        rows = self.store.conn.execute(
-            "SELECT design_id FROM specs WHERE design_id != ? ORDER BY updated_at DESC LIMIT ?",
-            (exclude, cap),
-        ).fetchall()
-        pool: list[DesignSpec] = []
-        for row in rows:
+        sql = "SELECT design_id FROM specs"
+        params: tuple = ()
+        if exclude:
+            sql += " WHERE design_id != ?"
+            params = (exclude,)
+        sql += " ORDER BY updated_at DESC"
+        if cap:
+            sql += f" LIMIT {int(cap)}"
+
+        out: list[DesignSpec] = []
+        for row in self.store.conn.execute(sql, params).fetchall():
             raw = self.store.get_spec(row["design_id"])
             if not raw:
                 continue
             try:
-                pool.append(DesignSpec.model_validate(raw))
-            except Exception:
-                continue
-        return pool
+                out.append(DesignSpec.model_validate(raw))
+            except Exception as exc:
+                log.warning("stored spec for %s will not load: %s",
+                            row["design_id"][:8], str(exc)[:200])
+        return out
+
+    def _spec_pool(self, exclude: str, cap: int = 60) -> list[DesignSpec]:
+        """Other designs of yours available to mix from.
+
+        Capped because a pool of five thousand adds nothing over a pool of
+        sixty — donors are drawn at random from whatever matches the family.
+        """
+        return self._specs(exclude=exclude, cap=cap)
+
+    def motif_gaps(self, limit: int | None = None) -> list[motifs_stage.Gap]:
+        """What to draw next, ranked by how many designs are waiting on it.
+
+        Read from the specs rather than from the review rows: a review row
+        holds the reason as a sentence with at most five descriptions in it,
+        which is fine to read and useless to work from.
+        """
+        found = motifs_stage.gaps(self._specs(), self.cfg.motifs_dir,
+                                  self.cfg.motif_threshold)
+        return found[:limit] if limit else found
 
     def _render_preview(self, spec: DesignSpec, design_id: str, page: int) -> Path | None:
         try:
@@ -315,7 +371,7 @@ class Pipeline:
         c = self.store.conn
         one = lambda q: c.execute(q).fetchone()["n"]
         return {
-            "images": one("SELECT COUNT(*) n FROM assets"),
+            "images": one("SELECT COUNT(DISTINCT id) n FROM assets"),
             "designs": one("SELECT COUNT(*) n FROM designs"),
             "ready_to_publish": one("SELECT COUNT(*) n FROM designs WHERE state='ready'"),
             "editable_master_only": one("SELECT COUNT(*) n FROM designs WHERE state='master_only'"),

@@ -296,6 +296,22 @@ in.
    - **A second `pull` re-flattened every image it already held.** Hashing the
      bytes is far cheaper than decoding and warping one, so a known image is
      now skipped before that work happens rather than after it.
+   - **An image used by two listings belonged to only one of them.** `assets`
+     was keyed on the image bytes alone, and a shop reuses the same size chart,
+     the same "instant download" graphic and the same mockup backdrop across
+     every listing it has. Whichever listing was pulled first took the image;
+     a listing whose images were all shared ended up with none and failed to
+     build outright. Assets are now keyed on the image *and* the design, with a
+     migration for an existing workspace.
+   - **Every design got an identical derivation.** `build` seeded `derive` on
+     the round number, so round one was seed one for the whole catalogue: the
+     same hue rotation and the same weight jitter on all five thousand pieces,
+     which is the opposite of what the stage is for. Compose was already seeded
+     per design; derive had been missed. Both now take their own generator
+     rather than reseeding the process — reseeding the module-wide one made
+     every caller's randomness a function of ours — and the seed is a stable
+     hash, because Python salts `hash()` per process and compose promises you
+     can re-run a recipe you liked.
    - **Placeholder rewrites had no length limit.** The prompt asks for similar
      lengths and a local model will not always oblige; a name half again as
      long as the one it replaced would be shrunk by the fitter, and the piece
@@ -306,6 +322,15 @@ in.
    professional or looks like a wireframe. Every unmatched motif sends its design
    to review, which is how you learn what to draw. It cannot be designed in the
    abstract; it needs real images.
+
+   Eleven motifs now ship — rules, frames, an arch, a corner flourish, a
+   laurel, three sprigs, a burst and a chevron band — all structural geometry
+   rather than illustration. The seasonal and pictorial half is still the
+   owner's to draw, and `stockforge motifs todo` is how they find out which
+   ones to draw first: it gathers every unanswered element across the
+   catalogue, clusters the wordings that mean the same thing, and ranks them by
+   how many designs are held up. `--scaffold` writes a tagged stub for each,
+   into a folder the matcher cannot see.
 
    The *matcher* now exists (`stages/motifs.py`). Before it, `library_id` was
    read in three places and written in none, so no motif could ever be placed

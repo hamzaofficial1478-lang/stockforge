@@ -191,3 +191,74 @@ def test_a_library_id_cannot_walk_out_of_the_motif_folder(tmp_path):
     result = render(spec, fonts, library)
     assert "<ellipse" not in result.svg
     assert result.missing_motifs == ["anything at all"]
+
+
+# --- what to draw next ----------------------------------------------------
+
+def _spec_with(*motifs, design_id: str) -> DesignSpec:
+    spec = _spec(*[_motif_el(k, d) for k, d in motifs])
+    spec.design_id = design_id
+    return spec
+
+
+def test_the_same_missing_thing_worded_differently_is_one_job(tmp_path):
+    """A catalogue describes one pumpkin a dozen ways. Clustering on the
+    subject words is what turns three thousand descriptions into forty
+    drawings."""
+    _write(tmp_path, "pumpkin-01.svg", TAGGED)
+    specs = [
+        _spec_with((MotifKind.SEASONAL, "a friendly floating ghost, sheet draped"),
+                   design_id="d1"),
+        _spec_with((MotifKind.SEASONAL, "a floating ghost under a draped sheet"),
+                   design_id="d2"),
+        _spec_with((MotifKind.SEASONAL, "small ghost, sheet draped over it"),
+                   design_id="d3"),
+        _spec_with((MotifKind.FRAME, "a cobweb spanning the upper corner"),
+                   design_id="d4"),
+    ]
+    found = motifs_stage.gaps(specs, tmp_path)
+
+    assert len(found) == 2, [g.description for g in found]
+    ghost, web = found
+    assert ghost.designs == 3
+    assert ghost.seen == 3
+    assert len(ghost.variants) == 2
+    assert web.designs == 1
+    assert ghost.designs > web.designs, "the work list is ranked by what it unblocks"
+
+
+def test_a_motif_the_library_already_answers_is_not_a_gap(tmp_path):
+    _write(tmp_path, "pumpkin-01.svg", TAGGED)
+    specs = [_spec_with((MotifKind.SEASONAL, "a grinning carved jack-o-lantern"),
+                        design_id="d1"),
+             _spec_with((MotifKind.SEASONAL, "a friendly floating ghost"),
+                        design_id="d2")]
+    found = motifs_stage.gaps(specs, tmp_path)
+    assert [g.designs for g in found] == [1]
+    assert "ghost" in found[0].description
+
+
+def test_a_gap_says_what_the_nearest_thing_you_have_is(tmp_path):
+    """So you can tell 'draw this' from 'tag what you already have better'."""
+    _write(tmp_path, "pumpkin-01.svg", TAGGED)
+    found = motifs_stage.gaps(
+        [_spec_with((MotifKind.SEASONAL, "a carved pumpkin, but stylised flat"),
+                    design_id="d1")], tmp_path, threshold=0.99)
+    assert found[0].nearest_id == "pumpkin-01"
+    assert found[0].nearest_score > 0.5
+
+
+def test_a_stub_is_written_where_the_matcher_cannot_reach_it(tmp_path):
+    """An empty stub that could be matched and placed would be worse than the
+    hole it stands for."""
+    _write(tmp_path, "pumpkin-01.svg", TAGGED)
+    gap = motifs_stage.gaps(
+        [_spec_with((MotifKind.SEASONAL, "a friendly floating ghost, sheet draped"),
+                    design_id="d1")], tmp_path)[0]
+
+    stub = motifs_stage.scaffold(gap, tmp_path)
+    assert stub.parent.name == motifs_stage.TODO_DIR
+    assert 'data-kind="seasonal"' in stub.read_text()
+    assert "ghost" in stub.read_text()
+
+    assert [e.library_id for e in motifs_stage.load(tmp_path)] == ["pumpkin-01"]

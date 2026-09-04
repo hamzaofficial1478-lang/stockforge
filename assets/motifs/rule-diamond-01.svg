@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
+     data-kind="rule"
+     data-tags="rule, divider, diamond, line, centre, ornament">
+  <title>Rule with centre diamond</title>
+  <desc>a thin horizontal rule interrupted by a small diamond at its middle</desc>
+  <rect x="2" y="49.2" width="36" height="1.6"/>
+  <rect x="62" y="49.2" width="36" height="1.6"/>
+  <path d="M50 42 L57 50 L50 58 L43 50 Z"/>
+</svg>

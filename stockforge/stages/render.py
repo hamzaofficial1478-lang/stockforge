@@ -166,9 +166,14 @@ def _motif(spec: DesignSpec, el: MotifElement, w: float, h: float, motifs_dir: P
     sx, sy = bw / 100.0, bh / 100.0
     flip = f' transform="translate({bw:.2f} 0) scale(-1 1)"' if el.flip_x else ""
     rot = _rot(el, bw / 2, bh / 2)
+    # `color` as well as `fill`, so a motif drawn in line rather than in solid
+    # can say stroke="currentColor" and recolour with the design. Without it a
+    # stroked motif is stuck at whatever it was authored in, which is a strange
+    # thing for a library built around colour roles.
+    paint = _fill(spec, el.colour)
     return (
         f'<g transform="translate({x:.2f} {y:.2f})"><g{rot}><g transform="scale({sx:.4f} {sy:.4f})">'
-        f'<g{flip} fill="{_fill(spec, el.colour)}">{body}</g></g></g></g>'
+        f'<g{flip} fill="{paint}" color="{paint}">{body}</g></g></g></g>'
     )
 
 

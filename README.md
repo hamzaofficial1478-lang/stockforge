@@ -244,12 +244,32 @@ the match. `data-kind` must be one of the motif kinds in `schema.py`.
 
 ```bash
 stockforge motifs list
+stockforge motifs todo --scaffold
 stockforge motifs match "grinning carved pumpkin" --kind seasonal
 ```
+
+`todo` is how the library actually gets built. It reads every decorative
+element nothing could answer, across the whole catalogue, clusters the
+descriptions that mean the same thing — a catalogue words one pumpkin a dozen
+ways — and ranks them by how many designs are waiting on each. Eight hundred
+designs blocked on one drawing is a morning's work; the review queue can only
+tell you that as eight hundred separate sentences. `--scaffold` writes a
+tagged stub SVG for each one, into `assets/motifs/todo/`, which the matcher
+deliberately cannot see. Draw into it and move the file up a level.
 
 `match` shows every candidate and its score, so when something wasn't placed
 you can see whether it wanted a tag or a new drawing. `SF_MOTIF_THRESHOLD` is
 how close is close enough, and it's a slider on the Setup screen.
+
+Eleven motifs ship with it — rules, frames, an arch, a corner flourish, a
+laurel, three sprigs, a burst and a chevron band. They're the structural pieces
+every occasion needs, and they're geometry rather than illustration, which is
+the line: a pumpkin, a ghost or a painted character is a drawing somebody has
+to make, and the review queue is what tells you which ones are worth making.
+
+Draw with filled shapes wherever you can — they inherit the group's fill and so
+recolour with the design. Where you genuinely want a line, `stroke="currentColor"`
+picks up the same colour. Never hard-code one.
 
 ## Use
 

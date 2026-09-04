@@ -8,15 +8,18 @@ Kill the process at any point and re-running picks up exactly where it stopped.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+log = logging.getLogger("stockforge.db")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS assets (
-    id            TEXT PRIMARY KEY,      -- sha256 of the original bytes
+    id            TEXT NOT NULL,         -- sha256 of the original bytes
     src_path      TEXT NOT NULL,
     flat_path     TEXT,                  -- normalised, de-mockupped artwork
     width         INTEGER,
@@ -24,10 +27,17 @@ CREATE TABLE IF NOT EXISTS assets (
     aspect        REAL,
     phash         TEXT,
     is_mockup     INTEGER DEFAULT 0,
-    design_id     TEXT,
+    design_id     TEXT NOT NULL,
     state         TEXT NOT NULL DEFAULT 'ingested',
     error         TEXT,
-    created_at    REAL NOT NULL
+    created_at    REAL NOT NULL,
+    -- One row per image per design, not one per image. A shop reuses the same
+    -- size chart, the same 'instant download' graphic and the same mockup
+    -- backdrop across every listing it has. Keying on the bytes alone gave
+    -- such an image to whichever listing was pulled first and quietly took it
+    -- from the rest; a listing whose images were all shared ended up with
+    -- none at all and failed to build.
+    PRIMARY KEY (id, design_id)
 );
 
 CREATE TABLE IF NOT EXISTS designs (
@@ -90,6 +100,30 @@ class Store:
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(SCHEMA)
         self.conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Bring an older workspace up to date. There is one migration so far."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='assets'"
+        ).fetchone()
+        if not row or "PRIMARY KEY (id, design_id)" in row["sql"]:
+            return
+
+        # assets used to be keyed on the image bytes alone, so an image used
+        # by two listings belonged to only one of them.
+        log.info("migrating assets so a shared image can belong to every design that uses it")
+        with self.tx() as c:
+            c.execute("ALTER TABLE assets RENAME TO assets_v1")
+            c.executescript(SCHEMA)
+            c.execute(
+                "INSERT OR IGNORE INTO assets (id, src_path, flat_path, width, height, "
+                "aspect, phash, is_mockup, design_id, state, error, created_at) "
+                "SELECT id, src_path, flat_path, width, height, aspect, phash, "
+                "is_mockup, COALESCE(design_id, ''), state, error, created_at "
+                "FROM assets_v1"
+            )
+            c.execute("DROP TABLE assets_v1")
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:

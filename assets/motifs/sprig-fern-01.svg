@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
+     data-kind="botanical"
+     data-tags="fern, frond, leaf, leaves, foliage, greenery, botanical">
+  <title>Fern frond</title>
+  <desc>a single upright fern frond, leaflets narrowing towards the tip</desc>
+  <path d="M50 97 C 50 70, 50 40, 50 6" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+  <ellipse cx="35.7" cy="88.0" rx="14.3" ry="2.6" transform="rotate(26.0 35.7 88.0)"/>
+  <ellipse cx="64.3" cy="88.0" rx="14.3" ry="2.6" transform="rotate(-26.0 64.3 88.0)"/>
+  <ellipse cx="36.8" cy="80.0" rx="13.2" ry="2.6" transform="rotate(26.0 36.8 80.0)"/>
+  <ellipse cx="63.2" cy="80.0" rx="13.2" ry="2.6" transform="rotate(-26.0 63.2 80.0)"/>
+  <ellipse cx="38.0" cy="72.0" rx="12.0" ry="2.6" transform="rotate(26.0 38.0 72.0)"/>
+  <ellipse cx="62.0" cy="72.0" rx="12.0" ry="2.6" transform="rotate(-26.0 62.0 72.0)"/>
+  <ellipse cx="39.1" cy="64.0" rx="10.9" ry="2.6" transform="rotate(26.0 39.1 64.0)"/>
+  <ellipse cx="60.9" cy="64.0" rx="10.9" ry="2.6" transform="rotate(-26.0 60.9 64.0)"/>
+  <ellipse cx="40.3" cy="56.0" rx="9.7" ry="2.6" transform="rotate(26.0 40.3 56.0)"/>
+  <ellipse cx="59.7" cy="56.0" rx="9.7" ry="2.6" transform="rotate(-26.0 59.7 56.0)"/>
+  <ellipse cx="41.4" cy="48.0" rx="8.6" ry="2.6" transform="rotate(26.0 41.4 48.0)"/>
+  <ellipse cx="58.6" cy="48.0" rx="8.6" ry="2.6" transform="rotate(-26.0 58.6 48.0)"/>
+  <ellipse cx="42.6" cy="40.0" rx="7.4" ry="2.6" transform="rotate(26.0 42.6 40.0)"/>
+  <ellipse cx="57.4" cy="40.0" rx="7.4" ry="2.6" transform="rotate(-26.0 57.4 40.0)"/>
+  <ellipse cx="43.7" cy="32.0" rx="6.3" ry="2.6" transform="rotate(26.0 43.7 32.0)"/>
+  <ellipse cx="56.3" cy="32.0" rx="6.3" ry="2.6" transform="rotate(-26.0 56.3 32.0)"/>
+  <ellipse cx="44.9" cy="24.0" rx="5.1" ry="2.6" transform="rotate(26.0 44.9 24.0)"/>
+  <ellipse cx="55.1" cy="24.0" rx="5.1" ry="2.6" transform="rotate(-26.0 55.1 24.0)"/>
+  <ellipse cx="46.0" cy="16.0" rx="4.0" ry="2.6" transform="rotate(26.0 46.0 16.0)"/>
+  <ellipse cx="54.0" cy="16.0" rx="4.0" ry="2.6" transform="rotate(-26.0 54.0 16.0)"/>
+  <ellipse cx="47.1" cy="8.0" rx="2.9" ry="2.6" transform="rotate(26.0 47.1 8.0)"/>
+  <ellipse cx="52.9" cy="8.0" rx="2.9" ry="2.6" transform="rotate(-26.0 52.9 8.0)"/>
+</svg>

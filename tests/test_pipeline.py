@@ -277,6 +277,36 @@ def test_pulling_again_does_not_re_flatten_what_we_already_hold(workspace, tmp_p
     assert again == stamps, "the same images were flattened a second time"
 
 
+def test_an_image_used_by_two_listings_belongs_to_both(workspace, tmp_path):
+    """A shop puts the same size chart, the same 'instant download' graphic and
+    the same mockup backdrop on every listing it has. Keying assets on the
+    bytes alone gave that image to whichever listing was pulled first, and a
+    listing whose images were all shared ended up with none and failed."""
+    import shutil
+
+    provider = ScriptedProvider()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+
+    exports = tmp_path / "exports"
+    _listing(exports, "invite-one")
+    # the second listing reuses the first one's images, byte for byte
+    for n in (1, 2):
+        shutil.copy(exports / f"invite-one-{n}.png", exports / f"invite-two-{n}.png")
+
+    pipe = Pipeline(workspace)
+    assert pipe.pull(open_source("folder", str(exports))) == 2
+
+    for row in pipe.store.designs():
+        linked = pipe.store.conn.execute(
+            "SELECT COUNT(*) n FROM assets WHERE design_id=?", (row["id"],)).fetchone()
+        assert linked["n"] == 2, f"{row['design_key']} lost its images"
+
+    assert pipe.status()["images"] == 2, "still only two distinct images"
+    for row in pipe.store.designs():
+        assert pipe.build(row["id"]) != "failed"
+
+
 def test_the_run_loop_reports_what_it_did(workspace, tmp_path):
     provider = ScriptedProvider()
     providers.set_provider("vision", provider)

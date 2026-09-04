@@ -86,11 +86,14 @@ def cmd_publish(pipe: Pipeline, dry_run: bool) -> None:
         print(f"{name}: {done} uploaded, {len(result) - done} skipped or failed")
 
 
-def cmd_motifs(args) -> int:
-    """`list` shows the library; `match` shows why a description did or did not
-    find something in it, which is how you work out what to draw next."""
+def cmd_motifs(args, pipe: Pipeline) -> int:
+    """`list` shows the library, `todo` says what to draw next and why, and
+    `match` explains a single description that did or did not find a home."""
     from .schema import Box, MotifElement, MotifKind
     from .stages import motifs as motifs_stage
+
+    if args.action == "todo":
+        return cmd_motifs_todo(args, pipe)
 
     library = motifs_stage.load(settings.motifs_dir)
     if not library:
@@ -123,6 +126,40 @@ def cmd_motifs(args) -> int:
         print(f"{'-> ' if placed else '   '}{score:.3f}  {entry.library_id}")
     print(f"\nthreshold {settings.motif_threshold:.2f} — anything below it is left "
           f"as a hole, and its description goes to review as something to draw.")
+    return 0
+
+
+def cmd_motifs_todo(args, pipe: Pipeline) -> int:
+    """The work list. Every decorative element nothing in the library could
+    answer, gathered across the whole catalogue and ranked by how many designs
+    are held up by each — because eight hundred designs waiting on one pumpkin
+    is a morning's work, and the review queue cannot tell you that."""
+    from .stages import motifs as motifs_stage
+
+    found = pipe.motif_gaps()
+    if not found:
+        total = len(pipe.store.designs())
+        print("nothing missing." if total else
+              "no designs have been read yet, so nothing can be missing. "
+              "`stockforge pull` and `stockforge run` first.")
+        return 0
+
+    blocked = sum(g.designs for g in found)
+    print(f"{len(found)} motifs to draw, {blocked} design-slots waiting on them.\n")
+    for gap in found[:args.limit]:
+        print(gap.line())
+        for other in gap.variants[:2]:
+            print(f"{'':>16}also seen as: {other[:70]}")
+    if len(found) > args.limit:
+        print(f"\n… and {len(found) - args.limit} more. --limit to see them.")
+
+    if args.scaffold:
+        print()
+        for gap in found[:args.limit]:
+            print(f"  wrote {motifs_stage.scaffold(gap, settings.motifs_dir)}")
+        print("\nEach stub carries its own tags and description. Draw on the "
+              "0..100 square, leave the fill alone, then move the file up into "
+              f"{settings.motifs_dir} — nothing in the todo folder is matched.")
     return 0
 
 
@@ -159,11 +196,14 @@ def main(argv: list[str] | None = None) -> int:
     f = sub.add_parser("fonts", help="manage the font library")
     f.add_argument("action", choices=["scan", "list"])
 
-    m = sub.add_parser("motifs", help="inspect the motif library")
-    m.add_argument("action", choices=["list", "match"])
+    m = sub.add_parser("motifs", help="inspect the motif library and grow it")
+    m.add_argument("action", choices=["list", "match", "todo"])
     m.add_argument("description", nargs="?", help="for `match` — what the analyser saw")
     m.add_argument("--kind", default="icon",
                    help="for `match` — botanical, seasonal, frame, ...")
+    m.add_argument("--limit", type=int, default=20, help="for `todo` — how many to show")
+    m.add_argument("--scaffold", action="store_true",
+                   help="for `todo` — write a tagged stub SVG for each one")
 
     args = p.parse_args(argv)
     _log(args.verbose)
@@ -188,9 +228,6 @@ def main(argv: list[str] | None = None) -> int:
                       f"{e.category:<12} {e.weight:<4} {e.licence}")
         return 0
 
-    if args.cmd == "motifs":
-        return cmd_motifs(args)
-
     if args.cmd == "count":
         source = open_source(args.kind, args.target)
         n = source.count()
@@ -198,6 +235,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     pipe = Pipeline(settings)
+
+    if args.cmd == "motifs":
+        return cmd_motifs(args, pipe)
 
     if args.cmd == "pull":
         source = open_source(args.kind, args.target,

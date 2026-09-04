@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
+     data-kind="frame"
+     data-tags="frame, border, rectangle, outline, thin, panel">
+  <title>Thin rectangular frame</title>
+  <desc>a slender rectangular border set in from the edge of the piece</desc>
+  <path fill-rule="evenodd" d="M3 3 H97 V97 H3 Z M5 5 V95 H95 V5 Z"/>
+</svg>

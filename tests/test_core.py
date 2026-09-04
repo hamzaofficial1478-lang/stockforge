@@ -146,6 +146,76 @@ def test_copy_that_the_model_did_not_return_leaves_the_original_alone():
     assert spec.texts()[0].content == "Chloe & Liam"
 
 
+def _stub_copy():
+    from stockforge.providers.base import VisionProvider
+    from stockforge.stages.derive import NewCopy
+
+    class _Copy(VisionProvider):
+        name = "copy"
+
+        def chat(self, *a, **kw):
+            raise AssertionError("structured is overridden")
+
+        def structured(self, system, user_text, images, model, **kw):
+            return NewCopy(replacements=[])
+
+    return _Copy()
+
+
+def test_two_designs_do_not_get_the_same_derivation():
+    """The pipeline used to seed on the round number alone, so round one was
+    seed one for every design in the catalogue: five thousand pieces sharing a
+    single hue rotation, which is the opposite of what deriving is for."""
+    from stockforge.pipeline import _seed
+    from stockforge.stages.derive import derive
+
+    accents = {
+        derive(_spec(), strength=0.5, seed=_seed("derive", did, 1),
+               provider=_stub_copy()).dna.palette.get(ColourRole.ACCENT)
+        for did in ("a1b2c3", "d4e5f6", "9a8b7c", "112233")
+    }
+    assert len(accents) == 4
+
+
+def test_the_same_design_derives_the_same_way_every_time():
+    from stockforge.pipeline import _seed
+    from stockforge.stages.derive import derive
+
+    seed = _seed("derive", "a1b2c3", 1)
+    first = derive(_spec(), strength=0.5, seed=seed, provider=_stub_copy())
+    again = derive(_spec(), strength=0.5, seed=seed, provider=_stub_copy())
+    assert (first.dna.palette.get(ColourRole.ACCENT)
+            == again.dna.palette.get(ColourRole.ACCENT))
+
+
+def test_a_seed_survives_a_restart():
+    """Python salts str hashing per process. A recipe you want to re-run next
+    week cannot be seeded on hash()."""
+    import subprocess
+    import sys
+
+    code = ("import sys; sys.path.insert(0, '.'); "
+            "from stockforge.pipeline import _seed; print(_seed('derive', 'a1b2c3', 1))")
+    runs = {subprocess.run([sys.executable, "-c", code], capture_output=True,
+                           text=True, env={"PYTHONHASHSEED": str(n)}).stdout.strip()
+            for n in (1, 2, 3)}
+    assert len(runs) == 1, f"the seed moved between runs: {runs}"
+
+
+def test_deriving_does_not_disturb_anybody_else_s_randomness():
+    import random
+
+    from stockforge.stages.derive import derive
+
+    random.seed(99)
+    expected = [random.random() for _ in range(3)][1:]
+
+    random.seed(99)
+    random.random()
+    derive(_spec(), strength=0.5, seed=1, provider=_stub_copy())
+    assert [random.random() for _ in range(2)] == expected
+
+
 # --- providers ------------------------------------------------------------
 
 @pytest.mark.parametrize("raw", [

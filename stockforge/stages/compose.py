@@ -96,8 +96,7 @@ def compose(
     roughly half the ingredients are borrowed from other designs. At 1.0 every
     ingredient that can be borrowed is.
     """
-    if seed is not None:
-        random.seed(seed)
+    rng = random.Random(seed)
 
     out = base.model_copy(deep=True)
     recipe = Recipe(base=base.source_asset_id)
@@ -108,18 +107,18 @@ def compose(
         return out, recipe
 
     def borrow() -> bool:
-        return random.random() < mix
+        return rng.random() < mix
 
     # --- palette -----------------------------------------------------
     if borrow():
-        donor = random.choice(donors)
+        donor = rng.choice(donors)
         if donor.dna.palette.swatches:
             out.dna.palette = donor.dna.palette.model_copy(deep=True)
             recipe.palette_from = donor.source_asset_id
 
     # --- type --------------------------------------------------------
     if borrow():
-        donor = random.choice(donors)
+        donor = rng.choice(donors)
         pairing = donor.dna.type_pairing or [t.font for t in donor.texts()[:2]]
         if pairing:
             out.dna.type_pairing = [f.model_copy(deep=True) for f in pairing]
@@ -131,13 +130,13 @@ def compose(
 
     # --- background --------------------------------------------------
     if borrow():
-        donor = random.choice(donors)
+        donor = rng.choice(donors)
         out.dna.background = donor.dna.background.model_copy(deep=True)
         recipe.background_from = donor.source_asset_id
 
     # --- decoration --------------------------------------------------
     if borrow():
-        donor = random.choice(donors)
+        donor = rng.choice(donors)
         donor_motifs = donor.motifs()
         if donor_motifs:
             _swap_motifs(out, donor_motifs)
@@ -148,7 +147,7 @@ def compose(
 
     # --- grid --------------------------------------------------------
     if borrow():
-        donor = random.choice(donors)
+        donor = rng.choice(donors)
         out.dna.grid = donor.dna.grid.model_copy(deep=True)
         recipe.notes.append(f"grid from {donor.source_asset_id[:8]}")
 

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
+     data-kind="frame"
+     data-tags="arch, frame, border, panel, arched, outline, doorway">
+  <title>Arched panel frame</title>
+  <desc>an arched panel outline, semicircular at the top and square at the foot</desc>
+  <path fill-rule="evenodd" d="M6 97 V32 A44 44 0 0 1 94 32 V97 Z M8.5 94.5 V32 A41.5 41.5 0 0 1 91.5 32 V94.5 Z"/>
+</svg>

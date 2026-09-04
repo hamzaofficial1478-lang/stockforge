@@ -31,8 +31,10 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Iterable
 
 from ..schema import DesignSpec, MotifElement, MotifKind
 
@@ -237,6 +239,146 @@ def match(el: MotifElement, library: list[MotifEntry],
 
 
 # --------------------------------------------------------------------------
+
+# Stubs are written here rather than beside the real motifs. `scan` only ever
+# looks at the top level, so a stub cannot be matched and placed before anyone
+# has drawn into it — which would be worse than the hole it stands for.
+TODO_DIR = "todo"
+
+# How much two descriptions must have in common to be the same missing thing.
+# Measured against the shorter of the two, so a terse wording still lands in
+# the cluster of a fuller one.
+SAME_GAP = 0.5
+
+
+@dataclass
+class Gap:
+    """One thing the library has not got, and what it is costing.
+
+    A review queue that says "no library match for: a grinning carved pumpkin"
+    on eight hundred separate rows tells you nothing you can act on. This says
+    eight hundred designs are waiting on one drawing, which is a morning's work
+    and the single most valuable thing you could do that day.
+    """
+
+    description: str                 # the wording to draw from
+    kind: str
+    designs: int                     # how many designs are held up by it
+    seen: int = 0                    # how many elements in total
+    variants: list[str] = field(default_factory=list)
+    nearest_id: str | None = None    # the closest thing already in the library
+    nearest_score: float = 0.0
+
+    @property
+    def slug(self) -> str:
+        words = [w for w in _tokens(self.description)][:3]
+        return "-".join(sorted(words)) or self.kind
+
+    def line(self) -> str:
+        near = (f"nearest {self.nearest_id} at {self.nearest_score:.2f}"
+                if self.nearest_id else "nothing close")
+        return (f"{self.designs:>5} designs  {self.kind:<11} "
+                f"{self.description[:64]:<64}  {near}")
+
+
+def _overlap(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / min(len(a), len(b))
+
+
+def gaps(specs: Iterable[DesignSpec], motifs_dir: Path,
+         threshold: float = DEFAULT_THRESHOLD) -> list[Gap]:
+    """What to draw next, worst first.
+
+    Descriptions of the same missing thing arrive worded a dozen ways across a
+    catalogue — "a grinning carved pumpkin", "jack-o-lantern, lit from within",
+    "carved gourd with a face". Clustering them on their subject words is what
+    turns a list of three thousand descriptions into a list of forty drawings.
+    """
+    library = load(motifs_dir)
+    clusters: list[dict] = []
+
+    for spec in specs:
+        design = spec.design_id or spec.source_asset_id
+        for el in spec.motifs():
+            ordered = rank(el, library)
+            best, best_score = ordered[0] if ordered else (None, 0.0)
+            if best is not None and best_score >= threshold:
+                continue                       # this one is covered
+
+            tokens = _tokens(el.description)
+            found = next((c for c in clusters
+                          if c["kind"] == el.motif.value
+                          and _overlap(tokens, c["tokens"]) >= SAME_GAP), None)
+            if found is None:
+                found = {"kind": el.motif.value, "tokens": set(), "wordings": [],
+                         "designs": set(), "nearest_id": None, "nearest_score": 0.0}
+                clusters.append(found)
+
+            found["tokens"] |= tokens
+            found["wordings"].append(el.description)
+            found["designs"].add(design)
+            if best_score > found["nearest_score"]:
+                found["nearest_score"] = best_score
+                found["nearest_id"] = best.library_id if best else None
+
+    out: list[Gap] = []
+    for c in clusters:
+        counted = Counter(c["wordings"])
+        # the wording that came up most, and the fullest of those — it is what
+        # somebody will draw from, so more detail is worth more
+        top = max(counted, key=lambda w: (counted[w], len(w)))
+        out.append(Gap(
+            description=top, kind=c["kind"], designs=len(c["designs"]),
+            seen=len(c["wordings"]),
+            variants=[w for w in counted if w != top][:6],
+            nearest_id=c["nearest_id"], nearest_score=round(c["nearest_score"], 3),
+        ))
+    return sorted(out, key=lambda g: (-g.designs, -g.seen, g.description))
+
+
+_STUB = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
+     data-kind="{kind}"
+     data-tags="{tags}">
+  <title>{title}</title>
+  <desc>{description}</desc>
+  <!-- STUB — {designs} design(s) are waiting on this one.
+
+       Draw on the 0..100 square. Do not set a colour: the renderer fills a
+       wrapping group from the design's own palette role, so anything with its
+       own fill will not recolour with the piece.
+
+       {nearest}
+
+       Other wordings the analyser used for what looks like the same thing:
+{variants}
+       When it is drawn, move this file up into the motifs folder. Nothing in
+       here is matched — that is the point of the folder. -->
+</svg>
+"""
+
+
+def scaffold(gap: Gap, motifs_dir: Path) -> Path:
+    """Write a stub for a gap, tagged and ready to draw into."""
+    folder = motifs_dir / TODO_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    nearest = (f"Closest thing you already have is {gap.nearest_id}, scoring "
+               f"{gap.nearest_score:.2f}. If that is honestly the same thing, "
+               f"tag it better instead of drawing this."
+               if gap.nearest_id else "Nothing in the library is close to this.")
+    path = folder / f"{gap.slug}-01.svg"
+    path.write_text(_STUB.format(
+        kind=gap.kind,
+        tags=", ".join(sorted(_tokens(gap.description))[:10]),
+        title=gap.description[:60],
+        description=gap.description,
+        designs=gap.designs,
+        nearest=nearest,
+        variants="\n".join(f"         - {v}" for v in gap.variants) or "         (none)",
+    ))
+    return path
+
 
 def resolve(spec: DesignSpec, motifs_dir: Path,
             threshold: float = DEFAULT_THRESHOLD) -> list[str]:

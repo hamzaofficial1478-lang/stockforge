@@ -75,7 +75,8 @@ def shift_palette(spec: DesignSpec, hue_shift: float, sat_scale: float = 1.0,
 # type
 # --------------------------------------------------------------------------
 
-def shift_type(spec: DesignSpec, keep_category: bool = True) -> None:
+def shift_type(spec: DesignSpec, keep_category: bool = True,
+               rng: random.Random | None = None) -> None:
     """Move the type to a different voice with the same job.
 
     keep_category holds the broad class — a horror display stays a display, a
@@ -88,11 +89,12 @@ def shift_type(spec: DesignSpec, keep_category: bool = True) -> None:
         "display": "sans", "script": "script", "mono": "sans",
         "blackletter": "display",
     }
+    rng = rng or random
     for el in spec.texts():
         f = el.font
         el.font = FontClass(
             category=f.category if keep_category else swaps.get(f.category, f.category),
-            weight=max(100, min(900, f.weight + random.choice([-200, -100, 100, 200]))),
+            weight=max(100, min(900, f.weight + rng.choice([-200, -100, 100, 200]))),
             contrast={"low": "medium", "medium": "high", "high": "medium"}[f.contrast],
             width=f.width,
             mood=f.mood,
@@ -126,10 +128,10 @@ number from the original. Keep line lengths close so the layout still balances."
 
 
 def rewrite_placeholders(spec: DesignSpec, provider: VisionProvider | None = None) -> None:
-    provider = provider or reason()
     slots = [el for el in spec.texts() if el.placeholder]
     if not slots:
         return
+    provider = provider or reason()
 
     listing = "\n".join(f"{i}. [{el.role.value}] {el.content}" for i, el in enumerate(slots))
     try:
@@ -241,18 +243,24 @@ def check(source: Path, derived: Path, provider: VisionProvider | None = None) -
 
 def derive(spec: DesignSpec, strength: float = 0.5, seed: int | None = None,
            provider: VisionProvider | None = None) -> DesignSpec:
-    """Apply all four levers at a given strength. Returns a new spec."""
-    if seed is not None:
-        random.seed(seed)
+    """Apply all four levers at a given strength. Returns a new spec.
+
+    `seed` gets its own generator rather than reseeding the process. Reseeding
+    the module-wide one made every caller's randomness a function of ours,
+    which is rude at best; the reason it matters here is that the seed has to
+    vary per design, and a shared generator makes that easy to get wrong in a
+    way nothing complains about.
+    """
+    rng = random.Random(seed)
 
     out = spec.model_copy(deep=True)
     rewrite_placeholders(out, provider)
     shift_palette(
         out,
-        hue_shift=random.uniform(0.06, 0.18) * (1 if random.random() > 0.5 else -1) * strength * 2,
-        sat_scale=1 + random.uniform(-0.15, 0.15) * strength,
-        light_shift=random.uniform(-0.06, 0.06) * strength,
+        hue_shift=rng.uniform(0.06, 0.18) * (1 if rng.random() > 0.5 else -1) * strength * 2,
+        sat_scale=1 + rng.uniform(-0.15, 0.15) * strength,
+        light_shift=rng.uniform(-0.06, 0.06) * strength,
     )
-    shift_type(out)
+    shift_type(out, rng=rng)
     shift_layout(out, strength)
     return out

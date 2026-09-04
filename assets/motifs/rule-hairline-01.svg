@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
+     data-kind="rule"
+     data-tags="rule, divider, line, hairline, tapered, thin">
+  <title>Tapered hairline rule</title>
+  <desc>a fine horizontal rule that tapers to nothing at both ends</desc>
+  <path d="M2 50 C 24 48.6, 40 48.4, 50 48.4 C 60 48.4, 76 48.6, 98 50 C 76 51.4, 60 51.6, 50 51.6 C 40 51.6, 24 51.4, 2 50 Z"/>
+</svg>
