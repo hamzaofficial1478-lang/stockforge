@@ -250,11 +250,26 @@ repurposed to group the 4–6 images belonging to one listing.
 
 **Done:** schema, providers, all five analysis passes, OCR, compose, derive,
 critique, render, export, three sources, publish, worker, control panel, health
-checks, 26 passing tests.
+checks, 58 passing tests.
+
+The critique gate the module docstring describes now exists. `ssim` and
+`palette_distance` were written and never called, so nothing stood between a
+failed render and a model call. `signals()` runs cheapest-first — is anything
+drawn on the page, is it the right shape, is it merely the source image again —
+and returns a fault instead of spending a model. The pipeline runs it before
+`derive.check()` too, which is the first model call of a build.
 
 **Verified working:** the panel serves, all endpoints respond, the traversal
 guard refuses paths outside the workspace, the health screen correctly reports
 what is missing.
+
+The export path has since been run for real against Inkscape 1.2.2, not just
+reasoned about. From one spec: `*-master.pdf` comes out with live, extractable
+text and our own three faces subset-embedded; `*.eps` carries no font
+reference at all; `*-outlined.svg` has no `<text>` left in it. Running the same
+SVG through Inkscape without the generated `fontconfig.conf` embeds DejaVu Sans
+for every line instead — which is what the whole catalogue would have been set
+in.
 
 **Not yet done — and this is the real gap:**
 

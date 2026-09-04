@@ -148,6 +148,15 @@ class Pipeline:
                 self.store.queue_review(design_id, "could not render page 0", 0.0)
                 return "review"
 
+            # Arithmetic before eyes. This is the first model call of the
+            # build, so a render that failed outright is caught here rather
+            # than being described back to us at the cost of a GPU minute.
+            numbers = critique_stage.signals(source_flat, preview)
+            if numbers.fault:
+                log.warning("[%s] %s", design_id[:8], numbers.fault)
+                self.store.queue_review(design_id, numbers.fault, 0.0)
+                return "review"
+
             check = derive_stage.check(source_flat, preview)
             distinct = check.distinct
             log.info("[%s] round %d: distinct=%.2f family=%.2f -> %s",

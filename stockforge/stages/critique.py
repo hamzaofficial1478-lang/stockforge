@@ -21,6 +21,8 @@ never converges.
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -28,6 +30,8 @@ import numpy as np
 
 from ..providers import VisionProvider, vision
 from ..schema import Critique, DesignSpec
+
+log = logging.getLogger("stockforge.critique")
 
 
 # --------------------------------------------------------------------------
@@ -70,6 +74,97 @@ def palette_distance(a: Path, b: Path, k: int = 5) -> float:
 
     da, db = dominant(a), dominant(b)
     return float(np.clip(np.mean(np.linalg.norm(da - db, axis=1)) / 128.0, 0, 1))
+
+
+# --------------------------------------------------------------------------
+# the gate
+# --------------------------------------------------------------------------
+
+# A page with fewer edge pixels than this has nothing drawn on it. Deliberately
+# far below anything real — a single line of small type clears it easily — so
+# it only ever fires on a render that genuinely failed.
+BLANK_DETAIL = 0.001
+
+# Two aspect ratios this far apart are not the same piece. A 5x7 and an A5 are
+# 1% apart; a square and a 5x7 are 40%. Flattening a mockup is not exact, so
+# the line sits well clear of any honest imprecision.
+MAX_ASPECT_ERROR = 0.15
+
+# Two images this alike are the same file, not a rebuild of one. Our rebuild is
+# drawn from scratch with our own type and our own motifs, so it cannot come
+# this close to a photograph of the original by doing its job well.
+SAME_SSIM = 0.98
+SAME_PALETTE = 0.03
+
+
+@dataclass
+class Signals:
+    """The cheap half of the critique.
+
+    Costs nothing, runs every round, and decides whether the expensive half is
+    worth running at all. `fault` names what is wrong when something is; an
+    empty one means go ahead and spend the model call.
+    """
+
+    detail: float = 0.0
+    aspect_error: float = 0.0
+    ssim: float = 0.0
+    palette_distance: float = 0.0
+    fault: str = ""
+
+    @property
+    def sane(self) -> bool:
+        return not self.fault
+
+    def summary(self) -> str:
+        return (f"detail={self.detail:.3f} aspect_error={self.aspect_error:.2f} "
+                f"ssim={self.ssim:.2f} palette={self.palette_distance:.2f}")
+
+
+def _detail(grey: np.ndarray, size: tuple[int, int] = (512, 512)) -> float:
+    """Fraction of the page that is an edge — is there anything drawn here?
+
+    Edges rather than variance, because a page carrying nothing but a gradient
+    background has plenty of variance and no content, and we want to catch that
+    as the failure it is.
+    """
+    small = cv2.resize(grey, size, interpolation=cv2.INTER_AREA)
+    edges = cv2.Canny(small, 50, 150)
+    return float(np.count_nonzero(edges)) / edges.size
+
+
+def signals(source: Path, rebuild: Path) -> Signals:
+    """Look at both images with arithmetic before looking at them with a model.
+
+    Ordered cheapest first and returns at the first fault, so a blank render
+    costs one Canny pass rather than a model call and two minutes of GPU.
+    """
+    out = Signals()
+    src = cv2.imread(str(source), cv2.IMREAD_GRAYSCALE)
+    reb = cv2.imread(str(rebuild), cv2.IMREAD_GRAYSCALE)
+    if src is None or reb is None:
+        out.fault = f"could not read the {'source' if src is None else 'rebuild'} image"
+        return out
+
+    out.detail = _detail(reb)
+    if out.detail < BLANK_DETAIL:
+        out.fault = "the rebuild came out blank — nothing was drawn on the page"
+        return out
+
+    src_aspect = src.shape[1] / src.shape[0]
+    reb_aspect = reb.shape[1] / reb.shape[0]
+    out.aspect_error = abs(reb_aspect - src_aspect) / src_aspect
+    if out.aspect_error > MAX_ASPECT_ERROR:
+        out.fault = (f"the rebuild is the wrong shape — {reb_aspect:.2f} against the "
+                     f"source's {src_aspect:.2f}, so the trim was misread")
+        return out
+
+    out.ssim = ssim(source, rebuild)
+    out.palette_distance = palette_distance(source, rebuild)
+    if out.ssim >= SAME_SSIM and out.palette_distance <= SAME_PALETTE:
+        out.fault = ("the rebuild is indistinguishable from the source — it is the "
+                     "same image, not a rebuild of it")
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -117,6 +212,14 @@ def critique(
     page_index: int = 0,
     provider: VisionProvider | None = None,
 ) -> Critique:
+    numbers = signals(source, rebuild)
+    log.info("critique signals: %s", numbers.summary())
+    if numbers.fault:
+        # Nothing a field patch can repair, so do not pay a model to say so.
+        log.warning("skipping the critic — %s", numbers.fault)
+        return Critique(similarity=0.0, polish=0.0, verdict="escalate",
+                        commentary=numbers.fault)
+
     provider = provider or vision()
 
     elements = spec.pages[page_index].elements if spec.pages else []
