@@ -165,6 +165,26 @@ same family. Too close goes round again. Too far gets dialled back.
 `SF_MIX` and `SF_DERIVE_STRENGTH` control how hard each lever is pulled. Both
 are sliders on the Setup screen.
 
+### And not the same thing twice
+
+That check compares a rebuild to its own source. It says nothing about whether
+design four hundred looks like design twelve — and that's the one the agencies
+answer for you, by rejecting the batch. Mixing draws from one pool and
+derivation applies one family of moves, so two unrelated sources can land in
+the same place.
+
+So every finished page is fingerprinted and compared against every page built
+before it. Anything too close goes to Review naming the design it collided
+with, rather than to the delivery queue. Different trims are never compared: a
+5×7 invitation and a square social post cut from the same artwork are different
+products.
+
+The threshold is in bits of a 256-bit perceptual hash, and it's set from
+measurement rather than taste. On real output: the same file re-encoded is 0
+bits apart, the same page recoloured is 4, and four genuinely different designs
+sat between 40 and 74. `SF_DUPLICATE_DISTANCE` defaults to 20, which is well
+clear of both.
+
 ---
 
 ## Two piles

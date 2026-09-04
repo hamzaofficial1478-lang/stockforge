@@ -48,6 +48,19 @@ class Recipe:
         return " + ".join(bits)
 
 
+def _identity(spec: DesignSpec) -> str:
+    """What makes a design itself.
+
+    Not its asset id. A shop puts the same size chart and the same "instant
+    download" banner on every listing it has, and those are usually wide — so
+    if one of them is the largest image of a listing, every design in the
+    catalogue reports the same asset id. Keyed on that, no design was eligible
+    to lend an ingredient to any other and mixing quietly stopped happening,
+    which is the mechanism the whole project leans on hardest.
+    """
+    return spec.design_id or spec.source_asset_id
+
+
 def _same_family(a: DesignSpec, b: DesignSpec) -> bool:
     """Only mix ingredients that belong together. A Halloween palette on a
     wedding invitation is not a new design, it is a mistake.
@@ -73,7 +86,7 @@ def _affinity(a: DesignSpec, b: DesignSpec) -> int:
 def eligible_donors(target: DesignSpec, pool: list[DesignSpec],
                     strict: bool = True) -> list[DesignSpec]:
     """Your other designs that can lend this one an ingredient, best first."""
-    donors = [d for d in pool if d.source_asset_id != target.source_asset_id]
+    donors = [d for d in pool if _identity(d) != _identity(target)]
     if strict:
         matched = [d for d in donors if _same_family(target, d)]
         if matched:
@@ -99,7 +112,7 @@ def compose(
     rng = random.Random(seed)
 
     out = base.model_copy(deep=True)
-    recipe = Recipe(base=base.source_asset_id)
+    recipe = Recipe(base=_identity(base))
 
     donors = eligible_donors(base, pool, strict_family)
     if not donors:
@@ -114,7 +127,7 @@ def compose(
         donor = rng.choice(donors)
         if donor.dna.palette.swatches:
             out.dna.palette = donor.dna.palette.model_copy(deep=True)
-            recipe.palette_from = donor.source_asset_id
+            recipe.palette_from = _identity(donor)
 
     # --- type --------------------------------------------------------
     if borrow():
@@ -126,13 +139,13 @@ def compose(
             display, body = pairing[0], pairing[-1]
             for el in out.texts():
                 el.font = (display if el.size_ratio > 0.05 else body).model_copy(deep=True)
-            recipe.type_from = donor.source_asset_id
+            recipe.type_from = _identity(donor)
 
     # --- background --------------------------------------------------
     if borrow():
         donor = rng.choice(donors)
         out.dna.background = donor.dna.background.model_copy(deep=True)
-        recipe.background_from = donor.source_asset_id
+        recipe.background_from = _identity(donor)
 
     # --- decoration --------------------------------------------------
     if borrow():
@@ -143,19 +156,19 @@ def compose(
             out.dna.motif_vocabulary = sorted(
                 set(out.dna.motif_vocabulary) | set(donor.dna.motif_vocabulary)
             )
-            recipe.motifs_from = donor.source_asset_id
+            recipe.motifs_from = _identity(donor)
 
     # --- grid --------------------------------------------------------
     if borrow():
         donor = rng.choice(donors)
         out.dna.grid = donor.dna.grid.model_copy(deep=True)
-        recipe.notes.append(f"grid from {donor.source_asset_id[:8]}")
+        recipe.notes.append(f"grid from {_identity(donor)[:8]}")
 
     # A mix inherits the most cautious provenance of everything in it. If any
     # ingredient came from a design that was held back, the result is too.
     contributors = [base] + [
         d for d in donors
-        if d.source_asset_id in {recipe.palette_from, recipe.type_from,
+        if _identity(d) in {recipe.palette_from, recipe.type_from,
                                  recipe.motifs_from, recipe.background_from}
     ]
     if any(c.provenance.stock_safe is not True for c in contributors):

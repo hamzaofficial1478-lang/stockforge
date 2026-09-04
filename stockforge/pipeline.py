@@ -34,6 +34,7 @@ from .stages import compose as compose_stage
 from .stages import derive as derive_stage
 from .stages import export as export_stage
 from .stages import fonts as fonts_stage
+from .stages import duplicates as duplicates_stage
 from .stages import ingest as ingest_stage
 from .stages import motifs as motifs_stage
 from .stages.analyse import analyse
@@ -243,6 +244,7 @@ class Pipeline:
         out_dir = self.cfg.root / "out" / design_id[:16]
         holes: list[str] = []
         cramped: list[str] = []
+        twins: list[duplicates_stage.Twin] = []
 
         for i, page in enumerate(derived.pages):
             result = render(derived, self.cfg.fonts_dir, self.cfg.motifs_dir, page_index=i)
@@ -257,8 +259,18 @@ class Pipeline:
                 # and get it shrunk straight back — so it wants a human.
                 if scale < CRAMPED:
                     cramped.append(f"{label} at {scale:.0%} of its intended size")
-            export_stage.export_all(svg, out_dir, stem=f"{design_id[:16]}-{page.name}",
-                                    preview_px=self.cfg.preview_px)
+            exported = export_stage.export_all(
+                svg, out_dir, stem=f"{design_id[:16]}-{page.name}",
+                preview_px=self.cfg.preview_px)
+
+            # Does this look like something we already made? The distinctness
+            # check earlier only ever compared this design to its own source.
+            # Nothing has compared design four hundred to design twelve, and a
+            # batch flagged as a near-duplicate on submission is rejected as a
+            # batch.
+            twin = self._check_for_a_twin(design_id, page.name, exported.preview_jpg)
+            if twin:
+                twins.append(twin)
             with self.store.tx() as c:
                 c.execute(
                     "INSERT INTO builds (design_id, page_name, svg_path, state, created_at) "
@@ -274,6 +286,8 @@ class Pipeline:
             reasons.append("no library match for: " + "; ".join(sorted(set(holes))[:5]))
         if cramped:
             reasons.append("type does not fit its box: " + "; ".join(cramped[:3]))
+        if twins:
+            reasons.append("; ".join(t.line() for t in twins[:3]))
         if reasons:
             self.store.queue_review(design_id, " — ".join(reasons), distinct)
             self.store.set_design_state(design_id, "review")
@@ -314,6 +328,30 @@ class Pipeline:
                 log.warning("stored spec for %s will not load: %s",
                             row["design_id"][:8], str(exc)[:200])
         return out
+
+    def _check_for_a_twin(self, design_id: str, page_name: str,
+                          preview: Path | None) -> duplicates_stage.Twin | None:
+        """Compare a finished page against every page we have finished before.
+
+        A perceptual hash against every previous page is five thousand integer
+        comparisons — less work than reading the file we just wrote. Cheap
+        enough to do on every page, and the only thing that catches two
+        unrelated sources converging on the same result.
+        """
+        if preview is None:
+            return None
+        taken = duplicates_stage.fingerprint(preview)
+        if taken is None:
+            return None
+
+        phash, aspect = taken
+        twin = duplicates_stage.nearest(
+            phash, aspect, self.store.fingerprints(exclude=design_id),
+            self.cfg.duplicate_distance)
+        if twin:
+            log.warning("[%s] %s %s", design_id[:8], page_name, twin.line())
+        self.store.save_fingerprint(design_id, page_name, phash, aspect)
+        return twin
 
     def _spec_pool(self, exclude: str, cap: int = 60) -> list[DesignSpec]:
         """Other designs of yours available to mix from.

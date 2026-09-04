@@ -196,7 +196,7 @@ rough order of how often they matter:
   - a block sitting too high or low in its box (box.y)
   - tracking too tight or too loose on a display line (tracking)
   - an accent colour a shade off (dna.palette.swatches.N.hex)
-  - margins too mean, so the piece feels cramped (dna.grid.margin_x / margin_y)
+  - a block sitting too near an edge, so the piece feels cramped (box.x, box.y)
   - a motif oversized relative to the type it sits beside (box.w, box.h)
 
 Verdicts: `ship` when it is right, `patch` when the listed patches will make it \

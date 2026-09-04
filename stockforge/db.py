@@ -76,6 +76,15 @@ CREATE TABLE IF NOT EXISTS builds (
     created_at    REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS fingerprints (
+    design_id     TEXT NOT NULL,
+    page_name     TEXT NOT NULL,
+    phash         TEXT NOT NULL,         -- of the rendered page, not the source
+    aspect        REAL,
+    created_at    REAL NOT NULL,
+    PRIMARY KEY (design_id, page_name)
+);
+
 CREATE TABLE IF NOT EXISTS metadata (
     design_id     TEXT NOT NULL,
     filename      TEXT NOT NULL,
@@ -233,6 +242,26 @@ class Store:
     def get_spec(self, did: str) -> dict | None:
         row = self.conn.execute("SELECT spec_json FROM specs WHERE design_id=?", (did,)).fetchone()
         return json.loads(row["spec_json"]) if row else None
+
+    # -- fingerprints ----------------------------------------------------
+
+    def save_fingerprint(self, design_id: str, page_name: str, phash: str,
+                         aspect: float) -> None:
+        with self.tx() as c:
+            c.execute(
+                "INSERT INTO fingerprints (design_id, page_name, phash, aspect, "
+                "created_at) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(design_id, page_name) DO UPDATE SET phash=excluded.phash, "
+                "aspect=excluded.aspect, created_at=excluded.created_at",
+                (design_id, page_name, phash, aspect, time.time()),
+            )
+
+    def fingerprints(self, exclude: str | None = None) -> list[sqlite3.Row]:
+        """Every finished page but this design's own."""
+        if exclude:
+            return self.conn.execute(
+                "SELECT * FROM fingerprints WHERE design_id != ?", (exclude,)).fetchall()
+        return self.conn.execute("SELECT * FROM fingerprints").fetchall()
 
     # -- metadata --------------------------------------------------------
 

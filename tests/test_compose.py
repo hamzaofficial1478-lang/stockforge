@@ -52,6 +52,28 @@ def test_donors_stay_within_the_same_family():
     assert [d.source_asset_id for d in donors] == ["b"]
 
 
+def test_a_shared_listing_image_does_not_make_two_designs_one():
+    """A shop puts the same size chart on every listing, and those are wide, so
+    it can end up being the largest image of the design and therefore its asset
+    id. Keyed on that, every design in the catalogue looked like the same one
+    and nothing was eligible to lend anything — mixing quietly stopped."""
+    target = _design("shared-banner")
+    target.design_id = "design-one"
+    other = _design("shared-banner", accent="#2a6ce8")
+    other.design_id = "design-two"
+
+    donors = eligible_donors(target, [other])
+    assert [d.design_id for d in donors] == ["design-two"]
+
+
+def test_a_design_is_still_never_its_own_donor_by_design_id():
+    target = _design("a")
+    target.design_id = "design-one"
+    same = _design("b")
+    same.design_id = "design-one"
+    assert eligible_donors(target, [same]) == []
+
+
 def test_target_is_never_its_own_donor():
     target = _design("a")
     assert eligible_donors(target, [target]) == []

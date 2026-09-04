@@ -48,6 +48,12 @@ class ScriptedProvider(VisionProvider):
         self.accent = accent
         self.flagged = flagged
         self.seen: list[str] = []
+        # Bumped once per design, at the survey. A real model reads a different
+        # design each time and says something different; a provider that
+        # answers identically produces identical rebuilds, which the duplicate
+        # check stops — rightly, and it would make every test after the first
+        # design meaningless.
+        self.nth = -1
 
     def chat(self, system, user_text, images, **kw):
         raise AssertionError("structured() is overridden; chat should not be reached")
@@ -58,6 +64,7 @@ class ScriptedProvider(VisionProvider):
 
     # --- the five analysis passes ------------------------------------
     def _survey(self):
+        self.nth += 1
         return analyse_stage.Survey(
             category="invitation", occasion=self.occasion,
             style_tags=["botanical", "minimal"],
@@ -70,8 +77,14 @@ class ScriptedProvider(VisionProvider):
             assignments=[
                 analyse_stage.RoleAssignment(hex="#faf6f0", role=ColourRole.BACKGROUND),
                 analyse_stage.RoleAssignment(hex="#2b2b28", role=ColourRole.INK),
-                analyse_stage.RoleAssignment(hex=self.accent, role=ColourRole.ACCENT),
+                analyse_stage.RoleAssignment(hex=self._accent(), role=ColourRole.ACCENT),
             ], temperature="warm", contrast="high")
+
+    def _accent(self) -> str:
+        if self.nth <= 0:
+            return self.accent
+        shift = (self.nth * 47) % 200
+        return f"#{shift:02x}{(shift * 3) % 240:02x}{(shift * 7) % 220:02x}"
 
     def _provenance(self):
         if self.flagged:
@@ -97,7 +110,7 @@ class ScriptedProvider(VisionProvider):
                             font=FontClass(category="sans", weight=400, mood=["clean"]),
                             size_ratio=0.016, tracking=0.18),
                 TextElement(role=TypeRole.TITLE, content="Amelia & Jonah",
-                            box=Box(x=0.1, y=0.42, w=0.8, h=0.14),
+                            box=Box(x=0.1, y=0.38 + 0.03 * (self.nth % 4), w=0.8, h=0.14),
                             font=FontClass(category="serif", weight=400,
                                            contrast="high", mood=["elegant"]),
                             size_ratio=0.045, placeholder=True),
@@ -131,8 +144,13 @@ class ScriptedProvider(VisionProvider):
 
     # --- derivation and critique -------------------------------------
     def _newcopy(self):
-        return derive_stage.NewCopy(replacements=["Rosa & Elliot",
-                                                  "Sunday the sixth of September"])
+        # Different designs get different names. A hue change alone is about
+        # two bits of a perceptual hash — all but invisible — so varying only
+        # the palette would leave every rebuild a near-duplicate of the last.
+        names = ["Rosa & Elliot", "Marta & Idris", "Neve & Caspar", "Suki & Bram"]
+        return derive_stage.NewCopy(
+            replacements=[names[self.nth % len(names)],
+                          f"Sunday the {6 + self.nth} of September"])
 
     def _distinctiveness(self):
         return derive_stage.Distinctiveness(
@@ -199,7 +217,7 @@ def test_a_design_goes_all_the_way_through(workspace, tmp_path):
     assert all(m.library_id == "sprig-eucalyptus-01" for m in spec.motifs())
 
     # the placeholders were rewritten, so it is not the same piece of paper
-    assert spec.texts()[1].content == "Rosa & Elliot"
+    assert spec.texts()[1].content == "Rosa & Elliot"   # the first design's copy
 
     # and there are files on disk to show for it
     out = workspace.root / "out" / design_id[:16]

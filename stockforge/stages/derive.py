@@ -36,7 +36,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from ..providers import VisionProvider, reason
-from ..schema import ColourRole, DesignSpec, FontClass, Swatch, TextElement
+from ..schema import ColourRole, DesignSpec, FontClass, Grid, Swatch, TextElement
 
 log = logging.getLogger("stockforge.derive")
 
@@ -170,6 +170,36 @@ def rewrite_placeholders(spec: DesignSpec, provider: VisionProvider | None = Non
 # layout
 # --------------------------------------------------------------------------
 
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def reflow(spec: DesignSpec, before: Grid, after: Grid) -> None:
+    """Move everything to match a change of margins.
+
+    The renderer places each element from its own box and never looks at the
+    grid — geometry is normalised to the canvas, which is what the schema
+    promises and what keeps one spec renderable at any trim. Which means a
+    margin written into the DNA and nowhere else is a margin that does not
+    exist: `shift_layout` widened the margins every round and the page never
+    moved. Opening the margins has to open the page, so it does it here, on the
+    boxes, where the renderer will actually see it.
+    """
+    for axis in ("x", "y"):
+        was = before.margin_x if axis == "x" else before.margin_y
+        now = after.margin_x if axis == "x" else after.margin_y
+        live_before, live_after = 1 - 2 * was, 1 - 2 * now
+        if live_before <= 0 or abs(live_after - live_before) < 1e-9:
+            continue
+
+        scale = live_after / live_before
+        span = "w" if axis == "x" else "h"
+        for el in spec.elements():
+            box = el.box
+            setattr(box, axis, _clamp(now + (getattr(box, axis) - was) * scale, -0.2, 1.2))
+            setattr(box, span, _clamp(getattr(box, span) * scale, 0.001, 1.4))
+
+
 def shift_layout(spec: DesignSpec, strength: float = 0.5) -> None:
     """The lever that actually changes how a design reads.
 
@@ -178,9 +208,11 @@ def shift_layout(spec: DesignSpec, strength: float = 0.5) -> None:
     what separates a recolour from a new piece.
     """
     g = spec.dna.grid
+    before = g.model_copy()
     g.margin_x = max(0.03, min(0.30, g.margin_x * (1 + 0.5 * strength)))
     g.margin_y = max(0.03, min(0.30, g.margin_y * (1 + 0.5 * strength)))
     g.vertical_rhythm = {"tight": "even", "even": "airy", "airy": "tight"}[g.vertical_rhythm]
+    reflow(spec, before, g)
 
     for el in spec.elements():
         if isinstance(el, TextElement):

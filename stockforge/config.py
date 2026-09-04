@@ -126,6 +126,15 @@ class Settings:
     http_retries: int = field(default_factory=lambda: _i("SF_HTTP_RETRIES", 4))
     http_backoff: float = field(default_factory=lambda: _f("SF_HTTP_BACKOFF", 2.0))
 
+    # --- not shipping the same thing twice --------------------------------
+    # How alike two finished pages may be, in bits of a 256-bit perceptual hash.
+    # Measured over real finished pages: the same file re-encoded is 0, the same
+    # page recoloured is 4, and four genuinely different designs sat 40 to 74
+    # apart. Twenty is comfortably between the two, with a wide margin either
+    # side — raise it to catch more and send more to review, lower it to catch
+    # only the obvious.
+    duplicate_distance: int = field(default_factory=lambda: _i("SF_DUPLICATE_DISTANCE", 20))
+
     # --- output ----------------------------------------------------------
     preview_px: int = field(default_factory=lambda: _i("SF_PREVIEW_PX", 1400))
 

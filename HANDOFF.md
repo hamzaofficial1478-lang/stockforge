@@ -319,6 +319,33 @@ A listing whose images all failed used to vanish from the pull with nothing
 said; the crawl now reports how many listings it walked and how many had no
 usable image.
 
+**Near-duplicates across the catalogue** are now checked, which nothing did.
+`derive.check` only ever asked whether a rebuild reads as a copy of its own
+source; nothing compared design four hundred to design twelve, and that is the
+comparison an agency makes on submission. Every finished page is fingerprinted
+and matched against every page built before it, different trims excluded. The
+threshold came from measurement, not taste: at 64 bits four different designs
+sat 6 to 17 apart and a duplicate at 0 — overlapping bands, no usable
+threshold — so the hash is 256 bits, where the same four sit 40 to 74 apart, a
+re-encoded copy at 0 and a recolour at 4.
+
+Two things that fell out of building it:
+
+- **Mixing had switched itself off.** `eligible_donors` keyed a design's
+  identity on `source_asset_id`, the hash of its largest image. Once a shared
+  image could belong to several designs — which was itself a fix — a shop's
+  "instant download" banner, being wide, became the largest image of every
+  listing, so every design reported the same identity and none was eligible to
+  lend to any other. Proven with three genuinely different designs returning
+  zero donors. It keys on `design_id` now.
+- **The margin lever moved nothing.** `shift_layout` widened `dna.grid.margin_x`
+  every round, and the renderer has never read the grid — geometry is
+  normalised to the canvas, which is what the schema promises. So the strongest
+  lever of derivation was three-quarters inert, and the critic was being told
+  in its prompt to patch `dna.grid.margin_*`, which could not have any effect.
+  Changing the margins now reflows the element boxes; a full-strength layout
+  shift moved a page 0 bits before and 14 after.
+
 The export path has since been run for real against Inkscape 1.2.2, not just
 reasoned about. From one spec: `*-master.pdf` comes out with live, extractable
 text and our own three faces subset-embedded; `*.eps` carries no font

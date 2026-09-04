@@ -86,6 +86,45 @@ def _hue_gaps(spec):
     return [round((b - a) % 1.0, 3) for a, b in zip(hues, hues[1:])]
 
 
+def test_widening_the_margins_actually_moves_the_page():
+    """The renderer places elements from their own boxes and never looks at the
+    grid, so a margin written into the DNA and nowhere else did nothing at all —
+    shift_layout widened the margins every round and the page never moved."""
+    from stockforge.schema import Grid
+    from stockforge.stages.derive import reflow
+
+    spec = _spec()
+    box = spec.texts()[0].box
+    before, after = Grid(margin_x=0.08, margin_y=0.08), Grid(margin_x=0.16, margin_y=0.16)
+    was_x, was_w = box.x, box.w
+
+    reflow(spec, before, after)
+    assert box.x > was_x, "opening the margins should push the block inward"
+    assert box.w < was_w, "and narrow what it spans"
+    # the block keeps its place within the live area
+    assert (box.x - 0.16) / (1 - 0.32) == pytest.approx((was_x - 0.08) / (1 - 0.16), abs=1e-6)
+
+
+def test_narrowing_the_margins_moves_it_back_out():
+    from stockforge.schema import Grid
+    from stockforge.stages.derive import reflow
+
+    spec = _spec()
+    box = spec.texts()[0].box
+    was_x = box.x
+    reflow(spec, Grid(margin_x=0.16, margin_y=0.16), Grid(margin_x=0.04, margin_y=0.04))
+    assert box.x < was_x
+
+
+def test_the_layout_lever_changes_where_things_sit_not_only_the_dna():
+    spec = _spec()
+    before = (spec.texts()[0].box.x, spec.texts()[0].box.y)
+    derive_stage.shift_layout(spec, strength=1.0)
+
+    assert spec.dna.grid.margin_x > 0.08
+    assert (spec.texts()[0].box.x, spec.texts()[0].box.y) != before
+
+
 def test_layout_shift_spreads_the_type_hierarchy():
     spec = _spec()
     spec.pages[0].elements.append(TextElement(
