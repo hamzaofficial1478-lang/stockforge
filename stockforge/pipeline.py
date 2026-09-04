@@ -33,6 +33,7 @@ from .stages import compose as compose_stage
 from .stages import derive as derive_stage
 from .stages import export as export_stage
 from .stages import ingest as ingest_stage
+from .stages import motifs as motifs_stage
 from .stages.analyse import analyse
 from .stages.render import render, write_svg
 
@@ -98,6 +99,13 @@ class Pipeline:
             images, asset_id=assets[0]["id"], design_id=design_id,
             listing_url=row["listing_url"],
         )
+        # Point every decorative element at a drawing in our own library. What
+        # nothing matches stays unresolved on purpose — the renderer reports it
+        # as a hole and the description tells you what to draw next.
+        holes = motifs_stage.resolve(spec, self.cfg.motifs_dir, self.cfg.motif_threshold)
+        if holes:
+            log.info("[%s] no motif for: %s", design_id[:8], "; ".join(sorted(set(holes))[:3]))
+
         self.store.save_spec(design_id, spec.model_dump(mode="json"))
         self.store.set_design_state(design_id, "analysed", spec.provenance.stock_safe)
 

@@ -11,3 +11,6 @@ assets/fonts/*
 *.db-wal
 *.db-shm
 .DS_Store
+
+# editable install metadata
+*.egg-info/

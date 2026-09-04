@@ -86,6 +86,46 @@ def cmd_publish(pipe: Pipeline, dry_run: bool) -> None:
         print(f"{name}: {done} uploaded, {len(result) - done} skipped or failed")
 
 
+def cmd_motifs(args) -> int:
+    """`list` shows the library; `match` shows why a description did or did not
+    find something in it, which is how you work out what to draw next."""
+    from .schema import Box, MotifElement, MotifKind
+    from .stages import motifs as motifs_stage
+
+    library = motifs_stage.load(settings.motifs_dir)
+    if not library:
+        print(f"no motifs in {settings.motifs_dir} — every decorative element "
+              f"will be left as a hole and sent to review.")
+        return 0
+
+    if args.action == "list":
+        for e in library:
+            print(f"{'ok ' if e.kind else '-- '}{e.library_id:<34} "
+                  f"{e.kind or 'untagged':<11} {', '.join(e.tags[:6])}")
+        print(f"\n{len(library)} motifs, {sum(1 for e in library if e.kind)} tagged.")
+        return 0
+
+    if not args.description:
+        print('say what to match, e.g. stockforge motifs match "carved pumpkin" '
+              '--kind seasonal')
+        return 2
+    try:
+        kind = MotifKind(args.kind)
+    except ValueError:
+        print(f"unknown kind {args.kind!r} — one of: "
+              f"{', '.join(k.value for k in MotifKind)}")
+        return 2
+
+    el = MotifElement(motif=kind, description=args.description,
+                      box=Box(x=0, y=0, w=1, h=1))
+    for entry, score in motifs_stage.rank(el, library)[:8]:
+        placed = score >= settings.motif_threshold
+        print(f"{'-> ' if placed else '   '}{score:.3f}  {entry.library_id}")
+    print(f"\nthreshold {settings.motif_threshold:.2f} — anything below it is left "
+          f"as a hole, and its description goes to review as something to draw.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="stockforge")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -119,6 +159,12 @@ def main(argv: list[str] | None = None) -> int:
     f = sub.add_parser("fonts", help="manage the font library")
     f.add_argument("action", choices=["scan", "list"])
 
+    m = sub.add_parser("motifs", help="inspect the motif library")
+    m.add_argument("action", choices=["list", "match"])
+    m.add_argument("description", nargs="?", help="for `match` — what the analyser saw")
+    m.add_argument("--kind", default="icon",
+                   help="for `match` — botanical, seasonal, frame, ...")
+
     args = p.parse_args(argv)
     _log(args.verbose)
 
@@ -139,6 +185,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{'ok ' if e.embeddable else '-- '} {e.family:<30} "
                       f"{e.category:<12} {e.weight:<4} {e.licence}")
         return 0
+
+    if args.cmd == "motifs":
+        return cmd_motifs(args)
 
     if args.cmd == "count":
         source = open_source(args.kind, args.target)

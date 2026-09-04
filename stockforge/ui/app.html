@@ -151,17 +151,20 @@
 
     <div class="card">
       <h3>How far to move a design</h3>
-      <p class="hint">Mix borrows ingredients from your other designs. Change is how hard the layout, type and palette shift. Distinct is the score a result must reach before it's accepted.</p>
+      <p class="hint">Mix borrows ingredients from your other designs. Change is how hard the layout, type and palette shift. Distinct is the score a result must reach before it's accepted. Motif match is how close a drawing in your library has to be before it's placed — raise it and more designs come to Review telling you what to draw, lower it and you start shipping approximate decoration.</p>
       <div class="grid">
         <div><label>Mix from other designs — <b id="mix-v">0.5</b></label>
           <input type="range" id="SF_MIX" min="0" max="1" step="0.05" value="0.5"
-                 oninput="mixV.textContent=this.value"></div>
+                 oninput="showV('mix-v', this.value)"></div>
         <div><label>Change strength — <b id="str-v">0.5</b></label>
           <input type="range" id="SF_DERIVE_STRENGTH" min="0" max="1" step="0.05" value="0.5"
-                 oninput="strV.textContent=this.value"></div>
+                 oninput="showV('str-v', this.value)"></div>
         <div><label>Distinct threshold — <b id="dist-v">0.70</b></label>
           <input type="range" id="SF_DISTINCT_THRESHOLD" min="0" max="1" step="0.05" value="0.7"
-                 oninput="distV.textContent=this.value"></div>
+                 oninput="showV('dist-v', this.value)"></div>
+        <div><label>Motif match threshold — <b id="motif-v">0.45</b></label>
+          <input type="range" id="SF_MOTIF_THRESHOLD" min="0" max="1" step="0.05" value="0.45"
+                 oninput="showV('motif-v', this.value)"></div>
         <div><label>Rounds before review</label><input id="SF_DERIVE_ROUNDS" type="number" min="1" max="6" value="2"></div>
       </div>
     </div>
@@ -272,6 +275,10 @@
 
 <script>
 const $ = id => document.getElementById(id);
+
+// Inline handlers can't see the dashed ids as bare names, so slider labels go
+// through here rather than through a global that never existed.
+function showV(id, value){ $(id).textContent = value; }
 const api = async (path, body) => {
   const opts = body ? {method:'POST', headers:{'Content-Type':'application/json'},
                        body:JSON.stringify(body)} : {};
@@ -316,6 +323,7 @@ async function loadHealth(){
 
 const CFG_KEYS = ['SF_VISION_BASE_URL','SF_VISION_MODEL','SF_VISION_API_KEY','SF_REASON_MODEL',
   'SF_ETSY_API_KEY','SF_MIX','SF_DERIVE_STRENGTH','SF_DISTINCT_THRESHOLD','SF_DERIVE_ROUNDS',
+  'SF_MOTIF_THRESHOLD',
   'SF_FTP_ADOBE_HOST','SF_FTP_ADOBE_USER','SF_FTP_ADOBE_PASS',
   'SF_FTP_SHUTTERSTOCK_HOST','SF_FTP_SHUTTERSTOCK_USER','SF_FTP_SHUTTERSTOCK_PASS'];
 
@@ -325,9 +333,10 @@ async function loadConfig(){
     const el = $(k);
     if (el && c.values[k]) el.value = c.values[k];
   }
-  $('mix-v').textContent  = $('SF_MIX').value;
-  $('str-v').textContent  = $('SF_DERIVE_STRENGTH').value;
-  $('dist-v').textContent = $('SF_DISTINCT_THRESHOLD').value;
+  showV('mix-v',   $('SF_MIX').value);
+  showV('str-v',   $('SF_DERIVE_STRENGTH').value);
+  showV('dist-v',  $('SF_DISTINCT_THRESHOLD').value);
+  showV('motif-v', $('SF_MOTIF_THRESHOLD').value);
 }
 
 async function saveConfig(){

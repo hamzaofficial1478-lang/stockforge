@@ -266,6 +266,13 @@ what is missing.
    professional or looks like a wireframe. Every unmatched motif sends its design
    to review, which is how you learn what to draw. It cannot be designed in the
    abstract; it needs real images.
+
+   The *matcher* now exists (`stages/motifs.py`). Before it, `library_id` was
+   read in three places and written in none, so no motif could ever be placed
+   however many drawings sat in the folder. Descriptions are matched against
+   metadata carried inside each SVG, falling back to the filename; anything
+   below `SF_MOTIF_THRESHOLD` is refused and reported rather than approximated.
+   `stockforge motifs match "..."` shows why something did or did not match.
 3. **No fonts installed.** `assets/fonts/` is empty. Google Fonts API integration
    was discussed but not built.
 4. **Stock-image APIs** (Pexels, Pixabay) were requested but not built. Note for
@@ -309,6 +316,8 @@ Key environment variables (all in `.env.example`):
    identifying surfaces correctly? Is the typography pass describing letterforms
    usefully? Tune the prompts in `stages/analyse.py` against real output.
 4. Build out the motif library from what the review queue reports as unmatched.
+   `stockforge motifs match "<the description from review>"` says whether a
+   drawing you already have just needs tagging, or whether you need a new one.
 5. Install fonts and complete the manifest.
 6. Only then worry about scale and delivery.
 

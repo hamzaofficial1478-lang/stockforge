@@ -1,7 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
+     data-kind="botanical"
+     data-tags="eucalyptus, sprig, stem, leaves, foliage, greenery, botanical, wedding">
+  <title>Eucalyptus sprig</title>
+  <desc>slender upright stem with paired oval leaves, tapering towards the tip</desc>
   <!-- Motifs are authored on a 0..100 unit square so the renderer can place
        them with a single scale. Draw with `fill="currentColor"`-free shapes:
-       the renderer sets fill on a wrapping group from the spec's colour role. -->
+       the renderer sets fill on a wrapping group from the spec's colour role.
+
+       The title, desc, data-kind and data-tags above are what the matcher
+       reads. None of them is required — without them the filename is used —
+       but every one you add makes the match sharper. data-kind must be one of
+       the MotifKind values in schema.py. -->
   <path d="M50 96 C50 70 50 40 50 6" stroke="#000" stroke-width="1.6" fill="none" stroke-linecap="round"/>
   <ellipse cx="38" cy="72" rx="11" ry="6.5" transform="rotate(-28 38 72)"/>
   <ellipse cx="62" cy="64" rx="11" ry="6.5" transform="rotate(28 62 64)"/>

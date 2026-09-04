@@ -115,14 +115,25 @@ def _check_binary(name: str, what: str, fix: str, required: bool = True) -> Chec
 
 
 def _check_motifs(cfg: Settings) -> Check:
-    files = list(cfg.motifs_dir.glob("*.svg"))
-    if len(files) < 10:
-        return Check("Motif library", "warn", f"{len(files)} motifs",
+    from .stages import motifs as motifs_stage
+
+    library = motifs_stage.load(cfg.motifs_dir)
+    if len(library) < 10:
+        return Check("Motif library", "warn", f"{len(library)} motifs",
                      "Every decorative element with no library match sends its "
                      "design to review. Build this up as you go — it is what "
-                     "decides whether output looks professional.",
+                     "decides whether output looks professional. "
+                     '`stockforge motifs match "..."` shows why something missed.',
                      required=False)
-    return Check("Motif library", "ok", f"{len(files)} motifs", required=False)
+    tagged = sum(1 for e in library if e.kind)
+    if tagged * 2 < len(library):
+        return Check("Motif library", "warn",
+                     f"{len(library)} motifs, {tagged} tagged",
+                     "Untagged motifs are matched on their filename alone. Add "
+                     "data-kind and data-tags to the SVGs and the matching gets "
+                     "much sharper.", required=False)
+    return Check("Motif library", "ok", f"{len(library)} motifs, {tagged} tagged",
+                 required=False)
 
 
 def _check_etsy() -> Check:

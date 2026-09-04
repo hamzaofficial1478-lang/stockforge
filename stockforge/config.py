@@ -42,6 +42,13 @@ class Settings:
     distinct_threshold: float = _f("SF_DISTINCT_THRESHOLD", 0.70)
     max_derive_rounds: int = _i("SF_DERIVE_ROUNDS", 2)
 
+    # --- decoration ------------------------------------------------------
+    # How close a library motif has to be before we will place it. Raise it and
+    # more designs go to review with a description of what to draw; lower it
+    # and you start shipping approximate decoration. A hole is the cheaper
+    # mistake, so the default leans towards refusing.
+    motif_threshold: float = _f("SF_MOTIF_THRESHOLD", 0.45)
+
     # --- output ----------------------------------------------------------
     preview_px: int = _i("SF_PREVIEW_PX", 1400)
 

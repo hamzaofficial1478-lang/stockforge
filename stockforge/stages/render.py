@@ -12,6 +12,7 @@ in a font we are allowed to embed.
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -104,18 +105,48 @@ def _shape(spec: DesignSpec, el: ShapeElement, w: float, h: float) -> str:
     return ""
 
 
+_SVG_OPEN = re.compile(r"<svg\b[^>]*>", re.I)
+_MOTIF_METADATA = re.compile(r"<!--.*?-->|<(title|desc|metadata)\b[^>]*>.*?</\1>", re.S | re.I)
+
+
+def _motif_body(raw: str) -> str:
+    """The drawing itself — no wrapper, no metadata.
+
+    A motif file carries a title, a description and usually a comment or two.
+    Those are for the matcher and for whoever draws the next one; they have no
+    business inside a file we deliver.
+    """
+    if m := _SVG_OPEN.search(raw):
+        raw = raw[m.end():].rsplit("</svg>", 1)[0]
+    return _MOTIF_METADATA.sub("", raw).strip()
+
+
+def _motif_file(library_id: str | None, motifs_dir: Path) -> Path | None:
+    """A library id names a file in the motif folder and nothing else.
+
+    It arrives on a spec, and a spec has been through a model — the schema we
+    hand the analyser includes this field, so it can fill it in with anything
+    it likes. Not something to join onto a path unchecked.
+    """
+    if not library_id:
+        return None
+    try:
+        src = (motifs_dir / f"{library_id}.svg").resolve()
+        src.relative_to(motifs_dir.resolve())
+    except (ValueError, OSError):
+        return None
+    return src if src.is_file() else None
+
+
 def _motif(spec: DesignSpec, el: MotifElement, w: float, h: float, motifs_dir: Path) -> str:
     """Place a motif from our own library. A motif with no match is left out
     and reported — a hole you can see beats a traced blob you cannot."""
-    if not el.library_id:
-        return ""
-    src = motifs_dir / f"{el.library_id}.svg"
-    if not src.exists():
+    src = _motif_file(el.library_id, motifs_dir)
+    if src is None:
         return ""
 
     x, y, bw, bh = _px(el.box, w, h)
-    inner = src.read_text()
-    body = inner.split(">", 1)[1].rsplit("</svg>", 1)[0] if "<svg" in inner else inner
+    body = _motif_body(src.read_text())
 
     # motif files are authored on a 0..100 unit square so placement is trivial
     sx, sy = bw / 100.0, bh / 100.0

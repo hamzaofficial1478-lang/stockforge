@@ -196,9 +196,38 @@ OFL are the easy wins — publicly available, and since text is outlined on
 export, no font file ever travels inside a delivered file.
 
 The **motif library** in `assets/motifs/` is the thing that decides whether
-output looks professional. Every decorative element with no match sends its
-design to review, which is how you find out what to draw next. Motifs are plain
-SVG authored on a 0–100 square; there's one in there as a worked example.
+output looks professional. Motifs are plain SVG authored on a 0–100 square;
+there's one in there as a worked example.
+
+The analyser describes a decorative element in words — "grinning carved
+jack-o-lantern, three-quarter view" — and the matcher turns that into one of
+your drawings, or refuses. Refusing is the point: an unmatched element leaves a
+hole, sends its design to Review, and puts its description on the list of what
+to draw next. A wrong match is worse than a hole, because a hole you can see
+and a wrong pumpkin ships.
+
+What the matcher reads rides inside the file, so a motif stays one file:
+
+```svg
+<svg viewBox="0 0 100 100" data-kind="botanical"
+     data-tags="eucalyptus, sprig, leaves, greenery, wedding">
+  <title>Eucalyptus sprig</title>
+  <desc>slender stem with paired oval leaves</desc>
+```
+
+None of it is required. Without it the filename is used, so
+`sprig-eucalyptus-01.svg` still answers to "eucalyptus sprig" — a folder of
+untagged drawings works the moment you drop it in, and tagging only sharpens
+the match. `data-kind` must be one of the motif kinds in `schema.py`.
+
+```bash
+stockforge motifs list
+stockforge motifs match "grinning carved pumpkin" --kind seasonal
+```
+
+`match` shows every candidate and its score, so when something wasn't placed
+you can see whether it wanted a tag or a new drawing. `SF_MOTIF_THRESHOLD` is
+how close is close enough, and it's a slider on the Setup screen.
 
 ## Use
 
@@ -208,6 +237,7 @@ stockforge count  shop your-shop-name
 stockforge pull   shop your-shop-name --limit 20
 stockforge run    --limit 20
 stockforge status
+stockforge motifs list
 stockforge review
 stockforge publish --dry-run
 ```
