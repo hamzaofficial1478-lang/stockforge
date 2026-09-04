@@ -273,9 +273,34 @@ in.
 
 **Not yet done — and this is the real gap:**
 
-1. **Never run against a real design.** No model server has been connected. The
-   next session's first job is to run it on 3–5 real listings and see what the
-   analysis actually produces.
+1. **Never run against a real design.** No model server has been connected, and
+   no real listing image has been through it. That still stands, and is still
+   the next job: run it on 3–5 real listings and read the specs it produces.
+
+   What has changed is that the stages have now been *chained*. Until this
+   point every stage worked alone and no two of them had ever run in sequence.
+   `tests/test_pipeline.py` runs the whole thing — folder source, flattening,
+   the five analysis passes, motif and font matching, compose, derive, the
+   critique gate, SVG, and a real Inkscape export — with only the provider
+   scripted, through the `providers.set_provider` seam that was already there
+   for exactly this. It ends with a PDF, an EPS and a preview on disk and the
+   design in `ready`. Running it found three real bugs, all now fixed:
+
+   - **A second `pull` threw away everything already done.** `add_design` used
+     `INSERT OR REPLACE`, so re-running `stockforge pull folder ...` after
+     adding ten listings put every finished design back to `pending` and erased
+     its provenance verdict. On five thousand designs against a local card that
+     is days of work, silently repeated. A source may now refresh only what a
+     source knows — title, tags, url, image count — never `state` or
+     `stock_safe`.
+   - **A second `pull` re-flattened every image it already held.** Hashing the
+     bytes is far cheaper than decoding and warping one, so a known image is
+     now skipped before that work happens rather than after it.
+   - **Placeholder rewrites had no length limit.** The prompt asks for similar
+     lengths and a local model will not always oblige; a name half again as
+     long as the one it replaced would be shrunk by the fitter, and the piece
+     would come out with a title set half the size the page was built around.
+     A replacement that will not fit is refused and the original kept.
 2. **The motif library is effectively empty** — one eucalyptus sprig as a worked
    example. This is the single thing that decides whether output looks
    professional or looks like a wireframe. Every unmatched motif sends its design

@@ -103,6 +103,12 @@ def shift_type(spec: DesignSpec, keep_category: bool = True) -> None:
 # content
 # --------------------------------------------------------------------------
 
+# How much longer a replacement line may be than the one it replaces, and a
+# floor so a four-character year is not held to five characters.
+MAX_COPY_GROWTH = 1.3
+MIN_COPY_LENGTH = 8
+
+
 class NewCopy(BaseModel):
     replacements: list[str] = Field(
         description="new text for each placeholder line, in the order given"
@@ -138,7 +144,23 @@ def rewrite_placeholders(spec: DesignSpec, provider: VisionProvider | None = Non
         log.warning("copy rewrite failed, keeping originals: %s", exc)
         return
 
+    if len(new.replacements) != len(slots):
+        log.warning("asked for %d replacements, got %d — the rest keep their "
+                    "original text", len(slots), len(new.replacements))
+
     for el, text in zip(slots, new.replacements):
+        text = text.strip()
+        if not text:
+            continue
+        # The prompt asks for similar lengths; a local model will not always
+        # oblige, and a name half again as long as the one it replaces does not
+        # balance the layout, it breaks it. The renderer would then shrink the
+        # line to fit and the piece comes out with a title set half the size the
+        # rest of the page was built around.
+        if len(text) > max(MIN_COPY_LENGTH, len(el.content) * MAX_COPY_GROWTH):
+            log.info("keeping %r — the replacement %r is too long for its box",
+                     el.content, text)
+            continue
         el.content = text
 
 

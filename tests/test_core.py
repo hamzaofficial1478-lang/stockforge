@@ -99,6 +99,53 @@ def test_layout_shift_spreads_the_type_hierarchy():
     assert big > 0.09 and small < 0.02
 
 
+def test_a_replacement_too_long_for_its_box_is_refused():
+    """A local model is told to keep line lengths close and will not always do
+    it. A name half again as long as the one it replaces breaks the layout
+    rather than balancing it."""
+    from stockforge.providers.base import VisionProvider
+    from stockforge.stages.derive import NewCopy, rewrite_placeholders
+
+    class _Copy(VisionProvider):
+        name = "copy"
+
+        def __init__(self, *replacements):
+            self.replacements = list(replacements)
+
+        def chat(self, *a, **kw):
+            raise AssertionError("structured is overridden")
+
+        def structured(self, system, user_text, images, model, **kw):
+            return NewCopy(replacements=self.replacements)
+
+    spec = _spec()
+    assert spec.texts()[0].content == "Chloe & Liam"
+
+    rewrite_placeholders(spec, _Copy("Alexandra & Christopher-Fairweather"))
+    assert spec.texts()[0].content == "Chloe & Liam", "the long one should be refused"
+
+    rewrite_placeholders(spec, _Copy("Rosa & Elliot"))
+    assert spec.texts()[0].content == "Rosa & Elliot"
+
+
+def test_copy_that_the_model_did_not_return_leaves_the_original_alone():
+    from stockforge.providers.base import VisionProvider
+    from stockforge.stages.derive import NewCopy, rewrite_placeholders
+
+    class _Empty(VisionProvider):
+        name = "empty"
+
+        def chat(self, *a, **kw):
+            raise AssertionError("structured is overridden")
+
+        def structured(self, system, user_text, images, model, **kw):
+            return NewCopy(replacements=[])
+
+    spec = _spec()
+    rewrite_placeholders(spec, _Empty())
+    assert spec.texts()[0].content == "Chloe & Liam"
+
+
 # --- providers ------------------------------------------------------------
 
 @pytest.mark.parametrize("raw", [

@@ -126,13 +126,33 @@ class Store:
 
     # -- designs ---------------------------------------------------------
 
+    # What a source is allowed to refresh on a design we have already seen.
+    # Everything else — state, stock_safe, created_at — belongs to the work
+    # done on that design and is not the source's to overwrite.
+    REFRESHABLE = ("design_key", "title", "tags", "listing_url", "source",
+                   "image_count", "page_count")
+
     def add_design(self, **row) -> None:
+        """Record a design, or update what the source knows about a known one.
+
+        Pulling the same folder or shop twice is the most ordinary thing there
+        is — you add ten listings and re-run it. Replacing the row outright put
+        every finished design back to `pending` and erased its provenance
+        verdict, so the next run re-analysed the whole catalogue. On five
+        thousand designs against a local card that is days.
+        """
         row.setdefault("created_at", time.time())
         cols = ", ".join(row)
         marks = ", ".join("?" for _ in row)
+        updates = ", ".join(f"{c}=excluded.{c}" for c in self.REFRESHABLE if c in row)
+        sql = (f"INSERT INTO designs ({cols}) VALUES ({marks}) ON CONFLICT(id) DO "
+               + (f"UPDATE SET {updates}" if updates else "NOTHING"))
         with self.tx() as c:
-            c.execute(f"INSERT OR REPLACE INTO designs ({cols}) VALUES ({marks})",
-                      tuple(row.values()))
+            c.execute(sql, tuple(row.values()))
+
+    def known_asset(self, asset_id: str) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM assets WHERE id=?", (asset_id,)).fetchone() is not None
 
     def designs(self, state: str | None = None) -> list[sqlite3.Row]:
         if state:

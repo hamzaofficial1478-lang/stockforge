@@ -62,6 +62,20 @@ class Pipeline:
         for design in source.designs():
             flats: list[Path] = []
             for image in design.images:
+                # Hashing the bytes is far cheaper than decoding, warping and
+                # rewriting an image we already hold, and a re-pull is mostly
+                # images we already hold.
+                try:
+                    known = self.store.conn.execute(
+                        "SELECT flat_path FROM assets WHERE id=?",
+                        (ingest_stage.sha256_file(image),)).fetchone()
+                except OSError as exc:
+                    log.warning("skipped %s: %s", image.name, exc)
+                    continue
+                if known and known["flat_path"] and Path(known["flat_path"]).exists():
+                    flats.append(Path(known["flat_path"]))
+                    continue
+
                 try:
                     flat = ingest_stage.flatten_image(image, self.cfg.root / "flats")
                 except Exception as exc:
