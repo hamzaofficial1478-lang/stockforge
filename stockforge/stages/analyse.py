@@ -193,9 +193,14 @@ TYPE_SYSTEM = """You are describing the type on one printed surface so it can be
 set again from scratch.
 
 The strings below were read by OCR and are the ground truth for CONTENT and \
-rough POSITION. Trust them over your own reading of the image. Correct obvious \
-OCR damage (a 0 that should be an O) but never invent lines OCR did not see and \
-never drop lines it did.
+rough POSITION. Trust them over your own reading of the image. Never invent \
+lines OCR did not see and never drop lines it did.
+
+Each line comes with the confidence OCR had in it. A line read at 95% or better \
+is almost certainly exact and you should not second-guess it. Where the \
+confidence is lower, look hard at the image and correct it — that is where OCR \
+turns a 5 into a 3 or drops a letter out of a place name, and a nearly-right \
+address is wrong on something somebody prints.
 
 Your job is everything OCR cannot tell us: the role each line plays in the \
 hierarchy, the size relative to the canvas, the tracking, the alignment, and — \

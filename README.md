@@ -114,6 +114,14 @@ Two of those take work off the model entirely. A model asked to eyeball a hex
 value guesses; k-means measures it. A model asked to transcribe an address gets
 it nearly right, and nearly right is wrong on something someone prints.
 
+OCR has the same failure though, so two things guard against it. Small artwork
+is upscaled before reading — tesseract wants something near 300 dpi, and a
+127mm card at 420 pixels across reads "5678 Haunted Hollow, Salem" as "3678
+Haunted Hollow, Salm". And every line reaches the model with the confidence OCR
+had in it, so a line read at 96% is left alone and one read at 72% is the one
+it's asked to look at again. Without tesseract installed the model reads the
+text itself and says so; the pipeline carries on either way.
+
 Any OpenAI-compatible server works — NVIDIA NIM, vLLM, Ollama, LM Studio. Two
 settings and it runs:
 

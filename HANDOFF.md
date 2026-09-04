@@ -319,6 +319,25 @@ A listing whose images all failed used to vanish from the pull with nothing
 said; the crawl now reports how many listings it walked and how many had no
 usable image.
 
+**OCR had never run.** Not once — tesseract was not installed anywhere this
+was developed, and `read` returns an empty list on any problem, so a broken OCR
+stage was indistinguishable from a missing one. Run against real renders it is
+sound: five lines of five, correct positions, one slip in a script face at a
+correctly lowered confidence. Two things were wrong around it.
+
+Small artwork was read at its own size. A 127mm card at 420 pixels across is
+about 100 dpi and tesseract wants nearer 300; it returned "THER FAMLES Haw,
+Sun" for a line it reads exactly when the file is doubled. Flats recovered from
+a staged photograph are routinely that small, since they are only the part of
+the frame the artwork filled. Anything under 1600 pixels is upscaled first, and
+the boxes are normalised against the size tesseract actually saw.
+
+The confidence was measured, stored and never passed on — the fourth field in
+this codebase to be computed and thrown away, after the grid, the perceptual
+hash and `is_mockup`. Meanwhile the typography prompt told the model to trust
+OCR over its own reading, with nothing to say which lines deserved it. Each
+line now carries its confidence and the prompt says what to do with it.
+
 **Mockup detection now counts.** Ingest measured `is_mockup` on every asset
 and the survey pass reported `mockup_indices`; both were written and neither
 was ever read — so a listing whose staged photograph happened to be its largest
