@@ -263,6 +263,28 @@ and returns a fault instead of spending a model. The pipeline runs it before
 guard refuses paths outside the workspace, the health screen correctly reports
 what is missing.
 
+The delivery half has now been run too, against a real FTP server rather than
+a mock: build, metadata, both agency CSVs, upload, and a second run correctly
+skipping what was already there. That found three more bugs.
+
+- **The upload retry had never run.** `except (ftplib.all_errors, OSError)`
+  nests one tuple inside another, which is a TypeError in Python 3 — so the
+  first transient error on a long upload raised out of `upload_batch` instead
+  of retrying, taking the result of every file already sent with it. Across
+  nine hundred files a transient error is a certainty, not a possibility.
+- **`SF_PUBLISH_ALL` did nothing on the command line.** The pipeline marks a
+  flagged design `ready` when it is set, and then `cmd_publish` skipped exactly
+  those designs with `if not spec.publishable`. The panel had no such check, so
+  the two paths disagreed about the setting's whole purpose. There is now one
+  implementation of what may be delivered, used by both.
+- **Metadata was redrafted on every run.** `publish --dry-run` then `publish`
+  is the normal way to use this, and each pass spent a model call per file
+  writing the same title and keywords again. They are kept in the database now.
+
+Still not checked against the agencies themselves: the CSV column layouts are
+written from general knowledge, and contributor requirements change. Read the
+current documentation before a large upload.
+
 The export path has since been run for real against Inkscape 1.2.2, not just
 reasoned about. From one spec: `*-master.pdf` comes out with live, extractable
 text and our own three faces subset-embedded; `*.eps` carries no font

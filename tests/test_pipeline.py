@@ -42,9 +42,11 @@ class ScriptedProvider(VisionProvider):
 
     name = "scripted"
 
-    def __init__(self, occasion: str = "wedding", accent: str = "#7d8f6e"):
+    def __init__(self, occasion: str = "wedding", accent: str = "#7d8f6e",
+                 flagged: bool = False):
         self.occasion = occasion
         self.accent = accent
+        self.flagged = flagged
         self.seen: list[str] = []
 
     def chat(self, system, user_text, images, **kw):
@@ -72,8 +74,20 @@ class ScriptedProvider(VisionProvider):
             ], temperature="warm", contrast="high")
 
     def _provenance(self):
+        if self.flagged:
+            return Provenance(built_with="canva", raster_elements=["a painted scene"],
+                              third_party_suspected=True,
+                              reason="a Canva badge on the listing")
         return Provenance(built_with="illustrator", raster_elements=[],
                           third_party_suspected=False)
+
+    def _metadatadraft(self):
+        from stockforge.publish.metadata import MetadataDraft
+
+        return MetadataDraft(
+            title="Botanical wedding invitation template with eucalyptus sprigs",
+            keywords=["wedding", "invitation", "botanical", "eucalyptus", "greenery"],
+            category="Graphic Resources")
 
     def _typeread(self):
         return analyse_stage.TypeRead(
@@ -305,6 +319,56 @@ def test_an_image_used_by_two_listings_belongs_to_both(workspace, tmp_path):
     assert pipe.status()["images"] == 2, "still only two distinct images"
     for row in pipe.store.designs():
         assert pipe.build(row["id"]) != "failed"
+
+
+def _built(workspace, tmp_path, provider) -> Pipeline:
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+    _listing(tmp_path / "exports", "wedding-invite")
+    pipe = Pipeline(workspace)
+    pipe.pull(open_source("folder", str(tmp_path / "exports")))
+    pipe.build(pipe.store.designs()[0]["id"])
+    return pipe
+
+
+def test_a_flagged_design_gets_its_master_and_goes_no_further(workspace, tmp_path):
+    pipe = _built(workspace, tmp_path, ScriptedProvider(flagged=True))
+
+    design = pipe.store.designs()[0]
+    assert design["state"] == "master_only"
+    assert (workspace.root / "out" / design["id"][:16]).is_dir(), "the master is still made"
+    assert pipe.deliverable() == ([], [])
+    assert pipe.held_back() == 1
+
+
+def test_publish_all_sends_a_flagged_design_after_all(workspace, tmp_path):
+    """The setting is documented as the owner's escape hatch. The command line
+    was refusing exactly the designs it exists to let through."""
+    workspace.publish_all = True
+    pipe = _built(workspace, tmp_path, ScriptedProvider(flagged=True))
+
+    assert pipe.store.designs()[0]["state"] == "ready"
+    rows, files = pipe.deliverable()
+    assert len(files) == 1
+    assert rows[0].title.startswith("Botanical wedding invitation")
+
+
+def test_metadata_is_written_once_and_kept(workspace, tmp_path):
+    """`publish --dry-run` then `publish` is the normal way to use this.
+    Drafting a title and keywords twice for the same file is a model call each
+    time, and on a local card that is an hour for nothing."""
+    provider = ScriptedProvider()
+    pipe = _built(workspace, tmp_path, provider)
+
+    rows, files = pipe.deliverable()
+    assert files
+    first = provider.seen.count("MetadataDraft")
+    assert first == len(files)
+
+    again_rows, again_files = pipe.deliverable()
+    assert provider.seen.count("MetadataDraft") == first, "it drafted them a second time"
+    assert [r.title for r in again_rows] == [r.title for r in rows]
+    assert again_files == files
 
 
 def test_the_run_loop_reports_what_it_did(workspace, tmp_path):

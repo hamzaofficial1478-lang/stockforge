@@ -76,6 +76,17 @@ CREATE TABLE IF NOT EXISTS builds (
     created_at    REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS metadata (
+    design_id     TEXT NOT NULL,
+    filename      TEXT NOT NULL,
+    title         TEXT,
+    keywords      TEXT,                  -- json list
+    category      TEXT,
+    description   TEXT,
+    created_at    REAL NOT NULL,
+    PRIMARY KEY (design_id, filename)
+);
+
 CREATE TABLE IF NOT EXISTS review (
     design_id     TEXT PRIMARY KEY,
     reason        TEXT,
@@ -222,6 +233,36 @@ class Store:
     def get_spec(self, did: str) -> dict | None:
         row = self.conn.execute("SELECT spec_json FROM specs WHERE design_id=?", (did,)).fetchone()
         return json.loads(row["spec_json"]) if row else None
+
+    # -- metadata --------------------------------------------------------
+
+    def save_metadata(self, design_id: str, meta: Any) -> None:
+        """Keep a title and keywords once written.
+
+        They cost a model call each, and `publish --dry-run` followed by
+        `publish` is the normal way to use this — writing them twice for the
+        same file is an hour of a local card for nothing.
+        """
+        with self.tx() as c:
+            c.execute(
+                "INSERT INTO metadata (design_id, filename, title, keywords, category, "
+                "description, created_at) VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(design_id, filename) DO UPDATE SET title=excluded.title, "
+                "keywords=excluded.keywords, category=excluded.category, "
+                "description=excluded.description, created_at=excluded.created_at",
+                (design_id, meta.filename, meta.title, json.dumps(meta.keywords),
+                 meta.category, meta.description, time.time()),
+            )
+
+    def get_metadata(self, design_id: str, filename: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM metadata WHERE design_id=? AND filename=?",
+            (design_id, filename)).fetchone()
+        if row is None:
+            return None
+        return {"filename": row["filename"], "title": row["title"],
+                "keywords": json.loads(row["keywords"] or "[]"),
+                "category": row["category"] or "", "description": row["description"] or ""}
 
     # -- review ----------------------------------------------------------
 

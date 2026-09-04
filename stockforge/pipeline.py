@@ -365,6 +365,53 @@ class Pipeline:
             log.info("[%d/%d] %s -> %s", i, len(pending), did[:8], state)
         return tally
 
+    # -- delivery ----------------------------------------------------------
+
+    def deliverable(self) -> tuple[list, list[Path]]:
+        """Everything cleared to send, with its metadata. Returns (rows, files).
+
+        One implementation, because the command line and the panel had one
+        each and they had already drifted apart: the panel would send a design
+        the command line refused. What they disagreed about was the whole
+        point of the setting — a design flagged by the provenance pass is held
+        back unless SF_PUBLISH_ALL says otherwise, and the command line was
+        refusing those even when it did.
+        """
+        from .publish.metadata import Metadata
+        from .publish.metadata import build as build_metadata
+
+        rows: list[Metadata] = []
+        files: list[Path] = []
+
+        for row in self.store.designs(state="ready"):
+            raw = self.store.get_spec(row["id"])
+            if not raw:
+                log.warning("[%s] is ready but has no spec", row["id"][:8])
+                continue
+            spec = DesignSpec.model_validate(raw)
+            if not (spec.publishable or self.cfg.publish_all):
+                log.info("[%s] held back — %s", row["id"][:8], spec.provenance.reason)
+                continue
+
+            out_dir = self.cfg.root / "out" / row["id"][:16]
+            for eps in sorted(out_dir.glob("*.eps")):
+                cached = self.store.get_metadata(row["id"], eps.name)
+                if cached:
+                    meta = Metadata(**cached)
+                else:
+                    preview = eps.with_name(eps.stem + "-preview.jpg")
+                    meta = build_metadata(spec, eps.name,
+                                          preview if preview.exists() else None)
+                    self.store.save_metadata(row["id"], meta)
+                rows.append(meta)
+                files.append(eps)
+
+        return rows, files
+
+    def held_back(self) -> int:
+        """Designs with an editable master that will never be sent."""
+        return len(self.store.designs(state="master_only"))
+
     # -- reporting ---------------------------------------------------------
 
     def status(self) -> dict:

@@ -37,7 +37,10 @@ hour, and a rolling log of what just happened.
 buttons: clear it, run it again, or keep it as a master only.
 
 **Deliver** — dry run writes both agencies' CSVs and tells you the file count
-without uploading. Then send.
+without uploading. Then send. Titles and keywords are drafted once and kept, so
+the dry run and the real one don't each spend a model call per file, and an
+upload that stops halfway picks up where it left off rather than starting the
+batch again.
 
 It binds to `127.0.0.1` and has no login, because it can read your catalogue,
 write your `.env` and start uploads. Don't put it on a public port.

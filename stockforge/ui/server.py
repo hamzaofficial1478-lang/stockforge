@@ -260,22 +260,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/api/publish":
             from ..publish import FTPTarget, upload_batch, write_metadata
-            from ..publish.metadata import build as build_metadata
-            from ..schema import DesignSpec
 
             pipe = Pipeline(self.cfg)
-            rows, files = [], []
-            for row in pipe.store.designs(state="ready"):
-                raw = pipe.store.get_spec(row["id"])
-                if not raw:
-                    continue
-                spec = DesignSpec.model_validate(raw)
-                out_dir = self.cfg.root / "out" / row["id"][:16]
-                for eps in sorted(out_dir.glob("*.eps")):
-                    preview = eps.with_name(eps.stem + "-preview.jpg")
-                    rows.append(build_metadata(spec, eps.name,
-                                               preview if preview.exists() else None))
-                    files.append(eps)
+            rows, files = pipe.deliverable()
 
             if not files:
                 return self._json({"error": "nothing cleared for delivery yet"}, 400)

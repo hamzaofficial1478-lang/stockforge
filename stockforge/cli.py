@@ -37,33 +37,18 @@ def _log(verbose: bool) -> None:
 
 
 def cmd_publish(pipe: Pipeline, dry_run: bool) -> None:
-    """Only ever sees designs whose provenance check passed."""
+    """Only ever sees designs the provenance check cleared, or that
+    SF_PUBLISH_ALL has explicitly let through."""
     from .publish import FTPTarget, upload_batch, write_metadata
-    from .publish.metadata import build as build_metadata
-    from .schema import DesignSpec
 
-    ready = pipe.store.designs(state="ready")
-    if not ready:
-        print("nothing ready to publish.")
-        blocked = pipe.store.designs(state="master_only")
-        if blocked:
-            print(f"({len(blocked)} designs have editable masters but are held back — "
-                  f"third-party content. `stockforge review` explains each one.)")
-        return
-
-    rows, files = [], []
-    for row in ready:
-        spec = DesignSpec.model_validate(pipe.store.get_spec(row["id"]))
-        if not spec.publishable:                 # belt and braces
-            continue
-        out_dir = settings.root / "out" / row["id"][:16]
-        for eps in sorted(out_dir.glob("*.eps")):
-            preview = eps.with_name(eps.stem + "-preview.jpg")
-            rows.append(build_metadata(spec, eps.name, preview if preview.exists() else None))
-            files.append(eps)
-
+    rows, files = pipe.deliverable()
     if not files:
-        print("nothing to send.")
+        print("nothing ready to publish.")
+        blocked = pipe.held_back()
+        if blocked:
+            print(f"({blocked} designs have editable masters but are held back — "
+                  f"third-party content. `stockforge review` explains each one, and "
+                  f"SF_PUBLISH_ALL=1 sends them anyway.)")
         return
 
     paths = write_metadata(rows, settings.root / "out")

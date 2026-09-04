@@ -30,6 +30,7 @@ class FTPTarget:
     password: str
     directory: str = "/"
     use_tls: bool = True
+    port: int = 21
 
     @classmethod
     def from_env(cls, name: str) -> "FTPTarget":
@@ -45,18 +46,19 @@ class FTPTarget:
             password=os.environ[f"{p}_PASS"],
             directory=os.environ.get(f"{p}_DIR", "/"),
             use_tls=os.environ.get(f"{p}_TLS", "1") != "0",
+            port=int(os.environ.get(f"{p}_PORT", 21)),
         )
 
 
 def connect(target: FTPTarget, timeout: int = 60) -> ftplib.FTP:
     if target.use_tls:
         ftp = ftplib.FTP_TLS(timeout=timeout)
-        ftp.connect(target.host, 21)
+        ftp.connect(target.host, target.port)
         ftp.login(target.username, target.password)
         ftp.prot_p()
     else:
         ftp = ftplib.FTP(timeout=timeout)
-        ftp.connect(target.host, 21)
+        ftp.connect(target.host, target.port)
         ftp.login(target.username, target.password)
     if target.directory and target.directory != "/":
         try:
@@ -83,7 +85,15 @@ def _remote_sizes(ftp: ftplib.FTP) -> dict[str, int]:
 
 
 def upload_batch(target: FTPTarget, files: list[Path], retries: int = 3) -> dict[str, str]:
-    """Returns {filename: uploaded | skipped | failed: reason}."""
+    """Returns {filename: uploaded | skipped | failed: reason}.
+
+    `ftplib.all_errors` is itself a tuple, so the handler below has to unpack
+    it. Nesting one tuple inside another is a TypeError in Python 3, which
+    meant the retry never ran: the first transient error on a long upload
+    raised out of here instead, taking the result of every file that had
+    already gone with it. On nine hundred files a transient error is not a
+    possibility, it is a certainty.
+    """
     result: dict[str, str] = {}
     ftp = connect(target)
     try:
@@ -104,7 +114,7 @@ def upload_batch(target: FTPTarget, files: list[Path], retries: int = 3) -> dict
                     result[path.name] = "uploaded"
                     log.info("[%s] %s", target.name, path.name)
                     break
-                except (ftplib.all_errors, OSError) as exc:
+                except (*ftplib.all_errors, OSError) as exc:
                     if attempt == retries:
                         result[path.name] = f"failed: {exc}"
                         log.warning("[%s] %s failed: %s", target.name, path.name, exc)
