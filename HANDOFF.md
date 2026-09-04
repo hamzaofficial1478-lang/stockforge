@@ -319,6 +319,19 @@ A listing whose images all failed used to vanish from the pull with nothing
 said; the crawl now reports how many listings it walked and how many had no
 usable image.
 
+**Mockup detection now counts.** Ingest measured `is_mockup` on every asset
+and the survey pass reported `mockup_indices`; both were written and neither
+was ever read — so a listing whose staged photograph happened to be its largest
+file was read through the photograph. Flats are ordered first, the palette is
+measured off one where a flat exists, and a surface that could only be read
+from a photograph says so in the spec's warnings.
+
+**The palette pass no longer loses colours.** Coverage was looked up by exact
+string match against the measured hexes, so a model that altered one — which
+the prompt forbids and a local model does anyway — produced a colour that is
+not in the artwork and a coverage of zero. Returned colours are snapped to the
+nearest measured one.
+
 **Near-duplicates across the catalogue** are now checked, which nothing did.
 `derive.check` only ever asked whether a rebuild reads as a copy of its own
 source; nothing compared design four hundred to design twelve, and that is the
@@ -472,6 +485,11 @@ Key environment variables (all in `.env.example`):
 3. **Read the specs it produces.** That is the real test — is the survey pass
    identifying surfaces correctly? Is the typography pass describing letterforms
    usefully? Tune the prompts in `stages/analyse.py` against real output.
+   `stockforge spec <id>` is the tool for it; there was none, and the spec is a
+   JSON blob in SQLite, so this step was not actually doable. It shows the
+   analyser's own read rather than the finished spec, which needed the read to
+   be kept — the built spec overwrote the row, so what the prompts are judged
+   on was being destroyed by the build that followed.
 4. Build out the motif library from what the review queue reports as unmatched.
    `stockforge motifs match "<the description from review>"` says whether a
    drawing you already have just needs tagging, or whether you need a new one.

@@ -134,17 +134,24 @@ class Pipeline:
         if row is None:
             return "failed"
 
+        # True flat exports first, then the ones recovered from a staged
+        # photograph, each group largest first. Ingest works out which is which
+        # and nothing has ever used the answer — so a listing whose photograph
+        # happened to be the biggest file was read through the photograph.
         assets = self.store.conn.execute(
-            "SELECT * FROM assets WHERE design_id=? ORDER BY width DESC", (design_id,)
+            "SELECT * FROM assets WHERE design_id=? ORDER BY is_mockup ASC, width DESC",
+            (design_id,),
         ).fetchall()
-        images = [Path(a["flat_path"]) for a in assets if a["flat_path"]]
+        usable = [a for a in assets if a["flat_path"]]
+        images = [Path(a["flat_path"]) for a in usable]
         if not images:
             return "failed"
+        mockups = {i for i, a in enumerate(usable) if a["is_mockup"]}
 
         # --- read it --------------------------------------------------
         spec = analyse(
-            images, asset_id=assets[0]["id"], design_id=design_id,
-            listing_url=row["listing_url"],
+            images, asset_id=usable[0]["id"], design_id=design_id,
+            listing_url=row["listing_url"], mockups=mockups,
         )
         # Point every decorative element at a drawing in our own library. What
         # nothing matches stays unresolved on purpose — the renderer reports it
@@ -153,7 +160,11 @@ class Pipeline:
         if holes:
             log.info("[%s] no motif for: %s", design_id[:8], "; ".join(sorted(set(holes))[:3]))
 
-        self.store.save_spec(design_id, spec.model_dump(mode="json"))
+        read = spec.model_dump(mode="json")
+        self.store.save_spec(design_id, read)
+        # And keep it, because everything below replaces it and the read is
+        # what the analysis prompts are judged on.
+        self.store.save_read(design_id, read)
         self.store.set_design_state(design_id, "analysed", spec.provenance.stock_safe)
 
         if not spec.pages:

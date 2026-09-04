@@ -114,6 +114,141 @@ def cmd_motifs(args, pipe: Pipeline) -> int:
     return 0
 
 
+def _find_design(pipe: Pipeline, needle: str):
+    """Accept a prefix. The ids are twenty-four hex characters and nobody is
+    going to type one out."""
+    rows = pipe.store.designs()
+    exact = [r for r in rows if r["id"] == needle]
+    if exact:
+        return exact[0]
+    matches = [r for r in rows
+               if r["id"].startswith(needle) or (r["design_key"] or "").endswith(needle)]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        print(f"no design starts with {needle!r}. `stockforge spec` lists them.")
+        return None
+    print(f"{needle!r} matches {len(matches)} designs:")
+    for r in matches[:10]:
+        print(f"  {r['id'][:16]}  {r['design_key'] or ''}")
+    return None
+
+
+def _font_wanted(font) -> str:
+    bits = [font.category, str(font.weight), f"{font.contrast} contrast"]
+    if font.width != "normal":
+        bits.append(font.width)
+    if font.mood:
+        bits.append("/".join(font.mood[:3]))
+    return ", ".join(bits)
+
+
+def cmd_spec(args, pipe: Pipeline) -> int:
+    """What the analyser understood, in a form you can judge.
+
+    This is the step the handoff calls the real test — read the specs and tune
+    the prompts against them — and there was no way to do it. The spec is JSON
+    in a SQLite blob; short of opening the database by hand you could not see
+    whether the survey found the right surfaces or whether the letterform
+    descriptions were worth anything.
+    """
+    import json as _json
+
+    from .schema import DesignSpec, MotifElement, ShapeElement, TextElement
+    from .stages import fonts as fonts_stage
+
+    if not args.design_id:
+        rows = pipe.store.designs()
+        if not rows:
+            print("nothing pulled in yet.")
+            return 0
+        print(f"{'design':<18}{'state':<14}{'read':<6}what it came from")
+        for r in sorted(rows, key=lambda r: r["state"]):
+            has = "yes" if pipe.store.get_spec(r["id"]) else "-"
+            print(f"{r['id'][:16]:<18}{r['state']:<14}{has:<6}"
+                  f"{(r['title'] or r['design_key'] or '')[:44]}")
+        print(f"\n{len(rows)} designs. `stockforge spec <id>` reads one.")
+        return 0
+
+    row = _find_design(pipe, args.design_id)
+    if row is None:
+        return 2
+    # The read by default: the built spec has been mixed, derived and patched,
+    # so it says very little about how well the analyser did.
+    raw = pipe.store.get_spec(row["id"]) if args.built else pipe.store.get_read(row["id"])
+    which = "as built" if args.built else "as read"
+    if not raw and not args.built:
+        raw, which = pipe.store.get_spec(row["id"]), "as built (no read was kept)"
+    if not raw:
+        print(f"{row['id'][:16]} has not been read yet — `stockforge build {row['id']}`.")
+        return 1
+    if args.json:
+        print(_json.dumps(raw, indent=2))
+        return 0
+
+    spec = DesignSpec.model_validate(raw)
+    dna = spec.dna
+    library = fonts_stage.load_manifest(settings.fonts_dir)
+
+    print(f"design {row['id'][:16]}   {row['design_key'] or ''}   [{which}]")
+    if row["listing_url"]:
+        print(f"  listing     {row['listing_url']}")
+    print(f"  state       {row['state']}")
+    print(f"  read as     {dna.occasion} {dna.category}"
+          f"{' · ' + ', '.join(dna.style_tags) if dna.style_tags else ''}"
+          f"   confidence {spec.confidence:.2f}")
+    if spec.notes:
+        print(f"  the model's own note: {spec.notes[:120]}")
+
+    verdict = ("publishable" if spec.provenance.stock_safe
+               else "editable master only")
+    print(f"  provenance  {verdict}"
+          f"{' — ' + spec.provenance.reason if spec.provenance.reason else ''}")
+    if spec.provenance.built_with:
+        print(f"              looks built with {spec.provenance.built_with}")
+
+    print(f"\npalette   {dna.palette.temperature}, {dna.palette.contrast} contrast")
+    for sw in dna.palette.swatches:
+        print(f"  {sw.role.value:<12}{sw.hex}   {sw.coverage:5.1%} of the canvas")
+
+    for i, page in enumerate(spec.pages):
+        print(f"\nsurface {i}: {page.name}   "
+              f"{page.canvas.width_mm:.0f} x {page.canvas.height_mm:.0f} mm")
+
+        texts = [e for e in page.elements if isinstance(e, TextElement)]
+        if texts:
+            print("  type")
+        for el in texts:
+            entry, score = fonts_stage.match(el.font, library)
+            matched = f"{entry.family} ({score:.2f})" if entry else "no font matched"
+            flag = "  [placeholder]" if el.placeholder else ""
+            print(f"    {el.role.value:<10}{el.size_ratio:.3f}  "
+                  f"{el.content[:46]!r}{flag}")
+            print(f"    {'':<10}wants {_font_wanted(el.font)}  ->  {matched}")
+
+        motifs = [e for e in page.elements if isinstance(e, MotifElement)]
+        if motifs:
+            print("  decoration")
+        for el in motifs:
+            got = (f"{el.library_id} ({el.match_score:.2f})" if el.library_id
+                   else "nothing in the library matched")
+            print(f"    {el.motif.value:<10}{el.description[:52]!r}")
+            print(f"    {'':<10}->  {got}")
+
+        shapes = [e for e in page.elements if isinstance(e, ShapeElement)]
+        if shapes:
+            kinds = {}
+            for el in shapes:
+                kinds[el.primitive] = kinds.get(el.primitive, 0) + 1
+            print("  geometry  " + ", ".join(f"{n} {k}" for k, n in sorted(kinds.items())))
+
+    if spec.warnings:
+        print("\nwarnings")
+        for w in spec.warnings:
+            print(f"  {w}")
+    return 0
+
+
 def cmd_motifs_todo(args, pipe: Pipeline) -> int:
     """The work list. Every decorative element nothing in the library could
     answer, gathered across the whole catalogue and ranked by how many designs
@@ -169,6 +304,13 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("design_id")
 
     sub.add_parser("status", help="where everything is up to")
+
+    sp = sub.add_parser("spec", help="what the analyser understood about a design")
+    sp.add_argument("design_id", nargs="?", help="an id or the start of one")
+    sp.add_argument("--json", action="store_true", help="the raw spec instead")
+    sp.add_argument("--built", action="store_true",
+                    help="the finished spec — mixed, derived and patched — "
+                         "rather than what the analyser read")
     sub.add_parser("review", help="what is waiting on you, worst first")
 
     s = sub.add_parser("publish", help="send cleared files to the agencies")
@@ -220,6 +362,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     pipe = Pipeline(settings)
+
+    if args.cmd == "spec":
+        return cmd_spec(args, pipe)
 
     if args.cmd == "motifs":
         return cmd_motifs(args, pipe)

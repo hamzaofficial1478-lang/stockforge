@@ -83,6 +83,12 @@ artwork files and the rest staged photographs and marketing frames. They're
 grouped as one design and read together, so the mockups become extra evidence
 rather than four extra jobs.
 
+Ingest works out which is which, corrects the perspective on the staged ones
+and rebalances their colour — and the read prefers a true flat wherever one
+exists. A colour sampled through tungsten light and a linen tablecloth is the
+wrong colour however carefully the roles are assigned afterwards. Where a
+surface could only be read from a photograph, the spec says so.
+
 And a design can have several printed surfaces. A greeting card is a front and
 an inside. A wedding suite is an invitation, an RSVP and a details card. Each
 becomes its own file, sharing one palette and one type system — which is how a
@@ -119,6 +125,27 @@ SF_VISION_MODEL=nvidia/llama-3.2-90b-vision-instruct
 Local models wrap their JSON in prose, leave trailing commas and occasionally
 drop a brace. The provider layer extracts, validates, and hands the validation
 errors straight back for a repair round. Two retries fixes almost everything.
+
+They also change values they were told not to change. The palette pass hands
+the model measured hex codes and asks only for roles; when one comes back
+altered it's snapped to the nearest colour that was actually measured, so the
+palette only ever contains colours genuinely in the artwork.
+
+### Seeing what it understood
+
+```bash
+stockforge spec 7e88a110
+```
+
+Which is how you judge the analysis and tune the prompts against it: what it
+took the piece to be, the colours it measured and what each is doing, every
+line of type with the letterforms it described *and* the font that description
+matched, every decorative element and whether the library could answer it.
+
+It shows the **read** — what the analyser understood — not the finished spec,
+because everything after analysis mixes, derives and patches it and says very
+little about how well the read went. `--built` shows the finished one, and
+`--json` the raw.
 
 ### The worker is paced on purpose
 
@@ -324,6 +351,8 @@ stockforge count  shop your-shop-name
 stockforge pull   shop your-shop-name --limit 20
 stockforge run    --limit 20
 stockforge status
+stockforge spec                              # what has been read
+stockforge spec 7e88a110                     # what it understood about one
 stockforge motifs list
 stockforge review
 stockforge publish --dry-run

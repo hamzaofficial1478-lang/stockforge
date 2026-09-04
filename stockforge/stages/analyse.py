@@ -136,6 +136,29 @@ Not every role needs filling, and a colour may be left unassigned if it is \
 just a blend between two others."""
 
 
+def _rgb(hex_: str) -> tuple[int, int, int]:
+    return tuple(int(hex_[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _snap(hex_: str, sampled: list[tuple[str, float]]) -> tuple[str, float]:
+    """Pull a returned colour back to one that was genuinely measured.
+
+    The prompt tells the model the hex values are measured and must not be
+    changed. A local model changes them anyway — a digit, the case, or
+    something invented outright — and the coverage was then looked up by exact
+    string match, so a drifted hex landed silently with a coverage of zero and
+    a colour that is not in the artwork. Snapping keeps both honest.
+    """
+    if not sampled:
+        return hex_.lower(), 0.0
+    want = _rgb(hex_.lower())
+    nearest, coverage = min(
+        sampled, key=lambda s: sum((a - b) ** 2 for a, b in zip(want, _rgb(s[0]))))
+    if nearest != hex_.lower():
+        log.debug("palette: %s was not measured, snapped to %s", hex_, nearest)
+    return nearest, coverage
+
+
 def palette(flat: Path, provider: VisionProvider) -> Palette:
     sampled = dominant_colours(flat)
     listing = "\n".join(f"  {hex_} covering {cov:.1%} of the canvas" for hex_, cov in sampled)
@@ -145,11 +168,10 @@ def palette(flat: Path, provider: VisionProvider) -> Palette:
         [flat],
         PaletteRead,
     )
-    coverage = dict(sampled)
-    swatches = [
-        Swatch(role=a.role, hex=a.hex, coverage=coverage.get(a.hex.lower(), 0.0))
-        for a in read.assignments
-    ]
+    swatches = []
+    for a in read.assignments:
+        hex_, coverage = _snap(a.hex, sampled)
+        swatches.append(Swatch(role=a.role, hex=hex_, coverage=coverage))
     return Palette(
         swatches=swatches or [Swatch(role=ColourRole.BACKGROUND, hex="#ffffff", coverage=1.0)],
         temperature=read.temperature if read.temperature in ("warm", "cool", "neutral") else "neutral",
@@ -294,13 +316,33 @@ def analyse(
     provider: VisionProvider | None = None,
     design_id: str | None = None,
     listing_url: str | None = None,
+    mockups: set[int] | None = None,
 ) -> DesignSpec:
-    """Full read of one design from its listing images."""
+    """Full read of one design from its listing images.
+
+    `mockups` names the images that ingest recovered from a staged photograph
+    rather than a flat export, by index into `images`. They are perfectly
+    usable — the perspective is corrected and the colour balanced — but a true
+    flat is better evidence, and until now nothing anywhere acted on the
+    difference. Both ingest and the survey pass worked out which images were
+    staged and both threw the answer away.
+    """
     provider = provider or vision()
+    mockups = set(mockups or ())
 
     sv = survey(images, provider)
-    flats = [images[s.image_index] for s in sv.surfaces if s.image_index < len(images)]
-    primary = flats[0] if flats else images[0]
+    # The model has its own opinion; take both, since either noticing is worth
+    # more than neither.
+    staged = mockups | {i for i in sv.mockup_indices if 0 <= i < len(images)}
+    surfaces = [s for s in sv.surfaces if 0 <= s.image_index < len(images)]
+    # The palette is measured off one image, so it should be the best one we
+    # have. A colour sampled through tungsten light and a linen tablecloth is
+    # the wrong colour however carefully the roles are then assigned.
+    chosen = [s.image_index for s in surfaces]
+    primary_index = next((i for i in chosen if i not in staged),
+                         next((i for i in range(len(images)) if i not in staged),
+                              chosen[0] if chosen else 0))
+    primary = images[primary_index]
 
     pal = palette(primary, provider)
     prov = provenance(images, provider)
@@ -308,10 +350,14 @@ def analyse(
     pages: list[Page] = []
     grid, pairing, background, vocabulary = Grid(), [], Background(), []
 
-    for surface in sv.surfaces:
-        if surface.image_index >= len(images):
-            continue
+    warnings = [f"raster element: {r}" for r in prov.raster_elements]
+
+    for surface in surfaces:
         flat = images[surface.image_index]
+        if surface.image_index in staged:
+            warnings.append(
+                f"'{surface.name}' was read from a staged photograph, not a flat "
+                f"export — the colours and the text are less reliable")
 
         type_read = typography(flat, provider)
         struct = structure(flat, provider)
@@ -348,5 +394,5 @@ def analyse(
         provenance=prov,
         confidence=sv.confidence,
         notes=sv.notes,
-        warnings=[f"raster element: {r}" for r in prov.raster_elements],
+        warnings=warnings,
     )

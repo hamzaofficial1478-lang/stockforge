@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS designs (
 
 CREATE TABLE IF NOT EXISTS specs (
     design_id     TEXT PRIMARY KEY,
-    spec_json     TEXT NOT NULL,
+    spec_json     TEXT NOT NULL,       -- the current one: mixed, derived, patched
+    read_json     TEXT,                -- the analyser's own read, before any of that
     round         INTEGER DEFAULT 0,
     similarity    REAL,
     polish        REAL,
@@ -127,6 +128,11 @@ class Store:
         row = self.conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='assets'"
         ).fetchone()
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(specs)")}
+        if "read_json" not in columns:
+            with self.tx() as c:
+                c.execute("ALTER TABLE specs ADD COLUMN read_json TEXT")
+
         if not row or "PRIMARY KEY (id, design_id)" in row["sql"]:
             return
 
@@ -238,6 +244,27 @@ class Store:
                     scores.get("distinct"), scores.get("verdict"), time.time(),
                 ),
             )
+
+    def save_read(self, did: str, spec: Any) -> None:
+        """Keep what the analyser understood, before anything was derived from it.
+
+        The built spec replaces the row, so without this the read is gone by
+        the time anyone looks — and the read is the thing you judge the prompts
+        against. It is written once, when the design is first analysed.
+        """
+        payload = spec if isinstance(spec, str) else json.dumps(spec, default=str)
+        with self.tx() as c:
+            c.execute(
+                "INSERT INTO specs (design_id, spec_json, read_json, updated_at) "
+                "VALUES (?,?,?,?) ON CONFLICT(design_id) DO UPDATE SET "
+                "read_json=excluded.read_json",
+                (did, payload, payload, time.time()),
+            )
+
+    def get_read(self, did: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT read_json FROM specs WHERE design_id=?", (did,)).fetchone()
+        return json.loads(row["read_json"]) if row and row["read_json"] else None
 
     def get_spec(self, did: str) -> dict | None:
         row = self.conn.execute("SELECT spec_json FROM specs WHERE design_id=?", (did,)).fetchone()
