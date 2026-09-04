@@ -275,6 +275,15 @@ what is missing.
    `stockforge motifs match "..."` shows why something did or did not match.
 3. **No fonts installed.** `assets/fonts/` is empty. Google Fonts API integration
    was discussed but not built.
+
+   The plumbing behind it now works end to end. `fonts scan` writes a
+   `fontconfig.conf` alongside the manifest and the pipeline puts it on
+   Inkscape's and cairo's search path, so the family the matcher picks is the
+   one that actually gets drawn — before this the name went into the SVG and
+   the system font was substituted silently. The renderer also opens the
+   matched file for its real cap height and advance widths, and sets a line
+   smaller rather than letting it run off the page. Drop in families, run the
+   scan, mark them embeddable, and it works.
 4. **Stock-image APIs** (Pexels, Pixabay) were requested but not built. Note for
    the owner: those licences permit use but not resale as stock, so they suit
    pile A (own products) rather than pile B (agency submission).

@@ -19,20 +19,34 @@ from xml.sax.saxutils import escape
 from ..schema import (
     Box, ColourRole, DesignSpec, MotifElement, Page, ShapeElement, TextElement,
 )
-from .fonts import FontEntry, load_manifest, match
+from .fonts import FontEntry, load_manifest, match, open_face
 
 MM_PER_PX = 25.4 / 96.0
 
+# Leave a hair of room rather than setting a line flush to the edge of its box.
+FIT_MARGIN = 0.98
+
 
 class RenderResult:
-    def __init__(self, svg: str, missing_motifs: list[str], font_scores: list[float]):
+    def __init__(self, svg: str, missing_motifs: list[str], font_scores: list[float],
+                 refits: list[tuple[str, float]] | None = None):
         self.svg = svg
         self.missing_motifs = missing_motifs
         self.font_scores = font_scores
+        # Lines that had to be set smaller than the spec asked in order to fit
+        # their box, as (what it was, how much of the asked-for size survived).
+        self.refits = refits or []
 
     @property
     def worst_font_score(self) -> float:
         return min(self.font_scores) if self.font_scores else 1.0
+
+    @property
+    def worst_refit(self) -> float:
+        """1.0 when nothing had to shrink. Well under it means the analyser
+        read a size the words do not fit into, which is a design fault rather
+        than a rendering one — worth a human's eye."""
+        return min((scale for _, scale in self.refits), default=1.0)
 
 
 # --------------------------------------------------------------------------
@@ -159,9 +173,17 @@ def _motif(spec: DesignSpec, el: MotifElement, w: float, h: float, motifs_dir: P
 
 
 def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
-          library: list[FontEntry]) -> tuple[str, float]:
+          library: list[FontEntry], fonts_dir: Path) -> tuple[str, float, float]:
+    """Set one text element. Returns the node, the font match score, and how
+    much of the asked-for size survived fitting it to its box."""
     entry, score_ = match(el.font, library)
     family = entry.family if entry else "serif"
+    # The weight of the face we actually matched, not the one the analyser
+    # asked for. Fontconfig picks the file by family and weight together, so
+    # asking for 400 of a family whose bold we matched draws — and measures —
+    # a different file from the one we chose.
+    weight = entry.weight if entry else el.font.weight
+    face = open_face(entry, fonts_dir) if entry else None
 
     content = el.content
     if el.case == "upper":
@@ -172,12 +194,25 @@ def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
         content = content.title()
 
     x, y, bw, bh = _px(el.box, w, h)
-    cap = el.size_ratio * h
-    size = cap / 0.70                       # cap height -> em, close enough for most faces
+    # size_ratio is a cap height. Turning it into an em needs the face's own
+    # cap ratio; 0.70 is only the fallback for when we have no file to ask.
+    size = (el.size_ratio * h) / (face.cap_ratio if face else 0.70)
+
+    lines = content.split("\n")
+    refit = 1.0
+    if face and bw > 0:
+        widest = max((face.measure(line, size, el.tracking) for line in lines),
+                     default=0.0)
+        if widest > bw * FIT_MARGIN:
+            # Set it smaller rather than letting it run off the page. Shrinking
+            # keeps the design's structure; rewrapping would change what the
+            # analyser read, and overflowing is simply broken.
+            refit = (bw * FIT_MARGIN) / widest
+            size *= refit
+
     anchor = {"left": "start", "center": "middle", "right": "end"}.get(el.align, "middle")
     tx = x if anchor == "start" else (x + bw if anchor == "end" else x + bw / 2)
 
-    lines = content.split("\n")
     leading = size * el.line_height
     # vertically centre the block inside its box
     y0 = y + (bh - leading * (len(lines) - 1)) / 2
@@ -189,11 +224,11 @@ def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
     rot = _rot(el, x + bw / 2, y + bh / 2)
     node = (
         f'<text font-family="{escape(family)}" font-size="{size:.2f}" '
-        f'font-weight="{el.font.weight}" fill="{_fill(spec, el.colour)}" '
+        f'font-weight="{weight}" fill="{_fill(spec, el.colour)}" '
         f'letter-spacing="{el.tracking * size:.2f}" text-anchor="{anchor}" '
         f'dominant-baseline="middle"{rot}>{spans}</text>'
     )
-    return node, score_
+    return node, score_, refit
 
 
 # --------------------------------------------------------------------------
@@ -216,6 +251,7 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
 
     missing: list[str] = []
     scores: list[float] = []
+    refits: list[tuple[str, float]] = []
 
     parts.append('<g id="structure">')
     for el in page.elements:
@@ -236,12 +272,15 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
     parts.append('<g id="type">')
     for el in page.elements:
         if isinstance(el, TextElement):
-            node, s = _text(spec, el, w, h, library)
+            node, s, refit = _text(spec, el, w, h, library, fonts_dir)
             parts.append(node)
             scores.append(s)
+            if refit < 1.0:
+                first = (el.content.splitlines() or [""])[0]
+                refits.append((f"{el.role.value} {first[:40]!r}", refit))
     parts.append("</g></svg>")
 
-    return RenderResult("\n".join(parts), missing, scores)
+    return RenderResult("\n".join(parts), missing, scores, refits)
 
 
 def write_svg(result: RenderResult, path: Path) -> Path:

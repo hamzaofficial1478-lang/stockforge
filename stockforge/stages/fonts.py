@@ -16,12 +16,17 @@ afternoon that pays back across all 5,000 files.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
+import logging
+import os
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
 from ..schema import FontClass
 
+log = logging.getLogger("stockforge.fonts")
+
 MANIFEST = "manifest.json"
+FONTCONFIG = "fontconfig.conf"
 
 
 @dataclass
@@ -117,6 +122,153 @@ def load_manifest(fonts_dir: Path) -> list[FontEntry]:
     if not path.exists():
         return []
     return [FontEntry(**d) for d in json.loads(path.read_text())]
+
+
+# --------------------------------------------------------------------------
+# the real file behind an entry
+# --------------------------------------------------------------------------
+
+@dataclass
+class Face:
+    """An opened font, with the numbers the renderer needs to set type.
+
+    Without this the renderer was guessing: cap height was assumed to be 0.70
+    of the em for every face, and line widths were never measured at all, so
+    any title longer than the canvas simply ran off the page.
+    """
+
+    entry: FontEntry
+    path: Path
+    units_per_em: int = 1000
+    cap_ratio: float = 0.70
+    widths: dict[int, int] = field(default_factory=dict, repr=False)
+    fallback: int = 500
+
+    def advance(self, ch: str) -> float:
+        """One character's advance, in em."""
+        return self.widths.get(ord(ch), self.fallback) / self.units_per_em
+
+    def measure(self, text: str, size: float, tracking: float = 0.0) -> float:
+        """How wide this line will actually be, in the same units as `size`.
+
+        `tracking` is in em, matching the schema and what the renderer emits as
+        letter-spacing: one gap between each pair of characters.
+        """
+        if not text:
+            return 0.0
+        return (sum(self.advance(c) for c in text) * size
+                + tracking * size * max(0, len(text) - 1))
+
+
+_faces: dict[tuple[str, float], Face | None] = {}
+
+
+def open_face(entry: FontEntry, fonts_dir: Path) -> Face | None:
+    """Open the file behind a manifest entry. None when it cannot be read.
+
+    Cached, because 5,000 designs reuse the same dozen faces and parsing a font
+    for every line of text would be the slowest thing in the pipeline.
+    """
+    path = fonts_dir / entry.path
+    try:
+        key = (str(path), path.stat().st_mtime)
+    except OSError:
+        log.warning("%s is in the manifest but not on disk", entry.path)
+        return None
+    if key in _faces:
+        return _faces[key]
+
+    face: Face | None = None
+    try:
+        from fontTools.ttLib import TTFont
+
+        tt = TTFont(str(path), lazy=True, fontNumber=0)
+        upem = int(tt["head"].unitsPerEm) or 1000
+        metrics = tt["hmtx"].metrics
+        widths = {cp: metrics[name][0]
+                  for cp, name in tt.getBestCmap().items() if name in metrics}
+
+        # Real cap height where the font declares a sane one; the old 0.70
+        # guess otherwise. It decides how big the type is, so it is worth
+        # taking from the file rather than assuming.
+        cap = int(getattr(tt["OS/2"], "sCapHeight", 0) or 0) if "OS/2" in tt else 0
+        ratio = cap / upem if cap else 0.0
+        if not 0.4 < ratio < 1.0:
+            ratio = 0.70
+
+        face = Face(
+            entry=entry, path=path, units_per_em=upem, cap_ratio=ratio, widths=widths,
+            fallback=widths.get(ord("n")) or (sum(widths.values()) // len(widths)
+                                              if widths else upem // 2),
+        )
+    except Exception as exc:
+        log.warning("could not read %s: %s", path.name, exc)
+
+    _faces[key] = face
+    return face
+
+
+# --------------------------------------------------------------------------
+# making the family name resolve to our own file
+# --------------------------------------------------------------------------
+
+_FONTCONFIG_XML = """<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<!-- Written by stockforge. `stockforge fonts scan` overwrites it. -->
+<fontconfig>
+  <dir>{fonts}</dir>
+{system}
+</fontconfig>
+"""
+
+# Where the system keeps its own config, so ordinary fonts still resolve.
+_SYSTEM_CONFIGS = (
+    "/etc/fonts/fonts.conf",
+    "/usr/local/etc/fonts/fonts.conf",
+    "/opt/homebrew/etc/fonts/fonts.conf",
+)
+
+
+def write_fontconfig(fonts_dir: Path) -> Path:
+    system = "\n".join(f'  <include ignore_missing="yes">{p}</include>'
+                       for p in _SYSTEM_CONFIGS)
+    body = _FONTCONFIG_XML.format(fonts=fonts_dir.resolve(), system=system)
+    path = fonts_dir / FONTCONFIG
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists() or path.read_text() != body:
+        path.write_text(body)
+    return path
+
+
+def activate(fonts_dir: Path) -> Path | None:
+    """Make our own font folder visible to Inkscape and cairo.
+
+    Neither takes a font file. Both look a family name up through fontconfig,
+    which is why matching a face in our library was until now only a
+    suggestion: the name went into the SVG and whatever the system happened to
+    have got drawn instead. Pointing FONTCONFIG_FILE at a config that includes
+    our folder closes that, and it installs nothing into the system.
+
+    Returns None when there is nothing to do — no fonts yet, or the owner has
+    set FONTCONFIG_FILE themselves, in which case it is not ours to overwrite.
+    """
+    if os.environ.get("FONTCONFIG_FILE"):
+        return None
+    try:
+        if not any(p.suffix.lower() in {".ttf", ".otf"} for p in fonts_dir.rglob("*")):
+            return None
+    except OSError:
+        return None
+    try:
+        path = write_fontconfig(fonts_dir)
+    except OSError as exc:
+        # Runs on every pipeline start, so a read-only font folder must not be
+        # the thing that stops a batch. Type will fall back to system fonts.
+        log.warning("could not write the fontconfig in %s: %s", fonts_dir, exc)
+        return None
+    os.environ["FONTCONFIG_FILE"] = str(path.resolve())
+    log.debug("fontconfig: %s", path)
+    return path
 
 
 # --------------------------------------------------------------------------

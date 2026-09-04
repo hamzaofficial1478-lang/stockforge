@@ -97,6 +97,20 @@ def _check_fonts(cfg: Settings) -> Check:
                      f"{len(entries)} fonts scanned, none marked usable",
                      "Open the manifest and set embeddable:true on the families "
                      "you can use. Nothing is used until you do.")
+    # A manifest entry whose file will not open is worse than a missing one:
+    # the matcher picks it, the renderer cannot measure it, and the type comes
+    # out set in whatever the system falls back to.
+    from .stages.fonts import FontEntry, open_face
+
+    unreadable = [e["path"] for e in usable
+                  if open_face(FontEntry(**e), cfg.fonts_dir) is None]
+    if unreadable:
+        return Check("Font library", "fail",
+                     f"{len(unreadable)} of {len(usable)} usable fonts will not open: "
+                     f"{', '.join(unreadable[:3])}",
+                     "Re-run `stockforge fonts scan` — the manifest is pointing at "
+                     "files that have moved or are damaged.")
+
     categories = {e.get("category") for e in usable}
     if len(categories) < 3:
         return Check("Font library", "warn",

@@ -32,6 +32,7 @@ from .stages import critique as critique_stage
 from .stages import compose as compose_stage
 from .stages import derive as derive_stage
 from .stages import export as export_stage
+from .stages import fonts as fonts_stage
 from .stages import ingest as ingest_stage
 from .stages import motifs as motifs_stage
 from .stages.analyse import analyse
@@ -39,11 +40,18 @@ from .stages.render import render, write_svg
 
 log = logging.getLogger("stockforge")
 
+# Below this much of its intended size, a line has stopped being a fitting
+# problem and become a design fault. See where it is used.
+CRAMPED = 0.65
+
 
 class Pipeline:
     def __init__(self, cfg: Settings | None = None):
         self.cfg = cfg or default_settings
         self.cfg.ensure_dirs()
+        # Inkscape and cairo find a font by family name through fontconfig, so
+        # our own folder has to be on its search path before anything renders.
+        fonts_stage.activate(self.cfg.fonts_dir)
         self.store = Store(self.cfg.db_path)
 
     # -- 1. pull designs in -----------------------------------------------
@@ -180,11 +188,21 @@ class Pipeline:
         # --- ship it ---------------------------------------------------
         out_dir = self.cfg.root / "out" / design_id[:16]
         holes: list[str] = []
+        cramped: list[str] = []
 
         for i, page in enumerate(derived.pages):
             result = render(derived, self.cfg.fonts_dir, self.cfg.motifs_dir, page_index=i)
             svg = write_svg(result, self.cfg.root / "renders" / f"{design_id[:16]}-{page.name}.svg")
             holes.extend(result.missing_motifs)
+            for label, scale in result.refits:
+                log.info("[%s] %s set at %.0f%% to fit its box",
+                         design_id[:8], label, scale * 100)
+                # A line that had to lose a third of its size is not a fitting
+                # problem any more, it is a size the analyser misread. The
+                # critic cannot fix it either — it would ask for bigger type
+                # and get it shrunk straight back — so it wants a human.
+                if scale < CRAMPED:
+                    cramped.append(f"{label} at {scale:.0%} of its intended size")
             export_stage.export_all(svg, out_dir, stem=f"{design_id[:16]}-{page.name}",
                                     preview_px=self.cfg.preview_px)
             with self.store.tx() as c:
@@ -197,10 +215,13 @@ class Pipeline:
         self.store.save_spec(design_id, derived.model_dump(mode="json"),
                              round_=1, distinct=distinct, verdict="built")
 
+        reasons: list[str] = []
         if holes:
-            self.store.queue_review(
-                design_id, "no library match for: " + "; ".join(sorted(set(holes))[:5]), distinct
-            )
+            reasons.append("no library match for: " + "; ".join(sorted(set(holes))[:5]))
+        if cramped:
+            reasons.append("type does not fit its box: " + "; ".join(cramped[:3]))
+        if reasons:
+            self.store.queue_review(design_id, " — ".join(reasons), distinct)
             self.store.set_design_state(design_id, "review")
             return "review"
 

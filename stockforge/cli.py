@@ -177,7 +177,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "scan":
             entries = fonts_stage.scan(settings.fonts_dir)
             path = fonts_stage.write_manifest(settings.fonts_dir, entries)
+            conf = fonts_stage.write_fontconfig(settings.fonts_dir)
             print(f"wrote {len(entries)} fonts to {path}")
+            print(f"wrote {conf} so Inkscape and cairo can find them by name")
             print("Set `embeddable` true only for fonts you hold redistribution "
                   "rights to. Nothing is used until you do.")
         else:

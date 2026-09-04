@@ -195,6 +195,28 @@ checked. Nothing is used until you do. Google Fonts and anything under the SIL
 OFL are the easy wins — publicly available, and since text is outlined on
 export, no font file ever travels inside a delivered file.
 
+`fonts scan` also writes `fontconfig.conf` next to the manifest. Neither
+Inkscape nor cairo takes a font *file* — both look a family name up through
+fontconfig — so without that config the family the matcher chose goes into the
+SVG and whatever the system happens to have gets drawn instead. The config puts
+your folder on their search path and installs nothing. Re-run `fonts scan`
+after adding a family.
+
+### Type is measured, not assumed
+
+The matched file is opened and asked for its real cap height and its real
+advance widths. `size_ratio` is a cap height, so a face with a small cap has to
+be set at a larger em to put the same amount of ink on the page — assuming
+0.70 for everything gets that wrong for every face that isn't 0.70.
+
+Every line is then measured against its box, and set smaller if it would
+overflow. Shrinking keeps the design's structure where rewrapping would change
+what the analyser read, and running off the page isn't an option. A line that
+loses more than a third of its intended size has stopped being a fitting
+problem and become a size the analyser misread, so it goes to Review — the
+critic can't fix that one, because it would ask for bigger type and get it
+shrunk straight back.
+
 The **motif library** in `assets/motifs/` is the thing that decides whether
 output looks professional. Motifs are plain SVG authored on a 0–100 square;
 there's one in there as a worked example.
