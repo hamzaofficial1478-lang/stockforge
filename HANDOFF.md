@@ -6,6 +6,9 @@ way, what is done, what is not, and the decisions already settled so they are
 not relitigated.
 
 - **Repository:** `https://github.com/hamzaofficial1478-lang/stockforge` (private)
+- **See also:** `BUILD-LOG.md` — what has been built since this document was
+  written, what each build found, and what is left. This file explains what the
+  program is for; that one explains where the work stands.
 - **Branch:** `claude/image-to-editable-pdf-0exjzg`
 - **Status:** architecture complete, 26 tests passing, never yet run against a
   real design — no model server has been connected to it.
