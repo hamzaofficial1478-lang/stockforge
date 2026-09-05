@@ -443,7 +443,12 @@ Every stage is resumable. Ctrl-C and re-run; finished work is skipped.
   unmatched motif: a gap you can see beats something invented.
 
 - **Rebuild a photograph.** A photorealistic or generated scene used as the
-  artwork is flagged, not faked. The master keeps it as a placed image.
+  artwork is flagged, not faked. The design is marked not stock-safe, held back
+  to an editable master, and sent to Review naming the raster element. Note what
+  that means today: there is no raster element type, so the photographic area is
+  *absent* from the master rather than placed into it. You get a design with a
+  hole where the photograph was and a review note explaining it — not a file you
+  can hand straight to an agency.
 - **Recover an exact font.** Never attempted. The analyser describes
   letterforms; the matcher picks the nearest thing in your library.
 - **Invent a motif library.** A detailed painted character is an illustration,
