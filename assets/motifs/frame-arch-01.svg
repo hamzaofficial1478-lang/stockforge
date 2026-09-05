@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
      data-kind="frame"
+     data-stretch="true"
      data-tags="arch, frame, border, panel, arched, outline, doorway">
   <title>Arched panel frame</title>
   <desc>an arched panel outline, semicircular at the top and square at the foot</desc>

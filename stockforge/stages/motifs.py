@@ -98,6 +98,12 @@ class MotifEntry:
     name: str = ""
     description: str = ""
     tags: list[str] = field(default_factory=list)
+    # A rule, a border or a band is meant to be pulled to the width of its box.
+    # A sprig is not: stretched to fit, it stops looking like a sprig. Motifs
+    # were scaled on each axis independently, so every drawing in a box that
+    # was not square came out distorted — a eucalyptus in a 3:1 box was three
+    # times too wide.
+    stretch: bool = False
     tokens: set[str] = field(default_factory=set, repr=False)
 
     def __post_init__(self) -> None:
@@ -125,11 +131,12 @@ def read(path: Path) -> MotifEntry:
         kind = ""
 
     tags = [t.strip().lower() for t in _attr(tag, "data-tags").split(",") if t.strip()]
+    stretch = _attr(tag, "data-stretch").lower() in {"1", "true", "yes"}
     title = m.group(1).strip() if (m := _TITLE.search(raw)) else ""
     desc = m.group(1).strip() if (m := _DESC.search(raw)) else ""
 
     return MotifEntry(library_id=path.stem, kind=kind, name=title,
-                      description=desc, tags=tags)
+                      description=desc, tags=tags, stretch=stretch)
 
 
 def scan(motifs_dir: Path) -> list[MotifEntry]:

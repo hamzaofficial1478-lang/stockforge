@@ -20,6 +20,7 @@ import argparse
 import json
 import logging
 import sys
+import textwrap
 from pathlib import Path
 
 from .config import settings
@@ -69,6 +70,33 @@ def cmd_publish(pipe: Pipeline, dry_run: bool) -> None:
         result = upload_batch(target, files)
         done = sum(1 for v in result.values() if v == "uploaded")
         print(f"{name}: {done} uploaded, {len(result) - done} skipped or failed")
+
+
+def cmd_check() -> int:
+    """The Setup screen, without the browser.
+
+    It is the first thing anyone needs on a new machine and it was only
+    reachable through the control panel, which is an odd place to have to go to
+    find out why the control panel is red.
+    """
+    from .health import report
+
+    r = report(settings)
+    mark = {"ok": "  ok  ", " warn": "", "warn": " warn ", "fail": " FAIL "}
+    for c in r.checks:
+        tail = "" if c.required else "   (optional)"
+        print(f"[{mark.get(c.state, c.state):^6}] {c.name:<16} {c.detail}{tail}")
+        if c.state != "ok" and c.fix:
+            for line in textwrap.wrap(c.fix, 74):
+                print(f"{'':>10}{line}")
+        if c.state != "ok":
+            print()
+
+    if r.workable:
+        print("Ready to run. `stockforge ui` for the control panel.")
+        return 0
+    print("Not ready yet: " + ", ".join(r.blocking))
+    return 1
 
 
 def cmd_motifs(args, pipe: Pipeline) -> int:
@@ -307,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("build", help="run a single design end to end")
     s.add_argument("design_id")
 
+    sub.add_parser("check", help="what is ready and what is not, with the fix for each")
     sub.add_parser("status", help="where everything is up to")
 
     sp = sub.add_parser("spec", help="what the analyser understood about a design")
@@ -366,6 +395,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     pipe = Pipeline(settings)
+
+    if args.cmd == "check":
+        return cmd_check()
 
     if args.cmd == "spec":
         return cmd_spec(args, pipe)

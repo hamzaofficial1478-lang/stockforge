@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -36,13 +37,17 @@ class Report:
     checks: list[Check] = field(default_factory=list)
 
     @property
+    def blocking(self) -> list[str]:
+        return [c.name for c in self.checks if c.state == "fail" and c.required]
+
+    @property
     def workable(self) -> bool:
-        return not any(c.state == "fail" and c.required for c in self.checks)
+        return not self.blocking
 
     def as_dict(self) -> dict:
         return {
             "workable": self.workable,
-            "blocking": [c.name for c in self.checks if c.state == "fail" and c.required],
+            "blocking": self.blocking,
             "checks": [c.as_dict() for c in self.checks],
         }
 
@@ -120,6 +125,81 @@ def _check_fonts(cfg: Settings) -> Check:
     return Check("Font library", "ok", f"{len(usable)} usable across {len(categories)} categories")
 
 
+def _check_font_rendering(cfg: Settings) -> Check:
+    """Does the font we matched actually reach the page on this machine?
+
+    Everything upstream can be right and this still be wrong. The renderer
+    writes a family name into the SVG and Inkscape or cairo resolves it through
+    whatever the system has: on Linux that is fontconfig, which we point at our
+    own folder, and on Windows Inkscape may only see fonts that have been
+    installed. Assuming either way is how a whole catalogue gets set in the
+    wrong face without anybody noticing.
+
+    So it draws a string and measures the ink. The font file says how wide that
+    string should be; if what came out is a different width, something else drew
+    it.
+    """
+    from .stages.export import svg_to_png
+    from .stages.fonts import load_manifest, open_face
+
+    usable = [e for e in load_manifest(cfg.fonts_dir) if e.embeddable]
+    if not usable:
+        return Check("Font rendering", "warn", "no usable fonts to test",
+                     "Sort the font library first.", required=False)
+
+    entry = usable[0]
+    face = open_face(entry, cfg.fonts_dir)
+    if face is None:
+        return Check("Font rendering", "fail", f"{entry.path} will not open",
+                     "Re-run `stockforge fonts scan`.")
+
+    text, size = "HIHIHIHIHI", 120.0
+    expected = face.measure(text, size)
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{expected * 2:.0f}" '
+           f'height="{size * 2:.0f}"><rect width="100%" height="100%" fill="#fff"/>'
+           f'<text x="10" y="{size * 1.2:.0f}" font-family="{entry.family}" '
+           f'font-size="{size:.0f}" font-weight="{entry.weight}" fill="#000">'
+           f'{text}</text></svg>')
+
+    try:
+        import cv2
+        import numpy as np
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "probe.svg"
+            source.write_text(svg)
+            drawn = cv2.imread(str(svg_to_png(source, Path(tmp) / "probe.png",
+                                              width=int(expected * 2))),
+                               cv2.IMREAD_GRAYSCALE)
+        if drawn is None:
+            raise RuntimeError("nothing came back")
+        ink = np.where(drawn.min(axis=0) < 200)[0]
+        if not len(ink):
+            return Check("Font rendering", "fail", "the probe came out blank",
+                         "Something is wrong with the renderer itself, not the fonts.")
+        measured = float(ink[-1] - ink[0])
+    except Exception as exc:
+        return Check("Font rendering", "warn", f"could not test it — {exc}",
+                     "Not fatal, but the font actually used is unverified.",
+                     required=False)
+
+    drift = abs(measured - expected) / expected
+    if drift > 0.08:
+        return Check(
+            "Font rendering", "fail",
+            f"{entry.family} was asked for and something else was drawn "
+            f"({measured:.0f}px against the file's {expected:.0f}px)",
+            "The renderer resolves a family by name, so the font has to be "
+            "visible to it. On Windows, install the font files — select them, "
+            "right-click, Install for all users — then run `stockforge fonts "
+            "scan` again. On Linux this is handled by the generated "
+            "fontconfig.conf; if it is failing, check SF_FONTS points at the "
+            "right folder.")
+
+    return Check("Font rendering", "ok",
+                 f"{entry.family} draws at the width its own file says")
+
+
 def _check_binary(name: str, what: str, fix: str, required: bool = True) -> Check:
     found = shutil.which(name)
     if found:
@@ -195,6 +275,7 @@ def report(cfg: Settings | None = None) -> Report:
     return Report(checks=[
         _check_vision(),
         _check_fonts(cfg),
+        _check_font_rendering(cfg),
         _check_binary("inkscape", "Vector export",
                       "Install Inkscape. Without it there is no editable-text PDF "
                       "and no EPS — only rasterised output."),

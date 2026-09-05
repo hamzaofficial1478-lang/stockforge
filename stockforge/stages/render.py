@@ -20,6 +20,7 @@ from ..schema import (
     Box, ColourRole, DesignSpec, MotifElement, Page, ShapeElement, TextElement,
 )
 from .fonts import FontEntry, load_manifest, match, open_face
+from .motifs import load as load_motifs
 
 MM_PER_PX = 25.4 / 96.0
 
@@ -201,8 +202,22 @@ def _motif(spec: DesignSpec, el: MotifElement, w: float, h: float, motifs_dir: P
     x, y, bw, bh = _px(el.box, w, h)
     body = _motif_body(src.read_text())
 
-    # motif files are authored on a 0..100 unit square so placement is trivial
-    sx, sy = bw / 100.0, bh / 100.0
+    # Motif files are authored on a 0..100 unit square. Scaling each axis to
+    # the box independently is only right for the drawings that are meant to be
+    # pulled about — a rule, a border, a band. For everything else it distorts:
+    # a eucalyptus sprig in a box three times wider than it is tall came out
+    # three times too wide. So unless the file says otherwise, the drawing
+    # keeps its shape and is centred in the space it was given.
+    entry = next((e for e in load_motifs(motifs_dir)
+                  if e.library_id == el.library_id), None)
+    if entry is not None and not entry.stretch:
+        scale = min(bw, bh) / 100.0
+        sx = sy = scale
+        x += (bw - 100 * scale) / 2
+        y += (bh - 100 * scale) / 2
+        bw = bh = 100 * scale
+    else:
+        sx, sy = bw / 100.0, bh / 100.0
     flip = f' transform="translate({bw:.2f} 0) scale(-1 1)"' if el.flip_x else ""
     rot = _rot(el, bw / 2, bh / 2)
     # `color` as well as `fill`, so a motif drawn in line rather than in solid

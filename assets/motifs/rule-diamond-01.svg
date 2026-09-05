@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
      data-kind="rule"
+     data-stretch="true"
      data-tags="rule, divider, diamond, line, centre, ornament">
   <title>Rule with centre diamond</title>
   <desc>a thin horizontal rule interrupted by a small diamond at its middle</desc>

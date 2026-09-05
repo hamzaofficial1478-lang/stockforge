@@ -322,6 +322,23 @@ None of it is required. Without it the filename is used, so
 untagged drawings works the moment you drop it in, and tagging only sharpens
 the match. `data-kind` must be one of the motif kinds in `schema.py`.
 
+`data-stretch` is the one attribute that changes how a motif is *drawn* rather
+than how it's found. A rule, a border or a band is meant to be pulled out to
+the width of the box it's given; a sprig is not. Without it a motif is scaled
+the same amount on both axes and centred in its box, so a eucalyptus asked for
+in a 3:1 box stays a eucalyptus instead of arriving three times too wide.
+
+```svg
+<svg viewBox="0 0 100 100" data-kind="divider" data-stretch="true">
+```
+
+Frames are the awkward case, and worth knowing about before you draw one. A
+frame has to fill its box, so it's marked stretchable, and its border is
+geometry rather than a stroke — which means in a box far from square one pair
+of bars comes out heavier than the other. At a normal poster frame that's
+about half again; at a 5:1 band it's unmistakable. Draw borders you intend to
+stretch a long way as bands rather than frames.
+
 ```bash
 stockforge motifs list
 stockforge motifs todo --scaffold
@@ -354,6 +371,51 @@ to make, and the review queue is what tells you which ones are worth making.
 Draw with filled shapes wherever you can — they inherit the group's fill and so
 recolour with the design. Where you genuinely want a line, `stroke="currentColor"`
 picks up the same colour. Never hard-code one.
+
+### On Windows
+
+Everything above applies unchanged; two things are worth doing differently.
+Getting the code down, once, in PowerShell:
+
+```powershell
+cd $HOME
+git clone https://github.com/hamzaofficial1478-lang/stockforge.git
+cd stockforge
+git checkout claude/image-to-editable-pdf-0exjzg
+```
+
+`main` holds nothing but GitHub's initial commit — the work is on that branch,
+so the checkout isn't optional.
+
+After that, stop typing commands: double-click **`run.bat`**. It pulls the
+latest code, creates the virtual environment and installs into it the first
+time, and puts up a menu. Every later run repeats the pull, so the copy you're
+running is the copy on the branch — updating the program is opening it. The
+install only re-runs when the dependencies actually changed, so a normal start
+is under a second.
+
+It's a menu, not a wall. Arguments pass straight through to the CLI:
+
+```powershell
+.\run.bat status
+.\run.bat run --limit 20
+.\run.bat --no-update          # skip the pull: offline, or holding a local edit
+```
+
+The first thing the menu offers is **Check**, and it's worth running before the
+first real batch rather than after it. Fonts are the reason. The renderer
+writes a *family name* into the SVG and lets Inkscape or cairo resolve it;
+on Linux that resolution goes through the `fontconfig.conf` that `fonts scan`
+generates, which is Unix machinery with no Windows equivalent. So on Windows a
+font sitting in `assets/fonts/` may not be findable under the name the matcher
+chose, and the export will quietly draw something else — a whole catalogue can
+be set in the wrong face without a single error.
+
+`check` doesn't take the configuration's word for it. It sets a line in the
+matched family, rasterises it, measures the ink, and compares that width
+against the widths in the font file itself. More than 8% out and something
+else drew it. The fix is to install the families into Windows — select the
+files, right-click, Install for all users — then re-run `fonts scan`.
 
 ## Use
 

@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
      data-kind="frame"
+     data-stretch="true"
      data-tags="frame, border, rectangle, outline, thin, panel">
   <title>Thin rectangular frame</title>
   <desc>a slender rectangular border set in from the edge of the piece</desc>

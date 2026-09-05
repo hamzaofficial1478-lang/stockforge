@@ -144,3 +144,58 @@ def test_a_texture_is_reported_not_faked(assets):
 def test_a_texture_with_no_hint_still_reports(assets):
     fonts, motifs = assets
     assert render(_spec("texture"), fonts, motifs).unrendered
+
+
+# --- motifs keeping their shape -------------------------------------------
+
+def _with_motif(tmp_path, stretch: bool, box: Box):
+    from conftest import MOTIF
+    from stockforge.schema import MotifElement, MotifKind
+
+    motifs = tmp_path / "motifs"
+    motifs.mkdir(parents=True, exist_ok=True)
+    svg = MOTIF.format(kind="botanical", tags="sprig, leaves", title="Sprig")
+    if stretch:
+        svg = svg.replace('data-kind=', 'data-stretch="true" data-kind=')
+    (motifs / "sprig-01.svg").write_text(svg)
+
+    spec = _spec()
+    spec.pages[0].elements.append(MotifElement(
+        motif=MotifKind.BOTANICAL, description="a sprig", library_id="sprig-01", box=box))
+    return spec, motifs
+
+
+def _scale(svg: str) -> tuple[float, float]:
+    m = re.search(r'transform="scale\(([\d.]+) ([\d.]+)\)"', svg)
+    return float(m.group(1)), float(m.group(2))
+
+
+def test_a_drawing_is_not_squashed_to_fit_its_box(assets, tmp_path):
+    """Motifs were scaled on each axis independently, so a sprig in a box three
+    times wider than it is tall came out three times too wide."""
+    fonts, _ = assets
+    spec, motifs = _with_motif(tmp_path, stretch=False,
+                               box=Box(x=0.1, y=0.1, w=0.6, h=0.1))
+    sx, sy = _scale(render(spec, fonts, motifs).svg)
+    assert sx == pytest.approx(sy), "the drawing has been distorted"
+
+
+def test_a_rule_may_still_be_pulled_to_width(assets, tmp_path):
+    """A rule, a border or a band is meant to be stretched. It says so itself."""
+    fonts, _ = assets
+    spec, motifs = _with_motif(tmp_path, stretch=True,
+                               box=Box(x=0.1, y=0.1, w=0.6, h=0.1))
+    sx, sy = _scale(render(spec, fonts, motifs).svg)
+    assert sx > sy * 2
+
+
+def test_a_drawing_that_keeps_its_shape_is_centred_in_the_space(assets, tmp_path):
+    fonts, _ = assets
+    box = Box(x=0.1, y=0.1, w=0.6, h=0.1)
+    spec, motifs = _with_motif(tmp_path, stretch=False, box=box)
+    svg = render(spec, fonts, motifs).svg
+
+    placed = re.search(r'<g transform="translate\(([\d.]+) ([\d.]+)\)"', svg)
+    trim_w = 127 / (25.4 / 96.0)
+    # it sits further right than the box's own edge, because it was centred
+    assert float(placed.group(1)) > box.x * trim_w

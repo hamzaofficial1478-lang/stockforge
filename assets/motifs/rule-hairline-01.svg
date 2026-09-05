@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"
      data-kind="rule"
+     data-stretch="true"
      data-tags="rule, divider, line, hairline, tapered, thin">
   <title>Tapered hairline rule</title>
   <desc>a fine horizontal rule that tapers to nothing at both ends</desc>
