@@ -245,6 +245,12 @@ class Page(BaseModel):
     name: str = Field(description="cover, inside, invitation, rsvp, details, back, ...")
     canvas: Canvas
     elements: list[Element] = Field(default_factory=list)
+    # Which flat this surface was read from. The survey works it out and it was
+    # thrown away, so every check downstream compared every surface against the
+    # first image of the listing — the inside of a card judged against a picture
+    # of its front. A workspace path, so it only means anything on the machine
+    # that did the reading; None when the read predates this being recorded.
+    source_image: str | None = Field(default=None)
 
 
 class Provenance(BaseModel):

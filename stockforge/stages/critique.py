@@ -29,7 +29,7 @@ import cv2
 import numpy as np
 
 from ..providers import VisionProvider, vision
-from ..schema import Critique, DesignSpec
+from ..schema import Critique, CritiquePatch, DesignSpec
 
 log = logging.getLogger("stockforge.critique")
 
@@ -243,12 +243,17 @@ def critique(
 
 # --------------------------------------------------------------------------
 
-def apply_patches(spec_dict: dict, crit: Critique) -> tuple[dict, list[str]]:
+def apply_patches(spec_dict: dict, patches: list[CritiquePatch]) -> tuple[dict, list[str]]:
     """Apply patches to a spec dict in place. Returns the spec and a list of
-    patches that could not be applied — those are a bug signal, not noise."""
+    patches that could not be applied — those are a bug signal, not noise.
+
+    Takes the patches rather than a Critique because a design with several
+    printed surfaces is critiqued once per surface, and they are applied
+    together.
+    """
     failed: list[str] = []
 
-    for p in crit.patches:
+    for p in patches:
         target = spec_dict
         try:
             if p.element_index is None:

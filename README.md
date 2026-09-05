@@ -94,6 +94,10 @@ an inside. A wedding suite is an invitation, an RSVP and a details card. Each
 becomes its own file, sharing one palette and one type system — which is how a
 print shop wants them anyway.
 
+Each is also judged on its own, against the image it was read from. They're
+submitted separately and an agency looks at them separately, so one file of a
+suite reading as a copy is enough to hold the whole design back.
+
 ---
 
 ## Reading a design, without overloading anything

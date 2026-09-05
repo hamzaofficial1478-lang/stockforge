@@ -319,6 +319,17 @@ A listing whose images all failed used to vanish from the pull with nothing
 said; the crawl now reports how many listings it walked and how many had no
 usable image.
 
+**Multi-surface designs had never been built.** The schema has described them
+since the first commit — a card is a front and an inside, a suite is five
+cards — and every test used one surface, so nothing exercised the rest. Only
+the first was ever checked for distinctness or critiqued; the others were
+rendered, exported, fingerprinted and shipped unexamined. And `Page` did not
+record which image it had been read from, so the survey's `image_index` was
+used and discarded — the fifth field in this codebase computed and thrown
+away — meaning there was nothing to judge the second surface *against*. A page
+carries its source now, every surface is checked and critiqued against its own
+image, and one surface failing holds the whole design.
+
 **OCR had never run.** Not once — tesseract was not installed anywhere this
 was developed, and `read` returns an empty list on any problem, so a broken OCR
 stage was indistinguishable from a missing one. Run against real renders it is

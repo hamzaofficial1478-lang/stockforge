@@ -199,30 +199,21 @@ class Pipeline:
             # is the opposite of what this stage is for.
             derived = derive_stage.derive(base, strength=strength,
                                           seed=_seed("derive", design_id, round_))
-            preview = self._render_preview(derived, design_id, page=0)
-            if preview is None:
-                self.store.queue_review(design_id, "could not render page 0", 0.0)
+
+            distinct, verdict, fault = self._check_every_surface(
+                derived, design_id, source_flat)
+            if fault:
+                log.warning("[%s] %s", design_id[:8], fault)
+                self.store.queue_review(design_id, fault, 0.0)
                 return "review"
+            log.info("[%s] round %d: worst distinct=%.2f -> %s",
+                     design_id[:8], round_, distinct, verdict)
 
-            # Arithmetic before eyes. This is the first model call of the
-            # build, so a render that failed outright is caught here rather
-            # than being described back to us at the cost of a GPU minute.
-            numbers = critique_stage.signals(source_flat, preview)
-            if numbers.fault:
-                log.warning("[%s] %s", design_id[:8], numbers.fault)
-                self.store.queue_review(design_id, numbers.fault, 0.0)
-                return "review"
-
-            check = derive_stage.check(source_flat, preview)
-            distinct = check.distinct
-            log.info("[%s] round %d: distinct=%.2f family=%.2f -> %s",
-                     design_id[:8], round_, check.distinct, check.same_family, check.verdict)
-
-            if check.verdict == "too_far":
+            if verdict == "too_far":
                 derived = derive_stage.derive(
                     base, strength=strength * 0.5, seed=_seed("derive", design_id, round_))
                 break
-            if check.verdict == "ship" or check.distinct >= self.cfg.distinct_threshold:
+            if verdict == "ship":
                 break
         else:
             self.store.queue_review(
@@ -232,17 +223,30 @@ class Pipeline:
 
         # --- polish it -------------------------------------------------
         for round_ in range(self.cfg.max_critique_rounds):
-            preview = self._render_preview(derived, design_id, page=0)
-            if preview is None:
-                break
-            crit = critique_stage.critique(source_flat, preview, derived, page_index=0)
-            if crit.verdict == "escalate":
-                self.store.queue_review(design_id, crit.commentary or "critic escalated",
-                                        min(crit.similarity, crit.polish))
+            patches, escalated = [], None
+            # Every surface again. A wedding suite is five separate files and
+            # the critic had only ever seen the first of them.
+            for index, page in enumerate(derived.pages):
+                preview = self._render_preview(derived, design_id, page=index)
+                if preview is None:
+                    continue
+                crit = critique_stage.critique(
+                    self._source_for(page, source_flat), preview, derived, page_index=index)
+                if crit.verdict == "escalate":
+                    escalated = (crit.commentary or f"critic escalated on '{page.name}'",
+                                 min(crit.similarity, crit.polish))
+                    break
+                if crit.verdict != "ship":
+                    patches.extend(crit.patches)
+
+            if escalated:
+                self.store.queue_review(design_id, *escalated)
                 return "review"
-            if crit.verdict == "ship" or not crit.patches:
+            if not patches:
                 break
-            patched, failed = critique_stage.apply_patches(derived.model_dump(mode="json"), crit)
+
+            patched, failed = critique_stage.apply_patches(
+                derived.model_dump(mode="json"), patches)
             for f in failed:
                 log.warning("[%s] patch did not apply — %s", design_id[:8], f)
             try:
@@ -339,6 +343,62 @@ class Pipeline:
                 log.warning("stored spec for %s will not load: %s",
                             row["design_id"][:8], str(exc)[:200])
         return out
+
+    def _source_for(self, page, fallback: Path) -> Path:
+        """The image this surface was actually read from.
+
+        The survey knows which image showed which surface and the spec used to
+        throw it away, so every check compared every surface against the first
+        image of the listing — the inside of a card judged against a photograph
+        of its front.
+        """
+        if page.source_image:
+            candidate = Path(page.source_image)
+            if candidate.is_file():
+                return candidate
+        return fallback
+
+    def _check_every_surface(self, derived: DesignSpec, design_id: str,
+                             fallback: Path) -> tuple[float, str, str]:
+        """Is every printed surface far enough from the one it was read from?
+
+        Every surface, because each becomes its own file and is submitted on
+        its own. Only the first was ever looked at: on a greeting card the
+        inside went out unexamined, and on a wedding suite four of the five did.
+
+        Returns the worst distinctness, a verdict for the design as a whole,
+        and a fault when something is broken rather than merely too close. It
+        stops at the first surface that fails, since one failure sends the
+        whole design round again and there is nothing to gain by paying for
+        the rest.
+        """
+        worst, verdict = 1.0, "ship"
+
+        for index, page in enumerate(derived.pages):
+            preview = self._render_preview(derived, design_id, page=index)
+            if preview is None:
+                return 0.0, "fault", f"could not render '{page.name}'"
+
+            source = self._source_for(page, fallback)
+            # Arithmetic before eyes: this is the first model call of the
+            # build, so a render that failed outright is caught here rather
+            # than described back to us at the cost of a GPU minute.
+            numbers = critique_stage.signals(source, preview)
+            if numbers.fault:
+                return 0.0, "fault", f"'{page.name}': {numbers.fault}"
+
+            check = derive_stage.check(source, preview)
+            log.info("[%s] %s: distinct=%.2f family=%.2f -> %s", design_id[:8],
+                     page.name, check.distinct, check.same_family, check.verdict)
+            worst = min(worst, check.distinct)
+
+            if check.verdict == "too_far":
+                return worst, "too_far", ""
+            if check.verdict != "ship" and check.distinct < self.cfg.distinct_threshold:
+                verdict = "derive_further"
+                break
+
+        return worst, verdict, ""
 
     def _check_for_a_twin(self, design_id: str, page_name: str,
                           preview: Path | None) -> duplicates_stage.Twin | None:

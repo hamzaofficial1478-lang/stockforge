@@ -214,6 +214,10 @@ def cmd_spec(args, pipe: Pipeline) -> int:
     for i, page in enumerate(spec.pages):
         print(f"\nsurface {i}: {page.name}   "
               f"{page.canvas.width_mm:.0f} x {page.canvas.height_mm:.0f} mm")
+        if page.source_image:
+            # Which image the survey said showed this surface. Worth checking:
+            # a suite mapped onto the wrong images reads plausibly and is wrong.
+            print(f"  read from  {Path(page.source_image).name}")
 
         texts = [e for e in page.elements if isinstance(e, TextElement)]
         if texts:

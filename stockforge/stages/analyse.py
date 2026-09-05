@@ -372,6 +372,7 @@ def analyse(
             name=surface.name,
             canvas=Canvas(width_mm=surface.width_mm, height_mm=surface.height_mm),
             elements=elements,
+            source_image=str(flat),
         ))
 
         if not pages[:-1]:                      # the first surface sets the DNA
