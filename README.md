@@ -376,6 +376,10 @@ Every stage is resumable. Ctrl-C and re-run; finished work is skipped.
 
 ## What it won't do
 
+- **Fake a texture.** A background read as a watercolour wash or a linen weave
+  gets its base colour and goes to Review saying what it wanted. Same rule as an
+  unmatched motif: a gap you can see beats something invented.
+
 - **Rebuild a photograph.** A photorealistic or generated scene used as the
   artwork is flagged, not faked. The master keeps it as a placed image.
 - **Recover an exact font.** Never attempted. The analyser describes
@@ -392,6 +396,13 @@ Two exports from the same SVG, for two different jobs:
 - **`*-master.pdf`** — layered, editable text. Yours, for changing.
 - **`*.eps` + `*-preview.jpg`** — text outlined, no font references. What the
   agencies ingest; neither takes PDF as a vector submission.
+
+Delivered files carry the bleed on `Canvas.bleed_mm`, 3mm by default: the sheet
+is that much larger than the trim on every side and the ground runs into it, so
+a wander in the printer's guillotine doesn't show as a white sliver. The
+artwork itself doesn't move — geometry is normalised to the trim and only the
+sheet around it grows. Previews are rendered at the trim, since they're
+compared against your original.
 
 Agency requirements and CSV layouts change. Check the current contributor
 documentation before a large upload rather than trusting these notes.

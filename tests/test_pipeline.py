@@ -389,6 +389,37 @@ def test_metadata_is_written_once_and_kept(workspace, tmp_path):
     assert again_files == files
 
 
+def test_a_background_we_cannot_draw_goes_to_review(workspace, tmp_path):
+    """The renderer accepted `texture` and drew flat colour, silently. Same
+    rule as an unmatched motif: report it rather than ship something the spec
+    did not ask for."""
+    class _Washed(ScriptedProvider):
+        def _structureread(self):
+            read = super()._structureread()
+            read.background = Background(treatment="texture",
+                                         base=ColourRole.BACKGROUND,
+                                         texture_hint="a loose watercolour wash")
+            return read
+
+    pipe = _built(workspace, tmp_path, _Washed())
+    design_id = pipe.store.designs()[0]["id"]
+    assert pipe.store.designs()[0]["state"] == "review"
+
+    reason = pipe.store.conn.execute(
+        "SELECT reason FROM review WHERE design_id=?", (design_id,)).fetchone()["reason"]
+    assert "watercolour wash" in reason
+
+
+def test_a_delivered_file_carries_its_bleed(workspace, tmp_path):
+    pipe = _built(workspace, tmp_path, ScriptedProvider())
+    design_id = pipe.store.designs()[0]["id"]
+    svg = next((workspace.root / "renders").glob(f"{design_id[:16]}-invitation.svg"))
+    head = svg.read_text().splitlines()[0]
+
+    assert 'width="133.00mm"' in head and 'height="184.00mm"' in head
+    assert "trim 127x178mm, 3mm bleed" in svg.read_text()
+
+
 def test_the_run_loop_reports_what_it_did(workspace, tmp_path):
     provider = ScriptedProvider()
     providers.set_provider("vision", provider)

@@ -29,10 +29,15 @@ FIT_MARGIN = 0.98
 
 class RenderResult:
     def __init__(self, svg: str, missing_motifs: list[str], font_scores: list[float],
-                 refits: list[tuple[str, float]] | None = None):
+                 refits: list[tuple[str, float]] | None = None,
+                 unrendered: list[str] | None = None):
         self.svg = svg
         self.missing_motifs = missing_motifs
         self.font_scores = font_scores
+        # Things the spec asked for that we will not fake. A background
+        # treatment we cannot draw is the same kind of gap as a motif with no
+        # match, and gets reported the same way rather than silently flattened.
+        self.unrendered = unrendered or []
         # Lines that had to be set smaller than the spec asked in order to fit
         # their box, as (what it was, how much of the asked-for size survived).
         self.refits = refits or []
@@ -66,9 +71,20 @@ def _fill(spec: DesignSpec, role: ColourRole | None) -> str:
 
 # --------------------------------------------------------------------------
 
-def _background(spec: DesignSpec, w: float, h: float) -> str:
+def _background(spec: DesignSpec, trim: tuple[float, float],
+                extent: tuple[float, float, float, float]) -> tuple[str, str]:
+    """The ground the piece sits on. Returns the markup and, when the spec asks
+    for something we cannot honestly draw, a note saying what.
+
+    `extent` is x, y, width, height including any bleed, because the ground has
+    to reach the edge of the sheet rather than the trim line — that is the whole
+    point of bleed.
+    """
     bg = spec.dna.background
     base = _fill(spec, bg.base)
+    x, y, w, h = extent
+    ground = f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}"'
+
     if bg.treatment in ("linear-gradient", "radial-gradient") and bg.secondary:
         second = _fill(spec, bg.secondary)
         if bg.treatment == "linear-gradient":
@@ -81,8 +97,31 @@ def _background(spec: DesignSpec, w: float, h: float) -> str:
         close = "linearGradient" if bg.treatment == "linear-gradient" else "radialGradient"
         return (f'<defs>{grad}<stop offset="0%" stop-color="{base}"/>'
                 f'<stop offset="100%" stop-color="{second}"/></{close}></defs>'
-                f'<rect width="{w:.2f}" height="{h:.2f}" fill="url(#bg)"/>')
-    return f'<rect width="{w:.2f}" height="{h:.2f}" fill="{base}"/>'
+                f'{ground} fill="url(#bg)"/>'), ""
+
+    if bg.treatment == "panel" and bg.secondary:
+        # A ground with a panel of a second colour inset into it, which is most
+        # of what "panel" means on a card. The inset follows the grid, so it
+        # sits where the design's own margins put everything else.
+        trim_w, trim_h = trim
+        inset_x = max(0.02, min(0.35, spec.dna.grid.margin_x)) * trim_w
+        inset_y = max(0.02, min(0.35, spec.dna.grid.margin_y)) * trim_h
+        return (f'{ground} fill="{base}"/>'
+                f'<rect x="{inset_x / 2:.2f}" y="{inset_y / 2:.2f}" '
+                f'width="{trim_w - inset_x:.2f}" height="{trim_h - inset_y:.2f}" '
+                f'fill="{_fill(spec, bg.secondary)}"/>'), ""
+
+    if bg.treatment == "texture":
+        # We do not fake a watercolour wash. Same rule as an unmatched motif:
+        # the base colour goes down, and the piece is reported rather than
+        # quietly shipped as flat colour with the texture silently dropped.
+        wanted = bg.texture_hint or "an unspecified texture"
+        return f'{ground} fill="{base}"/>', f"background texture: {wanted}"
+
+    if bg.treatment in ("panel", "texture"):
+        return f'{ground} fill="{base}"/>', f"{bg.treatment} background with nothing to draw it from"
+
+    return f'{ground} fill="{base}"/>', ""
 
 
 def _shape(spec: DesignSpec, el: ShapeElement, w: float, h: float) -> str:
@@ -239,19 +278,38 @@ def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
 # --------------------------------------------------------------------------
 
 def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
-           page_index: int = 0) -> RenderResult:
+           page_index: int = 0, bleed_mm: float = 0.0) -> RenderResult:
     """Render one surface. A greeting card is two calls, a wedding suite five —
-    each becomes its own file, which is how a print shop wants them anyway."""
+    each becomes its own file, which is how a print shop wants them anyway.
+
+    `bleed_mm` extends the sheet past the trim line on every side and lets the
+    ground run into it. Canvas.bleed_mm has carried a 3mm default since the
+    first commit and nothing read it, so every file produced was cut to the
+    trim exactly — and any wander in a printer's guillotine shows as a white
+    sliver down one edge. Elements keep their places: geometry is normalised to
+    the trim, and only the sheet around it grows.
+
+    Previews pass 0, because a preview is compared against the source artwork
+    and should be the same view of the piece.
+    """
     page: Page = spec.pages[page_index]
     w = page.canvas.width_mm / MM_PER_PX
     h = page.canvas.height_mm / MM_PER_PX
     library = load_manifest(fonts_dir)
 
+    bleed = max(0.0, bleed_mm) / MM_PER_PX
+    sheet_w, sheet_h = w + 2 * bleed, h + 2 * bleed
+    ground, unrenderable = _background(spec, (w, h), (-bleed, -bleed, sheet_w, sheet_h))
+
     parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{page.canvas.width_mm}mm" '
-        f'height="{page.canvas.height_mm}mm" viewBox="0 0 {w:.2f} {h:.2f}">',
-        f"<title>{escape(spec.dna.occasion)} {escape(spec.dna.category)} — {escape(page.name)}</title>",
-        '<g id="background">', _background(spec, w, h), "</g>",
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'width="{page.canvas.width_mm + 2 * bleed_mm:.2f}mm" '
+        f'height="{page.canvas.height_mm + 2 * bleed_mm:.2f}mm" '
+        f'viewBox="{-bleed:.2f} {-bleed:.2f} {sheet_w:.2f} {sheet_h:.2f}">',
+        f"<title>{escape(spec.dna.occasion)} {escape(spec.dna.category)} — {escape(page.name)}"
+        + (f" (trim {page.canvas.width_mm:.0f}x{page.canvas.height_mm:.0f}mm, "
+           f"{bleed_mm:.0f}mm bleed)" if bleed else "") + "</title>",
+        '<g id="background">', ground, "</g>",
     ]
 
     missing: list[str] = []
@@ -285,7 +343,7 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
                 refits.append((f"{el.role.value} {first[:40]!r}", refit))
     parts.append("</g></svg>")
 
-    return RenderResult("\n".join(parts), missing, scores, refits)
+    return RenderResult("\n".join(parts), missing, scores, refits, unrenderable and [unrenderable])
 
 
 def write_svg(result: RenderResult, path: Path) -> Path:

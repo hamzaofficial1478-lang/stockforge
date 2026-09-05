@@ -1,6 +1,6 @@
 # stockforge — build log and current state
 
-Written 5 September 2026. Branch `claude/image-to-editable-pdf-0exjzg`, head `36838c7`.
+Written 5 September 2026. Branch `claude/image-to-editable-pdf-0exjzg`, head `779bc62`.
 
 This is the record of what has been built, how it was built, what was found
 along the way, and what is left. It is meant to be read alongside `HANDOFF.md`,
@@ -63,7 +63,7 @@ read by anything:
 | `assets.is_mockup` | which image to read the design from | ignored; a listing whose photograph was its largest file was read through the photograph |
 | `Line.confidence` | which OCR lines to trust | never passed to the model, which was told to trust OCR regardless |
 | `Surface.image_index` | which image each surface came from | discarded; every surface was compared against the first image of the listing |
-| `Canvas.bleed_mm` | the margin printers trim into | **still unread — see section 5** |
+| `Canvas.bleed_mm` | the margin printers trim into | ignored; every file was cut to the trim exactly, so any wander in a guillotine showed white |
 
 If something in this codebase is measured and nothing reads it, the behaviour
 that depended on it is silently missing. It is the most productive place to
@@ -277,11 +277,32 @@ came from, so there was nothing to judge the others *against*.
 Every surface is now checked and critiqued against its own image, and one
 surface failing holds the whole design.
 
+### `779bc62` — Bleed, and the backgrounds that were never drawn
+
+Two findings from the sweep that produced this document, fixed the same day.
+
+**Bleed existed only as a number.** `Canvas.bleed_mm` has defaulted to 3mm since
+the first commit and nothing read it. The renderer set every file to exactly the
+trim size, so every piece produced so far had no bleed at all — and any wander
+in a printer's guillotine shows as a white sliver down one edge. Delivered files
+now carry it: the sheet grows on every side, the ground runs into it, and the
+artwork does not move, because geometry is normalised to the trim and only the
+sheet around it grows. Previews stay at the trim, since they are compared
+against the original artwork and should be the same view of the piece.
+
+**Two background treatments were accepted and never drawn.**
+`Background.treatment` allows `panel` and `texture`; the renderer handled solid
+and the two gradients and let the other two fall through to flat colour,
+silently. `panel` is now drawn — a ground with a second colour inset on the
+design's own margins. `texture` is not faked: the base colour goes down and the
+piece goes to Review carrying the `texture_hint` that describes what it wanted.
+Same rule as an unmatched motif, for the same reason.
+
 ---
 
 ## 4. What state it is in now
 
-**172 tests** across thirteen files, all passing, every fix mutation-checked.
+**184 tests** across fourteen files, all passing, every fix mutation-checked.
 
 | area | tests | what is genuinely verified |
 |---|---|---|
@@ -298,6 +319,7 @@ surface failing holds the whole design.
 | `test_multipage` | 9 | two surfaces, each judged against its own image |
 | `test_publish` | 8 | a real FTP server: upload, resume, retry, the CSVs |
 | `test_critique` | 7 | the numeric gate before a model call |
+| `test_render` | 10 | bleed on the sheet, panels drawn, textures reported |
 
 **Verified against the real thing, not a mock:** Inkscape 1.2.2 (live-text PDF
 with our own fonts embedded, outlined EPS with no font references), tesseract
@@ -315,19 +337,6 @@ connected, and no real listing image has ever been through it.
 
 These came out of a sweep for the pattern in section 2, run against the current
 head. They are real and they are small.
-
-**Bleed is declared and never used.** `Canvas.bleed_mm` defaults to 3mm and
-nothing reads it. The renderer sets the SVG to exactly the trim size, so every
-delivered file has zero bleed. Any trim variance on a printed piece shows a
-white sliver, and print-on-demand shops expect bleed. This is the most
-consequential of what is left, because it affects every file that has been
-produced so far.
-
-**Two background treatments are accepted and never drawn.**
-`Background.treatment` allows `panel` and `texture`, and the renderer handles
-only `solid` and the two gradients. A design read as having a watercolour wash
-or a linen texture renders as flat colour, silently — no warning, no review.
-`texture_hint` is captured for exactly this and read by nothing.
 
 **`Grid.symmetry` is unread**, the same way the margins were before `1a9e399`.
 Centred, left, right, asymmetric and split are recorded and change nothing.
@@ -365,12 +374,11 @@ contributor documentation.
 
 ## 6. How much is left
 
-**On the code side, not much, and it is shrinking fast.** The sweep in section 5
-is the whole of what I can find: one build for bleed and the unrendered
-background treatments, one smaller one for the links door and the loose ends
-(`symmetry`, the `builds` columns). Two more builds of the size of the recent
-ones. After that the productive seam — code that has never been exercised — is
-exhausted, and further work would be speculative polish rather than fixing
+**On the code side, very little.** Bleed and the background treatments are done.
+What is left is one small build: the links door needs tests, `Grid.symmetry` is
+unread the way the margins were, and two columns on the `builds` table are never
+written. After that the productive seam — code that has never been exercised —
+is exhausted, and further work would be speculative polish rather than fixing
 things that are actually wrong.
 
 **On your side, that is where nearly all the remaining value is.** The next
