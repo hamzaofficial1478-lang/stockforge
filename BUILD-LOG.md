@@ -1,6 +1,6 @@
 # stockforge — build log and current state
 
-Written 5 September 2026. Branch `claude/image-to-editable-pdf-0exjzg`, head `779bc62`.
+Written 5 September 2026. Branch `claude/image-to-editable-pdf-0exjzg`, head `ec0d1e3`.
 
 This is the record of what has been built, how it was built, what was found
 along the way, and what is left. It is meant to be read alongside `HANDOFF.md`,
@@ -277,7 +277,7 @@ came from, so there was nothing to judge the others *against*.
 Every surface is now checked and critiqued against its own image, and one
 surface failing holds the whole design.
 
-### `779bc62` — Bleed, and the backgrounds that were never drawn
+### `ec0d1e3` — Bleed, and the backgrounds that were never drawn
 
 Two findings from the sweep that produced this document, fixed the same day.
 
