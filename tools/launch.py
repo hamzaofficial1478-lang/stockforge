@@ -12,6 +12,7 @@ step, because on a first run there is nothing to import yet.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -94,10 +95,57 @@ def update() -> None:
         say("  already up to date")
 
 
+def venv_runs() -> bool:
+    """Does the interpreter execute at all — not merely exist."""
+    if not PYTHON.exists():
+        return False
+    try:
+        return subprocess.run([str(PYTHON), "-c", ""],
+                              capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def imports_this_copy() -> bool:
+    """Is the environment running *this* folder's code, or another one's?
+
+    An editable install writes the source folder's absolute path into
+    site-packages, so once the folder is moved the environment keeps importing
+    stockforge from wherever it used to be. If the old folder is gone the
+    program will not start; if it is still there — a copy rather than a move —
+    it starts and runs the old code, so every update pulled into the new folder
+    is quietly ignored. The silent one is the reason this is checked at all.
+    """
+    try:
+        done = subprocess.run(
+            [str(PYTHON), "-c",
+             "import stockforge,sys; sys.stdout.write(stockforge.__file__)"],
+            capture_output=True, text=True, timeout=120,
+            # From inside .venv, never from ROOT: the launcher has already
+            # chdir'd to ROOT, and a probe run from there finds ROOT/stockforge
+            # on sys.path whatever the environment was installed against, so it
+            # would be testing the working directory and not the install.
+            cwd=str(VENV) if VENV.is_dir() else None)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if done.returncode != 0:
+        return False
+    try:
+        Path(done.stdout.strip()).resolve().relative_to(ROOT)
+    except (ValueError, OSError):
+        return False
+    return True
+
+
 def install_if_needed() -> bool:
     """Install the package into .venv, but only when the code has moved."""
-    if not PYTHON.exists():
-        say("  creating a private Python environment...")
+    if not venv_runs():
+        if VENV.exists():
+            say("  the environment stopped working — rebuilding it.")
+            say("  (normal after moving the folder; nothing of yours is in there)")
+            shutil.rmtree(VENV, ignore_errors=True)
+        else:
+            say("  creating a private Python environment...")
         made = subprocess.run([sys.executable, "-m", "venv", str(VENV)])
         if made.returncode != 0 or not PYTHON.exists():
             say("  could not create it. On Windows this usually means Python was")
@@ -105,7 +153,8 @@ def install_if_needed() -> bool:
             return False
 
     current = head() or "unknown"
-    if STAMP.exists() and STAMP.read_text().strip() == current:
+    if (STAMP.exists() and STAMP.read_text().strip() == current
+            and imports_this_copy()):
         return True
 
     say("  installing dependencies (only needed when the code changes)...")

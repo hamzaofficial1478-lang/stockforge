@@ -117,7 +117,8 @@ def test_the_launcher_is_valid_and_needs_nothing_installed():
     imports = {line.split()[1].split(".")[0]
                for line in source.splitlines()
                if line.startswith("import ") or line.startswith("from ")}
-    assert imports <= {"__future__", "os", "subprocess", "sys", "pathlib"}, imports
+    assert imports <= {"__future__", "os", "shutil", "subprocess", "sys",
+                       "pathlib"}, imports
 
 
 def test_a_pull_that_fails_does_not_stop_the_program(monkeypatch, capsys):
@@ -133,6 +134,8 @@ def test_a_pull_that_fails_does_not_stop_the_program(monkeypatch, capsys):
 def test_installing_is_skipped_when_the_code_has_not_moved(monkeypatch, tmp_path):
     launch = _launcher()
     monkeypatch.setattr(launch, "PYTHON", Path(sys.executable))
+    monkeypatch.setattr(launch, "venv_runs", lambda: True)
+    monkeypatch.setattr(launch, "imports_this_copy", lambda: True)
     monkeypatch.setattr(launch, "STAMP", tmp_path / "stamp")
     monkeypatch.setattr(launch, "head", lambda: "abc123")
     (tmp_path / "stamp").write_text("abc123")
@@ -151,3 +154,124 @@ def test_the_batch_file_stays_thin(monkeypatch):
     assert "tools\\launch.py" in bat
     assert "cd /d \"%~dp0\"" in bat, "it must work when double-clicked from anywhere"
     assert len(bat.splitlines()) < 45
+
+
+# --- moving the folder ---------------------------------------------------
+
+def test_a_python_that_is_there_but_does_not_run_is_not_healthy(monkeypatch, tmp_path):
+    """What moving the folder leaves behind: the file exists, running it fails."""
+    launch = _launcher()
+    dead = tmp_path / "python"
+    dead.write_text("")
+    monkeypatch.setattr(launch, "PYTHON", dead)
+    monkeypatch.setattr(launch.subprocess, "run",
+                        lambda *a, **k: subprocess.CompletedProcess(a, 1))
+    assert launch.venv_runs() is False
+
+
+def test_a_missing_python_is_not_healthy(monkeypatch, tmp_path):
+    launch = _launcher()
+    monkeypatch.setattr(launch, "PYTHON", tmp_path / "nothing" / "python")
+    assert launch.venv_runs() is False
+
+
+def test_a_broken_environment_is_thrown_away_and_rebuilt(monkeypatch, tmp_path):
+    """Rather than reported, because there is nothing in it worth keeping and
+    the alternative is a program that will not start."""
+    launch = _launcher()
+    venv = tmp_path / ".venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "python").write_text("")
+    (venv / ".stockforge-installed").write_text("abc123")
+
+    monkeypatch.setattr(launch, "VENV", venv)
+    monkeypatch.setattr(launch, "PYTHON", venv / "bin" / "python")
+    monkeypatch.setattr(launch, "STAMP", venv / ".stockforge-installed")
+    monkeypatch.setattr(launch, "venv_runs", lambda: False)
+    monkeypatch.setattr(launch, "imports_this_copy", lambda: True)
+    monkeypatch.setattr(launch, "head", lambda: "abc123")
+
+    calls = []
+
+    def _record(cmd, *a, **k):
+        calls.append(cmd)
+        if "venv" in " ".join(map(str, cmd)):      # behave like a real build
+            (venv / "bin").mkdir(parents=True, exist_ok=True)
+            (venv / "bin" / "python").write_text("")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(launch.subprocess, "run", _record)
+    launch.install_if_needed()
+
+    assert any("venv" in " ".join(map(str, c)) for c in calls), "it did not rebuild"
+    # The stamp said this exact commit was already installed. Going ahead
+    # anyway is the point: the environment it was installed into is gone.
+    assert any("pip" in " ".join(map(str, c)) for c in calls), \
+        "the stale stamp short-circuited the reinstall into the new environment"
+
+
+def test_a_healthy_environment_is_left_alone(monkeypatch, tmp_path):
+    """The rebuild must not fire on every start."""
+    launch = _launcher()
+    venv = tmp_path / ".venv"
+    venv.mkdir()
+    monkeypatch.setattr(launch, "VENV", venv)
+    monkeypatch.setattr(launch, "STAMP", venv / "stamp")
+    monkeypatch.setattr(launch, "venv_runs", lambda: True)
+    monkeypatch.setattr(launch, "imports_this_copy", lambda: True)
+    monkeypatch.setattr(launch, "head", lambda: "abc123")
+    (venv / "stamp").write_text("abc123")
+
+    def _fail(*a, **k):
+        raise AssertionError("it rebuilt a working environment")
+
+    monkeypatch.setattr(launch.subprocess, "run", _fail)
+    assert launch.install_if_needed() is True
+    assert venv.exists()
+
+
+def test_an_environment_pointing_at_the_old_folder_is_caught(monkeypatch, tmp_path):
+    """The failure a move actually causes. An editable install records an
+    absolute path, so the environment keeps importing the code from where the
+    folder used to be — starting fine and ignoring every update pulled here."""
+    launch = _launcher()
+    monkeypatch.setattr(launch, "ROOT", tmp_path / "Desktop" / "stockforge")
+    monkeypatch.setattr(
+        launch.subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            a, 0, stdout="/somewhere/else/stockforge/__init__.py"))
+    assert launch.imports_this_copy() is False
+
+
+def test_an_environment_pointing_here_is_accepted(monkeypatch, tmp_path):
+    launch = _launcher()
+    root = tmp_path / "Desktop" / "stockforge"
+    (root / "stockforge").mkdir(parents=True)
+    monkeypatch.setattr(launch, "ROOT", root)
+    monkeypatch.setattr(
+        launch.subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            a, 0, stdout=str(root / "stockforge" / "__init__.py")))
+    assert launch.imports_this_copy() is True
+
+
+def test_a_matching_stamp_does_not_excuse_the_wrong_folder(monkeypatch, tmp_path):
+    """Moving the folder does not change the commit, so the stamp still
+    matches. Trusting it alone would skip the reinstall the move requires."""
+    launch = _launcher()
+    venv = tmp_path / ".venv"
+    venv.mkdir()
+    monkeypatch.setattr(launch, "VENV", venv)
+    monkeypatch.setattr(launch, "STAMP", venv / "stamp")
+    monkeypatch.setattr(launch, "venv_runs", lambda: True)
+    monkeypatch.setattr(launch, "imports_this_copy", lambda: False)
+    monkeypatch.setattr(launch, "head", lambda: "abc123")
+    (venv / "stamp").write_text("abc123")
+
+    calls = []
+    monkeypatch.setattr(launch.subprocess, "run",
+                        lambda cmd, *a, **k: (calls.append(cmd),
+                                              subprocess.CompletedProcess(cmd, 0))[1])
+    launch.install_if_needed()
+    assert any("pip" in " ".join(map(str, c)) for c in calls), \
+        "it trusted the stamp and left the environment pointing elsewhere"
