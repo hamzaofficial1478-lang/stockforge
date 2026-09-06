@@ -182,7 +182,28 @@ class ShapeElement(BaseModel):
     sides: int | None = Field(default=None, ge=3, le=24, description="for polygon")
 
 
-Element = TextElement | MotifElement | ShapeElement
+class RasterElement(BaseModel):
+    """A photographic or richly painted area that cannot honestly be rebuilt.
+
+    Not traced and not invented: the pixels are cut straight out of the listing
+    image this design was read from, so the master is a faithful rebuild you
+    can edit around rather than a design with a hole where the photograph was.
+
+    It also makes the design permanently stock-unsafe. That is the point of
+    keeping it as its own element type rather than pretending it is a motif —
+    the provenance pass can see it, and a design carrying one is delivered to
+    you as an editable master and never sent to an agency.
+    """
+
+    kind: Literal["raster"] = "raster"
+    description: str = Field(description="what the photographic area shows")
+    box: Box = Field(description="where it sits on the page, 0..1 of the canvas")
+    source: Box = Field(default_factory=lambda: Box(x=0.0, y=0.0, w=1.0, h=1.0),
+                        description="the part of the source image to cut, 0..1 of it")
+    opacity: float = Field(default=1.0, ge=0, le=1)
+
+
+Element = TextElement | MotifElement | ShapeElement | RasterElement
 
 
 # --------------------------------------------------------------------------
@@ -311,6 +332,9 @@ class DesignSpec(BaseModel):
 
     def unresolved_motifs(self) -> list[MotifElement]:
         return [m for m in self.motifs() if m.library_id is None]
+
+    def rasters(self, page: int | None = None) -> list[RasterElement]:
+        return [e for e in self.elements(page) if isinstance(e, RasterElement)]
 
     @property
     def publishable(self) -> bool:

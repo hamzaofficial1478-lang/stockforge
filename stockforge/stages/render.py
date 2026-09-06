@@ -17,7 +17,8 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from ..schema import (
-    Box, ColourRole, DesignSpec, MotifElement, Page, ShapeElement, TextElement,
+    Box, ColourRole, DesignSpec, MotifElement, Page, RasterElement, ShapeElement,
+    TextElement,
 )
 from .fonts import FontEntry, load_manifest, match, open_face
 from .motifs import load as load_motifs
@@ -318,6 +319,7 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'xmlns:xlink="http://www.w3.org/1999/xlink" '
         f'width="{page.canvas.width_mm + 2 * bleed_mm:.2f}mm" '
         f'height="{page.canvas.height_mm + 2 * bleed_mm:.2f}mm" '
         f'viewBox="{-bleed:.2f} {-bleed:.2f} {sheet_w:.2f} {sheet_h:.2f}">',
@@ -330,6 +332,17 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
     missing: list[str] = []
     scores: list[float] = []
     refits: list[tuple[str, float]] = []
+    unrenderable_extra: list[str] = []
+
+    parts.append('<g id="artwork">')
+    for el in page.elements:
+        if isinstance(el, RasterElement):
+            node, gap = _raster(el, page, w, h)
+            if node:
+                parts.append(node)
+            if gap:
+                unrenderable_extra.append(gap)
+    parts.append("</g>")
 
     parts.append('<g id="structure">')
     for el in page.elements:
@@ -358,7 +371,57 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
                 refits.append((f"{el.role.value} {first[:40]!r}", refit))
     parts.append("</g></svg>")
 
-    return RenderResult("\n".join(parts), missing, scores, refits, unrenderable and [unrenderable])
+    gaps = ([unrenderable] if unrenderable else []) + unrenderable_extra
+    return RenderResult("\n".join(parts), missing, scores, refits, gaps)
+
+
+def _raster(el: RasterElement, page: Page, w: float, h: float) -> tuple[str, str | None]:
+    """Cut the photographic area out of the image this surface was read from
+    and place it.
+
+    Nothing here is traced or invented — the pixels are the design's own. It is
+    embedded rather than linked because the master has to survive being moved
+    off this machine, which a relative path to a workspace folder does not.
+
+    Returns (markup, unrenderable). A source image we cannot read leaves the
+    hole it would have filled and says so, which is the same rule the motifs
+    and the backgrounds follow: a gap you can see beats something invented.
+    """
+    import base64
+
+    if not page.source_image:
+        return "", f"{el.description} (the source image was not recorded)"
+    src = Path(page.source_image)
+    if not src.is_file():
+        return "", f"{el.description} (source image missing: {src.name})"
+
+    try:
+        import cv2
+
+        img = cv2.imread(str(src), cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("unreadable")
+        ih, iw = img.shape[:2]
+        x0 = max(0, min(iw - 1, int(el.source.x * iw)))
+        y0 = max(0, min(ih - 1, int(el.source.y * ih)))
+        x1 = max(x0 + 1, min(iw, int((el.source.x + el.source.w) * iw)))
+        y1 = max(y0 + 1, min(ih, int((el.source.y + el.source.h) * ih)))
+        ok, buf = cv2.imencode(".jpg", img[y0:y1, x0:x1],
+                               [int(cv2.IMWRITE_JPEG_QUALITY), 94])
+        if not ok:
+            raise ValueError("could not encode the crop")
+        data = base64.standard_b64encode(buf.tobytes()).decode()
+    except Exception as exc:
+        return "", f"{el.description} ({src.name}: {exc})"
+
+    x, y = el.box.x * w, el.box.y * h
+    bw, bh = el.box.w * w, el.box.h * h
+    opacity = "" if el.opacity >= 1.0 else f' opacity="{el.opacity:.3f}"'
+    return (f'<image x="{x:.2f}" y="{y:.2f}" width="{bw:.2f}" height="{bh:.2f}"'
+            f'{opacity} preserveAspectRatio="none" '
+            f'xlink:href="data:image/jpeg;base64,{data}" '
+            f'href="data:image/jpeg;base64,{data}"><title>'
+            f'{escape(el.description)}</title></image>'), None
 
 
 def write_svg(result: RenderResult, path: Path) -> Path:

@@ -29,8 +29,8 @@ from pydantic import BaseModel, Field
 from ..providers import VisionProvider, vision
 from ..schema import (
     Background, Canvas, ColourRole, DesignDNA, DesignSpec, Element, FontClass,
-    Grid, MotifElement, Page, Palette, Provenance, ShapeElement, Swatch,
-    TextElement,
+    Grid, MotifElement, Page, Palette, Provenance, RasterElement, ShapeElement,
+    Swatch, TextElement,
 )
 from . import ocr
 
@@ -234,6 +234,7 @@ class StructureRead(BaseModel):
     background: Background
     shapes: list[ShapeElement] = Field(default_factory=list)
     motifs: list[MotifElement] = Field(default_factory=list)
+    rasters: list[RasterElement] = Field(default_factory=list)
     motif_vocabulary: list[str] = Field(default_factory=list)
 
 
@@ -254,9 +255,18 @@ carved jack-o-lantern, three-quarter view, warm light from within, painterly" \
 Ignore anything belonging to the listing rather than the design: shop logos, \
 watermarks, "Canva" badges, price stickers, marketing borders.
 
-If a large part of the surface is a photographic or richly painted scene rather \
-than assembled elements, say so in motif_vocabulary as "photographic background \
-scene". Do not try to break a photograph into shapes."""
+RASTERS are the parts that are photographic or so richly painted that no \
+illustrator could redraw them from words — a photograph, a watercolour wash \
+with real brush texture, a generated scene. Do not try to break one into \
+shapes and do not describe it as a motif. Report it as a raster with two \
+boxes: `box` is where it sits on the finished piece, and `source` is the part \
+of the image you are looking at that it occupies. Both are fractions from 0 to \
+1. They are usually the same, and differ when the artwork does not fill the \
+image. Say what it shows in `description`.
+
+Being honest here costs nothing and hiding it costs everything: a raster is \
+kept exactly as it is, so the rebuild stays faithful, and the design is marked \
+as one to keep rather than one to sell."""
 
 
 def structure(flat: Path, provider: VisionProvider) -> StructureRead:
@@ -315,6 +325,29 @@ def provenance(images: list[Path], provider: VisionProvider) -> Provenance:
 # put it together
 # --------------------------------------------------------------------------
 
+def _hold_back_rasters(pages: list[Page], prov: Provenance,
+                       warnings: list[str]) -> None:
+    """A design with a photograph placed in it is never stock-safe.
+
+    The structure pass and the provenance pass look for rasters separately and
+    either can see one the other missed, so the element being on the page
+    settles it whatever the provenance pass concluded. The pixels are the
+    owner's own artwork coming back to them, and nobody else's to sell.
+    """
+    placed = [r.description for page in pages for r in page.elements
+              if isinstance(r, RasterElement)]
+    if not placed:
+        return
+    prov.stock_safe = False
+    for one in placed:
+        if one not in prov.raster_elements:
+            prov.raster_elements.append(one)
+    if not prov.reason:
+        prov.reason = "a photographic area is placed as-is — editable master only"
+    warnings.extend(f"raster element: {r}" for r in placed
+                    if f"raster element: {r}" not in warnings)
+
+
 def analyse(
     images: list[Path],
     asset_id: str,
@@ -367,7 +400,8 @@ def analyse(
         type_read = typography(flat, provider)
         struct = structure(flat, provider)
 
-        elements: list[Element] = [*struct.shapes, *struct.motifs, *type_read.elements]
+        elements: list[Element] = [*struct.rasters, *struct.shapes,
+                                   *struct.motifs, *type_read.elements]
         pages.append(Page(
             name=surface.name,
             canvas=Canvas(width_mm=surface.width_mm, height_mm=surface.height_mm),
@@ -390,6 +424,8 @@ def analyse(
         type_pairing=pairing,
         motif_vocabulary=sorted(set(vocabulary)),
     )
+
+    _hold_back_rasters(pages, prov, warnings)
 
     return DesignSpec(
         source_asset_id=asset_id,
