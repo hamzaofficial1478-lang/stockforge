@@ -14,3 +14,9 @@ assets/fonts/*
 
 # editable install metadata
 *.egg-info/
+
+# test and coverage artefacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
