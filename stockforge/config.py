@@ -93,14 +93,14 @@ load_env()
 @dataclass
 class Settings:
     # --- paths -----------------------------------------------------------
-    root: Path = field(default_factory=lambda: _p("SF_ROOT", "./workspace"))
-    fonts_dir: Path = field(default_factory=lambda: _p("SF_FONTS", "./assets/fonts"))
-    motifs_dir: Path = field(default_factory=lambda: _p("SF_MOTIFS", "./assets/motifs"))
+    root: Path = field(default_factory=lambda: _p("SF_ROOT", "./workspace"), metadata={"env": "SF_ROOT"})
+    fonts_dir: Path = field(default_factory=lambda: _p("SF_FONTS", "./assets/fonts"), metadata={"env": "SF_FONTS"})
+    motifs_dir: Path = field(default_factory=lambda: _p("SF_MOTIFS", "./assets/motifs"), metadata={"env": "SF_MOTIFS"})
 
     # --- pipeline --------------------------------------------------------
-    max_critique_rounds: int = field(default_factory=lambda: _i("SF_CRITIQUE_ROUNDS", 2))
-    ship_threshold: float = field(default_factory=lambda: _f("SF_SHIP_THRESHOLD", 0.85))
-    escalate_threshold: float = field(default_factory=lambda: _f("SF_ESCALATE_THRESHOLD", 0.60))
+    max_critique_rounds: int = field(default_factory=lambda: _i("SF_CRITIQUE_ROUNDS", 2), metadata={"env": "SF_CRITIQUE_ROUNDS"})
+    ship_threshold: float = field(default_factory=lambda: _f("SF_SHIP_THRESHOLD", 0.85), metadata={"env": "SF_SHIP_THRESHOLD"})
+    escalate_threshold: float = field(default_factory=lambda: _f("SF_ESCALATE_THRESHOLD", 0.60), metadata={"env": "SF_ESCALATE_THRESHOLD"})
 
     # --- making it a new design ------------------------------------------
     # Two levers. `mix` borrows ingredients from your OTHER designs — grid from
@@ -108,23 +108,23 @@ class Settings:
     # single original. `derive_strength` then moves that result further on its
     # own terms. Mixing is the stronger of the two; deriving alone only ever
     # walks away from one starting point.
-    mix: float = field(default_factory=lambda: _f("SF_MIX", 0.5))
-    derive_strength: float = field(default_factory=lambda: _f("SF_DERIVE_STRENGTH", 0.5))
-    distinct_threshold: float = field(default_factory=lambda: _f("SF_DISTINCT_THRESHOLD", 0.70))
-    max_derive_rounds: int = field(default_factory=lambda: _i("SF_DERIVE_ROUNDS", 2))
+    mix: float = field(default_factory=lambda: _f("SF_MIX", 0.5), metadata={"env": "SF_MIX"})
+    derive_strength: float = field(default_factory=lambda: _f("SF_DERIVE_STRENGTH", 0.5), metadata={"env": "SF_DERIVE_STRENGTH"})
+    distinct_threshold: float = field(default_factory=lambda: _f("SF_DISTINCT_THRESHOLD", 0.70), metadata={"env": "SF_DISTINCT_THRESHOLD"})
+    max_derive_rounds: int = field(default_factory=lambda: _i("SF_DERIVE_ROUNDS", 2), metadata={"env": "SF_DERIVE_ROUNDS"})
 
     # --- decoration ------------------------------------------------------
     # How close a library motif has to be before we will place it. Raise it and
     # more designs go to review with a description of what to draw; lower it
     # and you start shipping approximate decoration. A hole is the cheaper
     # mistake, so the default leans towards refusing.
-    motif_threshold: float = field(default_factory=lambda: _f("SF_MOTIF_THRESHOLD", 0.45))
+    motif_threshold: float = field(default_factory=lambda: _f("SF_MOTIF_THRESHOLD", 0.45), metadata={"env": "SF_MOTIF_THRESHOLD"})
 
     # --- fetching ---------------------------------------------------------
     # A long crawl meets a rate limit and a bad gateway whatever time of day it
     # starts. These decide how patient it is before it gives up on one request.
-    http_retries: int = field(default_factory=lambda: _i("SF_HTTP_RETRIES", 4))
-    http_backoff: float = field(default_factory=lambda: _f("SF_HTTP_BACKOFF", 2.0))
+    http_retries: int = field(default_factory=lambda: _i("SF_HTTP_RETRIES", 4), metadata={"env": "SF_HTTP_RETRIES"})
+    http_backoff: float = field(default_factory=lambda: _f("SF_HTTP_BACKOFF", 2.0), metadata={"env": "SF_HTTP_BACKOFF"})
 
     # --- not shipping the same thing twice --------------------------------
     # How alike two finished pages may be, in bits of a 256-bit perceptual hash.
@@ -133,30 +133,38 @@ class Settings:
     # apart. Twenty is comfortably between the two, with a wide margin either
     # side — raise it to catch more and send more to review, lower it to catch
     # only the obvious.
-    duplicate_distance: int = field(default_factory=lambda: _i("SF_DUPLICATE_DISTANCE", 20))
+    duplicate_distance: int = field(default_factory=lambda: _i("SF_DUPLICATE_DISTANCE", 20), metadata={"env": "SF_DUPLICATE_DISTANCE"})
 
     # --- output ----------------------------------------------------------
-    preview_px: int = field(default_factory=lambda: _i("SF_PREVIEW_PX", 1400))
+    preview_px: int = field(default_factory=lambda: _i("SF_PREVIEW_PX", 1400), metadata={"env": "SF_PREVIEW_PX"})
 
     # --- publishing ------------------------------------------------------
-    publish_enabled: bool = field(default_factory=lambda: _b("SF_PUBLISH"))
+    publish_enabled: bool = field(default_factory=lambda: _b("SF_PUBLISH"), metadata={"env": "SF_PUBLISH"})
     # The provenance check flags designs that lean on third-party library
     # content. By default those stop at an editable master. This sends them
     # through anyway — your catalogue, your call. Either way the flag and its
     # reason stay recorded on every design, so you can always see what went
     # out and what it was marked as.
-    publish_all: bool = field(default_factory=lambda: _b("SF_PUBLISH_ALL"))
+    publish_all: bool = field(default_factory=lambda: _b("SF_PUBLISH_ALL"), metadata={"env": "SF_PUBLISH_ALL"})
 
     def reload(self) -> None:
-        """Re-read everything from the environment, in place.
+        """Re-read from the environment what the environment actually sets.
 
         In place because the pipeline, the worker and the panel all hold a
         reference to one Settings. Handing back a new object would leave every
         one of them on the old values, which is indistinguishable from the
         setting having done nothing.
+
+        Only fields the environment names are touched. It used to copy every
+        field off a fresh Settings, which threw away anything a caller had
+        passed in: a panel started on one workspace moved itself to ./workspace
+        the moment you saved a setting, and the designs appeared to vanish.
         """
         fresh = Settings()
         for f in fields(self):
+            name = f.metadata.get("env")
+            if name and name not in os.environ:
+                continue
             setattr(self, f.name, getattr(fresh, f.name))
 
     @property

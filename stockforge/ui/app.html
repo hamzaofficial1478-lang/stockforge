@@ -113,6 +113,49 @@
   .log{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);max-height:170px;
     overflow:auto;border-top:1px solid var(--line-soft);margin-top:12px;padding-top:10px}
   .log div{padding:2px 0}
+  /* files coming in */
+  .drop{border:2px dashed var(--line);border-radius:var(--radius);padding:30px 20px;
+    text-align:center;cursor:pointer;transition:border-color .15s,background .15s}
+  .drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+  .drop b{display:block;font-size:15px;margin-bottom:4px}
+  .drop span{color:var(--ink-3);font-size:13px}
+  .files{margin-top:14px;max-height:290px;overflow:auto;border-top:1px solid var(--line-soft)}
+  .file{display:grid;grid-template-columns:14px 1fr auto;gap:10px;align-items:baseline;
+    padding:7px 2px;border-bottom:1px solid var(--line-soft);font-size:13.5px}
+  .file:last-child{border-bottom:0}
+  .file .mark{font-size:12px;line-height:1.5}
+  .file.good .mark{color:var(--ok)} .file.bad .mark{color:var(--fail)}
+  .file .why{color:var(--ink-3);font-size:12.5px;display:block}
+  .file .size{color:var(--ink-3);font-size:12px;font-variant-numeric:tabular-nums}
+  .tally{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--ink-2)}
+  .tally b{color:var(--ink);font-variant-numeric:tabular-nums}
+
+  /* the model manager */
+  .conn{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start;
+    padding:13px 0;border-bottom:1px solid var(--line-soft)}
+  .conn:last-child{border-bottom:0}
+  .conn .name{font-weight:550;font-size:14px}
+  .conn .where{color:var(--ink-2);font-size:12.5px;font-family:var(--mono);word-break:break-all}
+  .conn .said{font-size:12.5px;margin-top:5px}
+  .conn .said.ok{color:var(--ok)} .conn .said.bad{color:var(--fail)}
+  .badge{display:inline-block;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
+    padding:2px 7px;border-radius:20px;border:1px solid var(--accent);color:var(--accent);
+    margin-left:8px;vertical-align:1px}
+  .badge.role{border-color:var(--line);color:var(--ink-3)}
+
+  /* explained settings */
+  .lever{padding:16px 0;border-top:1px solid var(--line-soft)}
+  .lever:first-of-type{border-top:0;padding-top:4px}
+  .lever .top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .lever .top b{font-size:14px;font-weight:550}
+  .lever .now{font-family:var(--mono);font-size:13px;color:var(--accent)}
+  .lever p{margin:5px 0 9px;color:var(--ink-2);font-size:13px;max-width:70ch}
+  .lever .ends{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-3);
+    margin-top:3px}
+  .presets{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+  details.more{margin-top:6px}
+  details.more summary{cursor:pointer;font-size:13px;color:var(--ink-2);padding:6px 0}
+  details.more summary:hover{color:var(--ink)}
   @media (max-width:640px){ .compare{grid-template-columns:1fr} }
 </style>
 
@@ -140,52 +183,141 @@
       <div id="checks"><div class="empty">checking…</div></div>
       <div class="row" style="margin-top:16px">
         <button class="btn small" onclick="loadHealth()">Re-check</button>
+        <button class="btn small" onclick="updateCode()">Update to the latest code</button>
+        <span id="update-msg" class="mono"></span>
       </div>
     </div>
 
     <div class="card">
-      <h3>Model</h3>
-      <p class="hint">Any OpenAI-compatible server — NVIDIA NIM, vLLM, Ollama, LM Studio. Saved to <code>.env</code> and applied immediately.</p>
-      <div class="grid">
-        <div><label>Vision base URL</label><input id="SF_VISION_BASE_URL" placeholder="http://localhost:8000/v1"></div>
-        <div><label>Vision model</label><input id="SF_VISION_MODEL" placeholder="nvidia/llama-3.2-90b-vision-instruct"></div>
-        <div><label>API key (hosted only)</label><input id="SF_VISION_API_KEY" type="password" placeholder="leave blank for local"></div>
-        <div><label>Text model (optional)</label><input id="SF_REASON_MODEL" placeholder="falls back to the vision model"></div>
-      </div>
+      <h3>Models</h3>
+      <p class="hint">Any OpenAI-compatible server — NVIDIA NIM, vLLM, Ollama, LM&nbsp;Studio.
+        Add a connection, test it, then make it live. Nothing is used until you do.</p>
+
+      <div id="conns"><div class="empty">no connections yet</div></div>
+
+      <details class="more" id="conn-form-wrap">
+        <summary id="conn-form-title">Add a connection</summary>
+        <div class="grid" style="margin-top:10px">
+          <div><label>Name it</label>
+            <input id="conn-label" placeholder="Ollama on this machine"></div>
+          <div><label>Used for</label>
+            <select id="conn-role">
+              <option value="vision">Reading designs (needs to see images)</option>
+              <option value="text">Titles and keywords (text only)</option>
+            </select></div>
+          <div><label>Server address</label>
+            <input id="conn-base" placeholder="http://localhost:11434/v1"></div>
+          <div><label>API key (hosted servers only)</label>
+            <input id="conn-key" type="password" placeholder="leave blank for local"></div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn small" onclick="fetchModels()">Fetch models from that server</button>
+          <span id="fetch-msg" class="mono"></span>
+        </div>
+        <div class="grid" style="margin-top:10px">
+          <div><label>Model</label>
+            <input id="conn-model" list="conn-model-list" placeholder="type it, or fetch the list above">
+            <datalist id="conn-model-list"></datalist></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn" onclick="testDraft()">Test it</button>
+          <button class="btn primary" onclick="saveConn()">Save connection</button>
+          <button class="btn small" onclick="resetConnForm()">Clear</button>
+          <span id="conn-msg" class="mono"></span>
+        </div>
+      </details>
     </div>
 
     <div class="card">
-      <h3>How far to move a design</h3>
-      <p class="hint">Mix borrows ingredients from your other designs. Change is how hard the layout, type and palette shift. Distinct is the score a result must reach before it's accepted. Motif match is how close a drawing in your library has to be before it's placed — raise it and more designs come to Review telling you what to draw, lower it and you start shipping approximate decoration.</p>
-      <div class="grid">
-        <div><label>Mix from other designs — <b id="mix-v">0.5</b></label>
-          <input type="range" id="SF_MIX" min="0" max="1" step="0.05" value="0.5"
-                 oninput="showV('mix-v', this.value)"></div>
-        <div><label>Change strength — <b id="str-v">0.5</b></label>
-          <input type="range" id="SF_DERIVE_STRENGTH" min="0" max="1" step="0.05" value="0.5"
-                 oninput="showV('str-v', this.value)"></div>
-        <div><label>Distinct threshold — <b id="dist-v">0.70</b></label>
-          <input type="range" id="SF_DISTINCT_THRESHOLD" min="0" max="1" step="0.05" value="0.7"
-                 oninput="showV('dist-v', this.value)"></div>
-        <div><label>Motif match threshold — <b id="motif-v">0.45</b></label>
-          <input type="range" id="SF_MOTIF_THRESHOLD" min="0" max="1" step="0.05" value="0.45"
-                 oninput="showV('motif-v', this.value)"></div>
-        <div><label>Rounds before review</label><input id="SF_DERIVE_ROUNDS" type="number" min="1" max="6" value="2"></div>
+      <h3>How much of the original to keep</h3>
+      <p class="hint">Every rebuild starts as a faithful read of your listing and is then moved
+        away from it. These decide how far. <b>Moving them up makes the result less like what you
+        uploaded, not more.</b></p>
+
+      <div class="presets">
+        <button class="btn small" onclick="preset('close')">Close to the original — 70/30</button>
+        <button class="btn small" onclick="preset('sixty')">Mostly the original — 60/40</button>
+        <button class="btn small" onclick="preset('balanced')">Balanced — 50/50</button>
+        <button class="btn small" onclick="preset('far')">Its own design — 30/70</button>
+      </div>
+
+      <div class="lever">
+        <div class="top"><b>Borrow from your other designs</b>
+          <span class="now" id="mix-v">0.50</span></div>
+        <p>Each ingredient — the palette, the grid, the type pairing, the decoration — is either
+          kept from this listing or taken from another of yours. At 0.40, roughly six in ten stay.
+          At 0 nothing is borrowed and you get this design back.</p>
+        <input type="range" id="SF_MIX" min="0" max="1" step="0.05" value="0.5"
+               oninput="showV('mix-v', (+this.value).toFixed(2))">
+        <div class="ends"><span>0 — keep everything from this listing</span>
+          <span>1 — borrow everything it can</span></div>
+      </div>
+
+      <div class="lever">
+        <div class="top"><b>How hard to push it</b><span class="now" id="str-v">0.50</span></div>
+        <p>What happens after the borrowing: colours rotate, type sizes spread apart, margins open
+          or close, the page becomes airier or tighter. Low keeps the piece recognisable; high
+          makes it a different layout in the same family.</p>
+        <input type="range" id="SF_DERIVE_STRENGTH" min="0" max="1" step="0.05" value="0.5"
+               oninput="showV('str-v', (+this.value).toFixed(2))">
+        <div class="ends"><span>0 — leave it alone</span><span>1 — move everything</span></div>
+      </div>
+
+      <div class="lever">
+        <div class="top"><b>How different it must end up</b>
+          <span class="now" id="dist-v">0.70</span></div>
+        <p>A gate, not a dial. The result is compared against your listing and must score at least
+          this to be accepted; below it, another round runs. <b>Set this high while asking to keep
+          most of the original and the two fight each other</b> — it will keep pushing the design
+          away and then send it to Review. Lower it whenever you lower the two above.</p>
+        <input type="range" id="SF_DISTINCT_THRESHOLD" min="0" max="1" step="0.05" value="0.7"
+               oninput="showV('dist-v', (+this.value).toFixed(2))">
+        <div class="ends"><span>0 — accept anything</span>
+          <span>1 — accept only something unrecognisable</span></div>
+      </div>
+
+      <div class="lever">
+        <div class="top"><b>How close a motif has to match</b>
+          <span class="now" id="motif-v">0.45</span></div>
+        <p>How near a drawing in your library must be before it is placed. Raise it and more
+          designs go to Review telling you what to draw; lower it and you start shipping
+          approximate decoration. A wrong pumpkin ships — a hole you can see does not.</p>
+        <input type="range" id="SF_MOTIF_THRESHOLD" min="0" max="1" step="0.05" value="0.45"
+               oninput="showV('motif-v', (+this.value).toFixed(2))">
+        <div class="ends"><span>0 — place the nearest thing</span>
+          <span>1 — only an exact match</span></div>
+      </div>
+
+      <div class="lever">
+        <div class="top"><b>Rounds before giving up</b></div>
+        <p>Each round borrows and pushes harder than the last. If it still hasn't cleared the gate
+          after this many, the design goes to Review rather than being pushed further.</p>
+        <div style="max-width:200px">
+          <input id="SF_DERIVE_ROUNDS" type="number" min="1" max="6" value="2"></div>
       </div>
     </div>
 
     <div class="card">
       <h3>Etsy &amp; delivery</h3>
-      <p class="hint">An Etsy API key makes the shop crawler reliable and gives you an exact upload count. FTP details are only needed when you're ready to send files.</p>
-      <div class="grid">
-        <div><label>Etsy API key</label><input id="SF_ETSY_API_KEY" type="password"></div>
-        <div><label>Adobe FTP host</label><input id="SF_FTP_ADOBE_HOST" placeholder="ftp.contributor.adobestock.com"></div>
-        <div><label>Adobe user</label><input id="SF_FTP_ADOBE_USER"></div>
-        <div><label>Adobe password</label><input id="SF_FTP_ADOBE_PASS" type="password"></div>
-        <div><label>Shutterstock FTP host</label><input id="SF_FTP_SHUTTERSTOCK_HOST" placeholder="ftp.shutterstock.com"></div>
-        <div><label>Shutterstock user</label><input id="SF_FTP_SHUTTERSTOCK_USER"></div>
-        <div><label>Shutterstock password</label><input id="SF_FTP_SHUTTERSTOCK_PASS" type="password"></div>
-      </div>
+      <p class="hint">Only needed for the shop door and for sending files. Everything else works
+        without them.</p>
+      <details class="more">
+        <summary>Etsy API key — makes the shop crawl reliable and the count exact</summary>
+        <div class="grid" style="margin-top:10px">
+          <div><label>Etsy API key</label><input id="SF_ETSY_API_KEY" type="password"></div>
+        </div>
+      </details>
+      <details class="more">
+        <summary>Agency FTP — only when you are ready to upload</summary>
+        <div class="grid" style="margin-top:10px">
+          <div><label>Adobe host</label><input id="SF_FTP_ADOBE_HOST" placeholder="ftp.contributor.adobestock.com"></div>
+          <div><label>Adobe user</label><input id="SF_FTP_ADOBE_USER"></div>
+          <div><label>Adobe password</label><input id="SF_FTP_ADOBE_PASS" type="password"></div>
+          <div><label>Shutterstock host</label><input id="SF_FTP_SHUTTERSTOCK_HOST" placeholder="ftp.shutterstock.com"></div>
+          <div><label>Shutterstock user</label><input id="SF_FTP_SHUTTERSTOCK_USER"></div>
+          <div><label>Shutterstock password</label><input id="SF_FTP_SHUTTERSTOCK_PASS" type="password"></div>
+        </div>
+      </details>
       <div class="row" style="margin-top:16px">
         <button class="btn primary" onclick="saveConfig()">Save settings</button>
         <span id="save-msg" class="mono"></span>
@@ -195,26 +327,100 @@
 
   <!-- ── SOURCES ───────────────────────────────────────────── -->
   <section id="sources" hidden>
-    <p class="lede">Three ways in. Whichever you use, a listing's images are grouped as one design and read together.</p>
+    <p class="lede">Three ways in. Whichever you use, a listing's images are grouped as one
+      design and read together.</p>
+
     <div class="card">
       <h3>Bring designs in</h3>
-      <p class="hint" id="source-hint">A shop name or URL. Set an Etsy API key on the Setup tab first — without it this falls back to parsing public pages.</p>
-      <div class="grid">
-        <div><label>Door</label>
-          <select id="pull-kind" onchange="sourceHint()">
-            <option value="shop">Etsy shop — walk the whole catalogue</option>
-            <option value="links">Bulk links — a file or a pasted list</option>
-            <option value="folder">Folder — images already on disk</option>
+      <div class="grid" style="max-width:420px">
+        <div><label>Where are they</label>
+          <select id="pull-kind" onchange="showDoor()">
+            <option value="upload">On this computer — choose or drag files in</option>
+            <option value="folder">In a folder on this machine — give the path</option>
+            <option value="links">A list of links — paste or upload them</option>
+            <option value="shop">Your Etsy shop — walk the whole catalogue</option>
           </select></div>
-        <div><label id="pull-label">Shop name or URL</label><input id="pull-target" placeholder="your-shop-name"></div>
-        <div><label>Limit (blank = everything)</label><input id="pull-limit" type="number" min="1" placeholder=""></div>
       </div>
-      <div class="row" style="margin-top:16px">
-        <button class="btn" onclick="doCount()">Count first</button>
-        <button class="btn primary" onclick="doPull()">Pull designs</button>
-        <span id="pull-msg" class="mono"></span>
+
+      <!-- upload -->
+      <div id="door-upload" class="door" style="margin-top:16px">
+        <div class="drop" id="dropzone"
+             onclick="document.getElementById('picker').click()">
+          <b>Choose files, or drag them here</b>
+          <span id="drop-types">images, or a .zip of them</span>
+        </div>
+        <input id="picker" type="file" multiple hidden onchange="sendFiles(this.files)">
+        <div id="upload-tally" class="tally" hidden></div>
+        <div id="upload-files" class="files" hidden></div>
+        <div class="row" style="margin-top:12px">
+          <span id="upload-msg" class="mono"></span>
+        </div>
+      </div>
+
+      <!-- folder -->
+      <div id="door-folder" class="door" hidden style="margin-top:16px">
+        <p class="hint">For a folder already on this machine. Images are grouped by filename or
+          parent folder — <code>haunted-invite-1.jpg</code> through <code>-5.jpg</code> becomes one
+          design.</p>
+        <div class="grid">
+          <div><label>Full path to the folder</label>
+            <input id="folder-path" placeholder="C:\Users\you\Desktop\exports"></div>
+          <div><label>Limit (blank = everything)</label>
+            <input id="folder-limit" type="number" min="1"></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn" onclick="doCount('folder','folder-path','folder-limit')">Count first</button>
+          <button class="btn primary" onclick="doPull('folder','folder-path','folder-limit')">Pull designs</button>
+          <span id="folder-msg" class="mono"></span>
+        </div>
+      </div>
+
+      <!-- links -->
+      <div id="door-links" class="door" hidden style="margin-top:16px">
+        <p class="hint">One listing URL per line. Direct links to image files work anywhere; a
+          link to a listing <em>page</em> is read by the Etsy scraper, so pages on other sites come
+          back empty.</p>
+        <div>
+          <label>Paste the links</label>
+          <textarea id="links-text" rows="7" spellcheck="false"
+            placeholder="https://www.etsy.com/listing/123456789/&#10;https://www.etsy.com/listing/987654321/"></textarea>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn small" onclick="document.getElementById('links-file').click()">
+            or upload a .txt of them</button>
+          <input id="links-file" type="file" accept=".txt,.csv" hidden onchange="loadLinkFile(this.files)">
+          <span id="links-count" class="mono"></span>
+        </div>
+        <div class="grid" style="margin-top:10px;max-width:260px">
+          <div><label>Limit (blank = everything)</label>
+            <input id="links-limit" type="number" min="1"></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn" onclick="doCount('links','links-text','links-limit')">Count first</button>
+          <button class="btn primary" onclick="doPull('links','links-text','links-limit')">Pull designs</button>
+          <span id="links-msg" class="mono"></span>
+        </div>
+      </div>
+
+      <!-- shop -->
+      <div id="door-shop" class="door" hidden style="margin-top:16px">
+        <p class="hint">Walks every listing with its images, title and tags. Set an Etsy API key on
+          Setup first — without one this parses public pages, which is slower and breaks whenever
+          Etsy changes their markup.</p>
+        <div class="grid">
+          <div><label>Shop name or URL</label>
+            <input id="shop-target" placeholder="YourShopName"></div>
+          <div><label>Limit (blank = everything)</label>
+            <input id="shop-limit" type="number" min="1"></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn" onclick="doCount('shop','shop-target','shop-limit')">Count first</button>
+          <button class="btn primary" onclick="doPull('shop','shop-target','shop-limit')">Pull designs</button>
+          <span id="shop-msg" class="mono"></span>
+        </div>
       </div>
     </div>
+
     <div class="card">
       <h3>Catalogue</h3>
       <div id="totals" class="grid"></div>
@@ -291,9 +497,13 @@ const $ = id => document.getElementById(id);
 // Inline handlers can't see the dashed ids as bare names, so slider labels go
 // through here rather than through a global that never existed.
 function showV(id, value){ $(id).textContent = value; }
+// Routes that take no arguments still have to be POSTed, so an explicit
+// empty object means "post nothing" rather than "fetch it".
+const POST_ONLY = new Set(['/api/update']);
 const api = async (path, body) => {
-  const opts = body ? {method:'POST', headers:{'Content-Type':'application/json'},
-                       body:JSON.stringify(body)} : {};
+  const opts = (body || POST_ONLY.has(path))
+    ? {method:'POST', headers:{'Content-Type':'application/json'},
+       body:JSON.stringify(body || {})} : {};
   const r = await fetch(path, opts);
   return r.json();
 };
@@ -333,9 +543,8 @@ async function loadHealth(){
   $('tagline').textContent = h.workable ? 'ready' : 'setup needed';
 }
 
-const CFG_KEYS = ['SF_VISION_BASE_URL','SF_VISION_MODEL','SF_VISION_API_KEY','SF_REASON_MODEL',
-  'SF_ETSY_API_KEY','SF_MIX','SF_DERIVE_STRENGTH','SF_DISTINCT_THRESHOLD','SF_DERIVE_ROUNDS',
-  'SF_MOTIF_THRESHOLD',
+const CFG_KEYS = ['SF_ETSY_API_KEY','SF_MIX','SF_DERIVE_STRENGTH','SF_DISTINCT_THRESHOLD',
+  'SF_DERIVE_ROUNDS','SF_MOTIF_THRESHOLD',
   'SF_FTP_ADOBE_HOST','SF_FTP_ADOBE_USER','SF_FTP_ADOBE_PASS',
   'SF_FTP_SHUTTERSTOCK_HOST','SF_FTP_SHUTTERSTOCK_USER','SF_FTP_SHUTTERSTOCK_PASS'];
 
@@ -345,10 +554,9 @@ async function loadConfig(){
     const el = $(k);
     if (el && c.values[k]) el.value = c.values[k];
   }
-  showV('mix-v',   $('SF_MIX').value);
-  showV('str-v',   $('SF_DERIVE_STRENGTH').value);
-  showV('dist-v',  $('SF_DISTINCT_THRESHOLD').value);
-  showV('motif-v', $('SF_MOTIF_THRESHOLD').value);
+  for (const [id, key] of [['mix-v','SF_MIX'], ['str-v','SF_DERIVE_STRENGTH'],
+                           ['dist-v','SF_DISTINCT_THRESHOLD'], ['motif-v','SF_MOTIF_THRESHOLD']])
+    showV(id, (+$(key).value).toFixed(2));
 }
 
 async function saveConfig(){
@@ -363,30 +571,260 @@ async function saveConfig(){
   loadHealth();
 }
 
-/* ── sources ──────────────────────────────────────── */
-const HINTS = {
-  shop:   ['Shop name or URL', 'A shop name or URL. Set an Etsy API key on the Setup tab first — without it this falls back to parsing public pages.'],
-  links:  ['Path to a file, or paste URLs', 'One listing URL per line, or comma separated. Direct image URLs work too.'],
-  folder: ['Folder path', 'Images grouped by filename or parent folder — haunted-invite-1.jpg through -5.jpg becomes one design.'],
+/* Four ready-made answers to "how much of the original do I want to keep".
+   The distinct threshold has to come down with the other two or the gate
+   fights the request: it would push the design away and then queue it. */
+const PRESETS = {
+  close:    {SF_MIX:0.30, SF_DERIVE_STRENGTH:0.20, SF_DISTINCT_THRESHOLD:0.30, SF_DERIVE_ROUNDS:1},
+  sixty:    {SF_MIX:0.40, SF_DERIVE_STRENGTH:0.30, SF_DISTINCT_THRESHOLD:0.40, SF_DERIVE_ROUNDS:1},
+  balanced: {SF_MIX:0.50, SF_DERIVE_STRENGTH:0.50, SF_DISTINCT_THRESHOLD:0.55, SF_DERIVE_ROUNDS:2},
+  far:      {SF_MIX:0.70, SF_DERIVE_STRENGTH:0.70, SF_DISTINCT_THRESHOLD:0.75, SF_DERIVE_ROUNDS:3},
 };
-function sourceHint(){
-  const [label, hint] = HINTS[$('pull-kind').value];
-  $('pull-label').textContent = label;
-  $('source-hint').textContent = hint;
+function preset(name){
+  for (const [key, value] of Object.entries(PRESETS[name])) $(key).value = value;
+  for (const [id, key] of [['mix-v','SF_MIX'], ['str-v','SF_DERIVE_STRENGTH'],
+                           ['dist-v','SF_DISTINCT_THRESHOLD'], ['motif-v','SF_MOTIF_THRESHOLD']])
+    showV(id, (+$(key).value).toFixed(2));
+  saveConfig();
 }
-async function doCount(){
-  $('pull-msg').textContent = 'counting…';
-  const r = await api('/api/count', {kind:$('pull-kind').value, target:$('pull-target').value});
-  $('pull-msg').textContent = r.error ? 'error: ' + r.error
-    : (r.count == null ? 'unknown — set an Etsy API key for an exact figure' : r.count + ' designs');
+
+async function updateCode(){
+  $('update-msg').textContent = 'pulling…';
+  const r = await api('/api/update');
+  $('update-msg').textContent = r.error ? 'could not update: ' + r.error : r.message;
 }
-async function doPull(){
-  $('pull-msg').textContent = 'pulling — this downloads and flattens images, give it a minute…';
-  const r = await api('/api/pull', {kind:$('pull-kind').value, target:$('pull-target').value,
-                                    limit:$('pull-limit').value || null});
-  $('pull-msg').textContent = r.error ? 'error: ' + r.error : `pulled ${r.pulled} designs`;
+
+/* ── model connections ────────────────────────────── */
+let CONNS = [], EDITING = null;
+
+async function loadConns(){
+  const r = await api('/api/models');
+  CONNS = r.models || [];
+  if (r.extensions) $('drop-types').textContent =
+    r.extensions.join(', ') + ', or a .zip of them';
+  paintConns();
+}
+
+function paintConns(){
+  if (!CONNS.length){
+    $('conns').innerHTML = '<div class="empty">No connections yet. Add one below — ' +
+      'a local server usually needs only its address.</div>';
+    return;
+  }
+  $('conns').innerHTML = CONNS.map(c => `
+    <div class="conn">
+      <div>
+        <div class="name">${esc(c.label)}
+          ${c.active ? '<span class="badge">live</span>' : ''}
+          <span class="badge role">${c.role === 'vision' ? 'reads designs' : 'writes text'}</span>
+          ${c.has_key ? '<span class="badge role">key saved</span>' : ''}</div>
+        <div class="where">${esc(c.model || 'no model chosen')} — ${esc(c.base_url)}</div>
+        <div class="said ${c.last_result.startsWith('ok') ? 'ok' : (c.last_result ? 'bad' : '')}"
+             id="said-${c.id}">${esc(c.last_result || '')}</div>
+      </div>
+      <div class="row">
+        <button class="btn small" onclick="testSaved('${c.id}')">Test</button>
+        ${c.active ? '' :
+          `<button class="btn small primary" onclick="makeLive('${c.id}')">Make live</button>`}
+        <button class="btn small" onclick="editConn('${c.id}')">Edit</button>
+        <button class="btn small" onclick="deleteConn('${c.id}')">Delete</button>
+      </div>
+    </div>`).join('');
+}
+
+function draft(){
+  return {id: EDITING, label: $('conn-label').value.trim(),
+          base_url: $('conn-base').value.trim(), model: $('conn-model').value.trim(),
+          api_key: $('conn-key').value, role: $('conn-role').value};
+}
+
+function resetConnForm(){
+  EDITING = null;
+  for (const id of ['conn-label','conn-base','conn-model','conn-key']) $(id).value = '';
+  $('conn-role').value = 'vision';
+  $('conn-model-list').innerHTML = '';
+  $('conn-form-title').textContent = 'Add a connection';
+  $('conn-msg').textContent = '';
+  $('fetch-msg').textContent = '';
+}
+
+function editConn(id){
+  const c = CONNS.find(x => x.id === id);
+  if (!c) return;
+  EDITING = id;
+  $('conn-label').value = c.label; $('conn-base').value = c.base_url;
+  $('conn-model').value = c.model; $('conn-role').value = c.role;
+  $('conn-key').value = '';
+  $('conn-key').placeholder = c.has_key ? 'a key is saved — leave blank to keep it'
+                                        : 'leave blank for local';
+  $('conn-form-title').textContent = 'Editing ' + (c.label || 'connection');
+  $('conn-form-wrap').open = true;
+  $('conn-form-wrap').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+async function fetchModels(){
+  const base = $('conn-base').value.trim();
+  if (!base) return $('fetch-msg').textContent = 'put the server address in first';
+  $('fetch-msg').textContent = 'asking…';
+  const r = await api('/api/models/fetch', {base_url: base, api_key: $('conn-key').value});
+  if (r.error) return $('fetch-msg').textContent = r.error;
+  $('conn-model-list').innerHTML = r.models.map(m => `<option value="${esc(m)}">`).join('');
+  $('fetch-msg').textContent = r.models.length
+    ? `${r.models.length} available — click the model box to pick one`
+    : 'that server is not serving any models yet';
+  if (r.models.length === 1 && !$('conn-model').value) $('conn-model').value = r.models[0];
+}
+
+async function testDraft(){
+  const d = draft();
+  if (!d.model) return $('conn-msg').textContent = 'choose a model first';
+  $('conn-msg').textContent = 'sending one request…';
+  const r = await api('/api/models/test', d);
+  $('conn-msg').textContent = r.ok
+    ? `replied "${r.said}" in ${r.seconds}s`
+    : 'no — ' + r.error;
+}
+
+async function testSaved(id){
+  const c = CONNS.find(x => x.id === id);
+  const cell = $('said-' + id);
+  cell.className = 'said'; cell.textContent = 'testing…';
+  const r = await api('/api/models/test', {id, base_url: c.base_url, model: c.model});
+  cell.className = 'said ' + (r.ok ? 'ok' : 'bad');
+  cell.textContent = r.ok ? `ok — replied "${r.said}" in ${r.seconds}s` : r.error;
+}
+
+async function saveConn(){
+  const d = draft();
+  if (!d.base_url || !d.model)
+    return $('conn-msg').textContent = 'a server address and a model are both needed';
+  const r = await api('/api/models/save', d);
+  if (r.error) return $('conn-msg').textContent = r.error;
+  resetConnForm();
+  $('conn-form-wrap').open = false;
+  await loadConns();
+}
+
+async function deleteConn(id){
+  const c = CONNS.find(x => x.id === id);
+  if (!confirm(`Delete "${c ? c.label : id}"? The server itself is untouched.`)) return;
+  await api('/api/models/delete', {id});
+  if (EDITING === id) resetConnForm();
+  await loadConns();
+}
+
+async function makeLive(id){
+  await api('/api/models/activate', {id});
+  await loadConns();
+  loadHealth();
+}
+
+/* ── sources ──────────────────────────────────────── */
+function showDoor(){
+  const which = $('pull-kind').value;
+  for (const name of ['upload','folder','links','shop'])
+    $('door-' + name).hidden = name !== which;
+}
+
+async function doCount(kind, targetId, limitId){
+  const msg = $(kind + '-msg');
+  msg.textContent = 'counting…';
+  const r = await api('/api/count', {kind, target: $(targetId).value.trim()});
+  msg.textContent = r.error ? 'error: ' + r.error
+    : (r.count == null ? 'unknown — set an Etsy API key for an exact figure'
+                       : r.count + ' designs');
+}
+
+async function doPull(kind, targetId, limitId){
+  const msg = $(kind + '-msg');
+  const target = $(targetId).value.trim();
+  if (!target) return msg.textContent = 'nothing to pull from yet';
+  msg.textContent = 'pulling — downloading and flattening images, give it a minute…';
+  const r = await api('/api/pull', {kind, target, limit: $(limitId).value || null});
+  msg.textContent = r.error ? 'error: ' + r.error : `pulled ${r.pulled} designs`;
   loadTotals();
 }
+
+function loadLinkFile(files){
+  if (!files || !files.length) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    $('links-text').value = reader.result;
+    countLinks();
+  };
+  reader.readAsText(files[0]);
+}
+
+function countLinks(){
+  const n = $('links-text').value.split(/[\n,]/).map(s => s.trim())
+    .filter(s => s.startsWith('http')).length;
+  $('links-count').textContent = n ? `${n} link${n === 1 ? '' : 's'}` : '';
+}
+
+/* ── files dropped on the panel ───────────────────── */
+function bytes(n){
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
+async function sendFiles(files){
+  if (!files || !files.length) return;
+  const form = new FormData();
+  for (const f of files) form.append('files', f, f.name);
+
+  $('upload-msg').textContent =
+    `sending ${files.length} file${files.length === 1 ? '' : 's'}…`;
+  $('upload-files').hidden = true;
+  $('upload-tally').hidden = true;
+
+  let r;
+  try {
+    const resp = await fetch('/api/upload', {method:'POST', body: form});
+    r = await resp.json();
+  } catch (err) {
+    return $('upload-msg').textContent = 'the upload did not go through: ' + err;
+  }
+  paintUpload(r);
+  loadTotals();
+}
+
+function paintUpload(r){
+  const exts = Object.entries(r.by_extension || {})
+    .map(([e, n]) => `${n} ${e}`).join(', ');
+  $('upload-tally').hidden = false;
+  $('upload-tally').innerHTML =
+    `<span><b>${r.accepted || 0}</b> accepted${exts ? ' — ' + esc(exts) : ''}</span>` +
+    `<span><b>${r.rejected || 0}</b> not taken</span>` +
+    (r.pulled != null ? `<span><b>${r.pulled}</b> designs made</span>` : '');
+
+  $('upload-files').hidden = false;
+  $('upload-files').innerHTML = (r.files || []).map(f => `
+    <div class="file ${f.ok ? 'good' : 'bad'}">
+      <span class="mark">${f.ok ? '✓' : '✕'}</span>
+      <span>${esc(f.name)}${f.kind === 'archive' && f.ok
+        ? ` — ${f.extracted} image${f.extracted === 1 ? '' : 's'} inside` : ''}
+        ${f.reason ? `<span class="why">${esc(f.reason)}</span>` : ''}</span>
+      <span class="size">${f.bytes ? bytes(f.bytes) : ''}</span>
+    </div>`).join('');
+
+  $('upload-msg').textContent = r.error ? r.error : '';
+}
+
+function wireDropzone(){
+  const zone = $('dropzone');
+  if (!zone) return;
+  for (const name of ['dragenter','dragover','dragleave','drop'])
+    zone.addEventListener(name, e => { e.preventDefault(); e.stopPropagation(); });
+  zone.addEventListener('dragover', () => zone.classList.add('over'));
+  zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+  zone.addEventListener('drop', e => {
+    zone.classList.remove('over');
+    sendFiles(e.dataTransfer.files);
+  });
+  $('links-text').addEventListener('input', countLinks);
+}
+
 async function loadTotals(){
   const s = await api('/api/status');
   const labels = {images:'images', designs:'designs', ready_to_publish:'cleared',
@@ -508,7 +946,7 @@ async function loadReady(){
 
 /* ── loop ─────────────────────────────────────────── */
 function refresh(){
-  if (active === 'setup')   { loadHealth(); loadConfig(); }
+  if (active === 'setup')   { loadHealth(); loadConfig(); loadConns(); }
   if (active === 'sources') { loadTotals(); }
   if (active === 'queue')   { loadDesigns(); }
   if (active === 'review')  { loadReview(); loadGaps(); }
@@ -520,6 +958,7 @@ setInterval(async () => {
   if (active === 'queue' && w.state === 'running') loadDesigns();
 }, 2500);
 
-sourceHint();
+showDoor();
+wireDropzone();
 refresh();
 </script>

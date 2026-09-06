@@ -321,3 +321,61 @@ def test_every_setting_the_code_reads_is_written_down():
 
     assert read <= named, (
         f"{sorted(read - named)} can be set but appear nowhere in .env.example")
+
+
+def test_reloading_settings_keeps_what_the_environment_does_not_set():
+    """It used to copy every field off a fresh Settings, which threw away
+    anything a caller had passed in. The panel is constructed with an explicit
+    workspace and calls reload() every time you save a setting or make a model
+    live — so saving anything moved it to ./workspace and the designs appeared
+    to vanish."""
+    import os
+    import tempfile
+    from pathlib import Path
+
+    from stockforge.config import Settings
+
+    tmp = Path(tempfile.mkdtemp())
+    for key in ("SF_ROOT", "SF_FONTS", "SF_MOTIFS"):
+        os.environ.pop(key, None)
+
+    cfg = Settings(root=tmp / "work", fonts_dir=tmp / "fonts", motifs_dir=tmp / "motifs")
+    cfg.reload()
+
+    assert cfg.root == tmp / "work", "the workspace moved on its own"
+    assert cfg.fonts_dir == tmp / "fonts"
+    assert cfg.motifs_dir == tmp / "motifs"
+
+
+def test_reloading_settings_still_picks_up_what_the_environment_does_set():
+    """The other half. Keeping explicit values must not stop a saved setting
+    from taking effect, which is the whole point of reload()."""
+    import os
+    import tempfile
+    from pathlib import Path
+
+    from stockforge.config import Settings
+
+    tmp = Path(tempfile.mkdtemp())
+    cfg = Settings(root=tmp / "work")
+    try:
+        os.environ["SF_MIX"] = "0.91"
+        os.environ["SF_ROOT"] = str(tmp / "elsewhere")
+        cfg.reload()
+        assert cfg.mix == 0.91, "a saved slider did nothing"
+        assert cfg.root == tmp / "elsewhere", "an explicit SF_ROOT was ignored"
+    finally:
+        os.environ.pop("SF_MIX", None)
+        os.environ.pop("SF_ROOT", None)
+
+
+def test_every_setting_field_knows_its_environment_variable():
+    """reload() decides what to touch by that name. A field added without one
+    is a field that silently stops following its setting."""
+    from dataclasses import fields
+
+    from stockforge.config import Settings
+
+    for f in fields(Settings):
+        assert f.metadata.get("env"), \
+            f"Settings.{f.name} has no env name, so reload() will always overwrite it"

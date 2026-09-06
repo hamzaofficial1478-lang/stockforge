@@ -16,6 +16,7 @@ import logging
 import mimetypes
 import os
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,8 +25,11 @@ from urllib.parse import parse_qs, urlparse
 from ..config import Settings, env_file, settings as default_settings
 from ..health import report as health_report
 from ..pipeline import Pipeline
+from ..constants import IMAGE_EXTS_ORDERED
 from ..sources import open_source
 from ..worker import get_worker
+from . import models as models_store
+from . import uploads
 
 log = logging.getLogger("stockforge.ui")
 
@@ -100,15 +104,26 @@ class Handler(BaseHTTPRequestHandler):
         log.debug("%s - %s", self.address_string(), fmt % args)
 
     def _send(self, code: int, body: bytes, ctype: str = "application/json") -> None:
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # The browser went away mid-answer — a closed tab, a reload, a
+            # page left while the health check was still running. Ordinary, and
+            # it printed a stack trace into the terminal the user is watching
+            # every time it happened.
+            log.debug("client closed the connection before the reply was sent")
 
     def _json(self, data, code: int = 200) -> None:
         self._send(code, json.dumps(data, default=str).encode())
+
+    def _raw(self) -> bytes:
+        length = int(self.headers.get("Content-Length") or 0)
+        return self.rfile.read(length) if length else b""
 
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -188,6 +203,11 @@ class Handler(BaseHTTPRequestHandler):
                 })
             return self._json(out)
 
+        if route == "/api/models":
+            saved = models_store.load(self.cfg.root)
+            return self._json({"models": [c.public() for c in saved],
+                               "extensions": IMAGE_EXTS_ORDERED})
+
         if route == "/file":
             return self._serve_file((query.get("path") or [""])[0])
 
@@ -209,10 +229,51 @@ class Handler(BaseHTTPRequestHandler):
         ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         self._send(200, path.read_bytes(), ctype)
 
+    def _receive_upload(self) -> None:
+        """Files dropped on the panel. Saved into the workspace, then pulled.
+
+        The folder door assumed you could type the path of a folder that
+        already existed. With a shop's exports sitting in a download folder, or
+        still zipped, that is the wrong assumption — and the panel offered no
+        way to put them anywhere, so from a browser the door could not be used
+        at all.
+        """
+        ctype = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in ctype:
+            return self._json({"error": "expected a file upload"}, 400)
+        try:
+            parts = uploads.parse_multipart(self._raw(), ctype)
+        except Exception as exc:
+            return self._json({"error": f"could not read the upload: {exc}"}, 400)
+        if not parts:
+            return self._json({"error": "no files were sent"}, 400)
+
+        into = self.cfg.root / "uploads" / time.strftime("%Y%m%d-%H%M%S")
+        batch = uploads.receive(parts, into)
+        result = batch.as_dict()
+
+        if not batch.images:
+            result["pulled"] = 0
+            result["error"] = "nothing in that was an image this can read"
+            return self._json(result, 400)
+
+        try:
+            source = open_source("folder", str(into))
+            result["pulled"] = Pipeline(self.cfg).pull(source)
+        except Exception as exc:
+            result["pulled"] = 0
+            result["error"] = str(exc)
+        return self._json(result)
+
     # -- POST -------------------------------------------------------------
 
     def do_POST(self) -> None:
         route = urlparse(self.path).path
+
+        # Read before _body(), which would try to parse a file upload as JSON.
+        if route == "/api/upload":
+            return self._receive_upload()
+
         body = self._body()
 
         if route == "/api/config":
@@ -240,6 +301,70 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 return self._json({"error": str(exc)}, 400)
             return self._json({"pulled": pulled})
+
+        if route == "/api/update":
+            # The last thing the launcher menu could do that the panel could
+            # not, which meant closing the browser and going back to a terminal
+            # for it. Restarting is still yours to do: a server cannot
+            # reasonably replace the code it is running from underneath itself.
+            import subprocess
+
+            here = Path(__file__).resolve().parent.parent.parent
+            try:
+                before = subprocess.run(["git", "-C", str(here), "rev-parse", "HEAD"],
+                                        capture_output=True, text=True, timeout=30)
+                done = subprocess.run(["git", "-C", str(here), "pull", "--ff-only"],
+                                      capture_output=True, text=True, timeout=180)
+                after = subprocess.run(["git", "-C", str(here), "rev-parse", "HEAD"],
+                                       capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.SubprocessError) as exc:
+                return self._json({"error": f"could not run git: {exc}"}, 400)
+
+            if done.returncode != 0:
+                detail = (done.stderr or done.stdout).strip().splitlines()
+                return self._json({"error": detail[-1] if detail else "git pull failed"}, 400)
+
+            was, now = before.stdout.strip(), after.stdout.strip()
+            return self._json({
+                "changed": was != now,
+                "from": was[:8], "to": now[:8],
+                "message": ("already up to date" if was == now else
+                            f"updated {was[:8]} to {now[:8]} — close this window and "
+                            f"run the program again to use it")})
+
+        if route == "/api/models/fetch":
+            return self._json(models_store.fetch(
+                str(body.get("base_url") or ""), str(body.get("api_key") or "")))
+
+        if route == "/api/models/test":
+            saved = {c.id: c for c in models_store.load(self.cfg.root)}
+            known = saved.get(str(body.get("id") or ""))
+            # An edit form never holds the real key — it was never sent one —
+            # so fall back to the stored key for the connection being tested.
+            key = str(body.get("api_key") or "") or (known.api_key if known else "")
+            return self._json(models_store.test(
+                str(body.get("base_url") or ""), str(body.get("model") or ""), key))
+
+        if route == "/api/models/save":
+            saved = models_store.upsert(self.cfg.root, body)
+            return self._json({"model": saved.public()})
+
+        if route == "/api/models/delete":
+            ok = models_store.remove(self.cfg.root, str(body.get("id") or ""))
+            return self._json({"deleted": ok}, 200 if ok else 404)
+
+        if route == "/api/models/activate":
+            chosen = models_store.activate(self.cfg.root, str(body.get("id") or ""))
+            if chosen is None:
+                return self._json({"error": "no such connection"}, 404)
+            updates = {k: v for k, v in models_store.env_for(chosen).items() if v}
+            write_env(env_file(), updates)
+            # The panel is meant to take effect now, not on the next start, and
+            # the provider registry watches these — so the running pipeline
+            # follows the connection you just made live.
+            os.environ.update(updates)
+            self.cfg.reload()
+            return self._json({"active": chosen.public(), "applied": sorted(updates)})
 
         if route == "/api/count":
             kind, target = body.get("kind"), body.get("target")

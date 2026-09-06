@@ -18,7 +18,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from ..constants import IMAGE_EXTS  # noqa: F401  (re-exported)
+from ..constants import IMAGE_EXTS, VECTOR_EXTS  # noqa: F401  (re-exported)
 
 
 @dataclass
@@ -118,8 +118,29 @@ def _neutralise(img: np.ndarray) -> np.ndarray:
     return np.clip(result, 0, 255).astype(np.uint8)
 
 
+def _read_any(src: Path) -> "cv2.typing.MatLike | None":
+    """Open an image file, rasterising vector ones on the way.
+
+    cv2 has no idea what an SVG is and returns None for one, which read as
+    "unreadable" and lost the file. A shop's own exports are frequently vector,
+    so they are drawn at a size worth analysing rather than refused.
+    """
+    if src.suffix.lower() in VECTOR_EXTS:
+        import tempfile
+
+        import cairosvg
+        with tempfile.TemporaryDirectory() as tmp:
+            png = Path(tmp) / "vector.png"
+            try:
+                cairosvg.svg2png(url=str(src), write_to=str(png), output_width=1600)
+            except Exception as exc:
+                raise ValueError(f"could not draw {src.name}: {exc}") from exc
+            return cv2.imread(str(png), cv2.IMREAD_COLOR)
+    return cv2.imread(str(src), cv2.IMREAD_COLOR)
+
+
 def flatten_image(src: Path, out_dir: Path, max_edge: int = 2000) -> Flattened:
-    img = cv2.imread(str(src), cv2.IMREAD_COLOR)
+    img = _read_any(src)
     if img is None:
         raise ValueError(f"unreadable image: {src}")
 
