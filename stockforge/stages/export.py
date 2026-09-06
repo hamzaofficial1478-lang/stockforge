@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -36,6 +36,11 @@ class Exported:
     outlined_svg: Path | None = None
     stock_eps: Path | None = None       # outlined — theirs
     preview_jpg: Path | None = None
+    # Why a format is missing. An export that quietly produced nothing used to
+    # be indistinguishable from one that worked: the caller read the preview,
+    # saw a file, and marked the design ready to publish. Without Inkscape that
+    # meant a whole catalogue reported as ready with nothing but JPEGs on disk.
+    failures: list[str] = field(default_factory=list)
 
 
 def _inkscape() -> str | None:
@@ -120,15 +125,16 @@ def export_all(svg: Path, out_dir: Path, stem: str, preview_px: int = 1400) -> E
     # yours: live text, layered
     try:
         result.master_pdf = svg_to_pdf(svg, out_dir / f"{stem}-master.pdf", outline_text=False)
-    except ExportError:
+    except ExportError as exc:
         result.master_pdf = None
+        result.failures.append(f"no editable master: {exc}")
 
     # theirs: outlined
     try:
         result.outlined_svg = svg_outline_text(svg, out_dir / f"{stem}-outlined.svg")
         result.stock_eps = svg_to_eps(svg, out_dir / f"{stem}.eps")
-    except ExportError:
-        pass
+    except ExportError as exc:
+        result.failures.append(f"no stock EPS: {exc}")
 
     png = svg_to_png(svg, out_dir / f"{stem}-preview.png", width=preview_px)
     result.preview_jpg = png_to_jpg(png, out_dir / f"{stem}-preview.jpg")

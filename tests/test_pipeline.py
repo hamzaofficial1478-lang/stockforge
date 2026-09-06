@@ -432,3 +432,83 @@ def test_the_run_loop_reports_what_it_did(workspace, tmp_path):
     tally = pipe.run()
     assert sum(tally.values()) == 1
     assert "failed" not in tally, tally
+
+
+# --- an export that produced nothing must not report success --------------
+
+def _no_inkscape(monkeypatch):
+    """Exactly what a Windows machine without Inkscape looks like."""
+    import stockforge.stages.export as export_stage
+    monkeypatch.setattr(export_stage.shutil, "which",
+                        lambda name: None if name == "inkscape" else "/usr/bin/" + name)
+
+
+def test_a_design_with_no_master_is_failed_not_ready(workspace, tmp_path, monkeypatch):
+    """The preview is drawn by cairo and appears whatever happens, so reading
+    only the preview made a total export failure look like a finished design:
+    ready, counted in ready_to_publish, and nothing on disk to publish."""
+    provider = ScriptedProvider()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+    _listing(tmp_path / "exports", "wedding-invite")
+    pipe = Pipeline(workspace)
+    pipe.pull(open_source("folder", str(tmp_path / "exports")))
+    design_id = pipe.store.designs()[0]["id"]
+
+    _no_inkscape(monkeypatch)
+    state = pipe.build(design_id)
+
+    assert state == "failed", f"a design with no deliverable reported {state!r}"
+    assert pipe.status()["ready_to_publish"] == 0
+    assert pipe.status()["failed"] == 1
+
+    out = workspace.root / "out" / design_id[:16]
+    assert not list(out.glob("*.pdf")), "no master was written, so none may be claimed"
+    assert not list(out.glob("*.eps"))
+
+
+def test_the_failure_says_which_format_and_why(workspace, tmp_path, monkeypatch):
+    """'failed' with no reason sends you hunting. The review row has to name
+    the missing tool, because installing it is the whole fix."""
+    provider = ScriptedProvider()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+    _listing(tmp_path / "exports", "wedding-invite")
+    pipe = Pipeline(workspace)
+    pipe.pull(open_source("folder", str(tmp_path / "exports")))
+    design_id = pipe.store.designs()[0]["id"]
+
+    _no_inkscape(monkeypatch)
+    pipe.build(design_id)
+
+    reason = pipe.store.conn.execute(
+        "SELECT reason FROM review WHERE design_id=?", (design_id,)).fetchone()["reason"]
+    assert "master" in reason.lower(), reason
+    assert "inkscape" in reason.lower(), reason
+
+
+def test_no_eps_is_a_master_only_design_not_a_stock_one(workspace, tmp_path, monkeypatch):
+    """A master exported but no EPS is deliverable to you and not to an agency.
+    publish gathers what to send by globbing for .eps, so calling it ready
+    would send an empty batch."""
+    import stockforge.stages.export as export_stage
+    provider = ScriptedProvider()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+    _listing(tmp_path / "exports", "wedding-invite")
+    pipe = Pipeline(workspace)
+    pipe.pull(open_source("folder", str(tmp_path / "exports")))
+    design_id = pipe.store.designs()[0]["id"]
+
+    def _no_eps(svg, eps):
+        raise export_stage.ExportError("Inkscape is required for EPS export.")
+
+    monkeypatch.setattr(export_stage, "svg_to_eps", _no_eps)
+    state = pipe.build(design_id)
+
+    assert state == "master_only", state
+    out = workspace.root / "out" / design_id[:16]
+    assert list(out.glob("*-master.pdf")), "the master did export and should be kept"
+    assert not list(out.glob("*.eps"))
+    rows, files = pipe.deliverable()
+    assert files == [], "nothing to send, and publish must not claim otherwise"

@@ -261,6 +261,11 @@ class Pipeline:
         cramped: list[str] = []
         unrendered: list[str] = []
         twins: list[duplicates_stage.Twin] = []
+        # A format that did not come out. Not a judgement call for the review
+        # queue — the tool that writes it is missing — so it fails the design
+        # rather than asking a human to look at a file that is not there.
+        undeliverable: list[str] = []
+        not_for_stock: list[str] = []
 
         for i, page in enumerate(derived.pages):
             # The delivered file carries the bleed; the previews above did not,
@@ -289,6 +294,15 @@ class Pipeline:
             # Nothing has compared design four hundred to design twelve, and a
             # batch flagged as a near-duplicate on submission is rejected as a
             # batch.
+            # The preview is drawn by cairo and turns up whatever happens, so
+            # reading only the preview made a failed export look like a good
+            # one. Check the files the design actually exists to produce.
+            why = "; ".join(exported.failures) or "no reason given"
+            if exported.master_pdf is None:
+                undeliverable.append(f"'{page.name}': {why}")
+            elif exported.stock_eps is None:
+                not_for_stock.append(f"'{page.name}': {why}")
+
             twin = self._check_for_a_twin(design_id, page.name, exported.preview_jpg)
             if twin:
                 twins.append(twin)
@@ -301,6 +315,17 @@ class Pipeline:
 
         self.store.save_spec(design_id, derived.model_dump(mode="json"),
                              round_=1, distinct=distinct, verdict="built")
+
+        # Nothing to hand over means the run did not succeed, whatever the
+        # rest of it says. Left as "ready" this counted towards
+        # ready_to_publish and published nothing, because publish looks for
+        # files on disk and there were none.
+        if undeliverable:
+            why = "export produced no file — " + "; ".join(undeliverable[:3])
+            self.store.queue_review(design_id, why, distinct)
+            self.store.set_design_state(design_id, "failed")
+            log.error("[%s] %s", design_id[:8], why)
+            return "failed"
 
         reasons: list[str] = []
         if holes:
@@ -316,7 +341,12 @@ class Pipeline:
             self.store.set_design_state(design_id, "review")
             return "review"
 
+        # No EPS is no stock submission: the agencies take EPS, and publish
+        # gathers what to send by globbing for one.
         state = "ready" if (derived.publishable or self.cfg.publish_all) else "master_only"
+        if not_for_stock and state == "ready":
+            state = "master_only"
+            log.warning("[%s] master only — %s", design_id[:8], "; ".join(not_for_stock[:2]))
         self.store.set_design_state(design_id, state)
         if state == "master_only":
             log.info("[%s] editable master only — %s", design_id[:8], derived.provenance.reason)
