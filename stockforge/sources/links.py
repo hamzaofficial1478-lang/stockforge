@@ -2,6 +2,11 @@
 
 Takes a file with one URL per line, or a comma-separated string. Each listing's
 images are downloaded into the cache and grouped as one design.
+
+A link straight to an image file works anywhere. A link to a listing *page* is
+read by the shop scraper, whose image pattern matches Etsy's CDN and nothing
+else — so a listing page on another site comes back with no images and is
+skipped rather than half-read. Worth knowing before pasting in a mixed list.
 """
 
 from __future__ import annotations

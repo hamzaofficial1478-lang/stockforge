@@ -95,26 +95,56 @@ def build(spec: DesignSpec, filename: str, preview: Path | None = None,
 # the CSVs
 # --------------------------------------------------------------------------
 
-def adobe_csv(rows: list[Metadata], path: Path) -> Path:
+# The column headings each site's bulk upload expects. Pinned here, in one
+# place, with the date they were last checked against the contributor
+# documentation — because they were hardcoded in two functions with nothing
+# recording where they came from or when, and a heading a site has since
+# renamed is rejected on upload with no clue which of the two is wrong.
+#
+# Check them before a large batch. Neither site announces a change and both
+# have made them.
+COLUMNS_CHECKED = "2024-09"
+
+ADOBE_COLUMNS = ["Filename", "Title", "Keywords", "Category", "Releases"]
+SHUTTERSTOCK_COLUMNS = ["Filename", "Description", "Keywords", "Categories",
+                        "Editorial", "Mature content", "Illustration"]
+
+# Adobe takes 49 keywords and Shutterstock 50; both order them by importance
+# and weight the first ten most, so the cap truncates rather than samples.
+MAX_KEYWORDS = 49
+
+
+def _row_for_adobe(m: "Metadata") -> list[str]:
+    return [m.filename, m.title, ", ".join(m.keywords[:MAX_KEYWORDS]),
+            m.category, ""]
+
+
+def _row_for_shutterstock(m: "Metadata") -> list[str]:
+    return [m.filename, m.description, ", ".join(m.keywords[:MAX_KEYWORDS]),
+            m.category, "no", "no", "yes"]
+
+
+def _write(path: Path, header: list[str], rows: list["Metadata"], row_for) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["Filename", "Title", "Keywords", "Category", "Releases"])
+        w.writerow(header)
         for m in rows:
-            w.writerow([m.filename, m.title, ", ".join(m.keywords), m.category, ""])
+            line = row_for(m)
+            # A row that does not line up with its heading puts every value in
+            # the wrong column, which uploads and is worse than failing.
+            assert len(line) == len(header), (
+                f"{len(line)} values against {len(header)} columns")
+            w.writerow(line)
     return path
+
+
+def adobe_csv(rows: list[Metadata], path: Path) -> Path:
+    return _write(path, ADOBE_COLUMNS, rows, _row_for_adobe)
 
 
 def shutterstock_csv(rows: list[Metadata], path: Path) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh)
-        w.writerow(["Filename", "Description", "Keywords", "Categories",
-                    "Editorial", "Mature content", "Illustration"])
-        for m in rows:
-            w.writerow([m.filename, m.description, ", ".join(m.keywords),
-                        m.category, "no", "no", "yes"])
-    return path
+    return _write(path, SHUTTERSTOCK_COLUMNS, rows, _row_for_shutterstock)
 
 
 def write_metadata(rows: list[Metadata], out_dir: Path) -> dict[str, Path]:

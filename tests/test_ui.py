@@ -308,3 +308,132 @@ def test_pausing_holds_it_and_resuming_lets_it_go(loaded):
     worker.resume()
     assert _wait(lambda: not worker.alive)
     assert worker.progress.done == 2
+
+
+# --- the doors the panel opens --------------------------------------------
+
+def post_raw(base, path, body):
+    """Like post(), but hands back the error responses too rather than raising,
+    because refusing badly-formed input correctly is the thing under test."""
+    from urllib.error import HTTPError
+    req = Request(base + path, data=json.dumps(body).encode(),
+                  headers={"Content-Type": "application/json"})
+    try:
+        with urlopen(req, timeout=30) as r:
+            return r.status, json.loads(r.read())
+    except HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
+def test_pulling_a_folder_through_the_panel_brings_designs_in(panel, tmp_path):
+    """The panel and the command line had drifted apart once before over
+    exactly this kind of thing, and this door had no test at all."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_pipeline import _listing
+
+    base, cfg = panel
+    _listing(tmp_path / "exports", "wedding-invite")
+
+    status, body = post_raw(base, "/api/pull",
+                            {"kind": "folder", "target": str(tmp_path / "exports")})
+    assert status == 200, body
+    assert body["pulled"] == 1
+
+    status, body, _ = get(base, "/api/status")
+    assert json.loads(body)["designs"] == 1
+
+
+def test_pulling_without_a_target_is_refused_rather_than_crashing(panel):
+    base, _ = panel
+    for payload in ({}, {"kind": "folder"}, {"kind": "nonsense", "target": "/tmp"},
+                    {"target": "/tmp"}):
+        status, body = post_raw(base, "/api/pull", payload)
+        assert status == 400, f"{payload} was accepted"
+        assert "error" in body
+        # Falling through to the exception handler also gives a 400, so the
+        # status alone does not show the request was checked. What separates
+        # them is whether the answer tells you what to fix or hands you the
+        # text of whatever blew up further in.
+        assert "required" in body["error"], (
+            f"{payload} was answered with {body['error']!r} rather than a "
+            f"reason you could act on")
+
+
+def test_pulling_a_folder_that_is_not_there_says_so(panel, tmp_path):
+    """A stack trace in the browser console is not an answer."""
+    base, _ = panel
+    status, body = post_raw(base, "/api/pull",
+                            {"kind": "folder", "target": str(tmp_path / "nope")})
+    assert status in (200, 400)
+    if status == 200:
+        assert body["pulled"] == 0
+    else:
+        assert "error" in body
+
+
+def test_counting_a_folder_answers_without_pulling_it(panel, tmp_path):
+    """The question you ask first: how big is this job."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_pipeline import _listing
+
+    base, cfg = panel
+    _listing(tmp_path / "exports", "one")
+    _listing(tmp_path / "exports", "two")
+
+    status, body = post_raw(base, "/api/count",
+                            {"kind": "folder", "target": str(tmp_path / "exports")})
+    assert status == 200, body
+    assert body["count"] == 2
+
+    status, after, _ = get(base, "/api/status")
+    assert json.loads(after)["designs"] == 0, "counting pulled them in"
+
+
+def test_counting_a_bad_source_is_an_error_not_a_crash(panel):
+    base, _ = panel
+    status, body = post_raw(base, "/api/count", {"kind": "wat", "target": "x"})
+    assert status == 400
+    assert "error" in body
+
+
+def test_publishing_with_nothing_ready_refuses_and_says_why(panel):
+    """It used to be possible to send an empty batch. The answer has to name
+    the reason, because "nothing happened" is indistinguishable from a bug."""
+    base, _ = panel
+    status, body = post_raw(base, "/api/publish", {"dry_run": True})
+    assert status == 400
+    assert "nothing" in body["error"].lower()
+
+
+def test_a_dry_run_writes_the_csvs_and_sends_nothing(panel, tmp_path, monkeypatch):
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_pipeline import ScriptedProvider, _listing
+
+    from stockforge import providers
+    from stockforge.pipeline import Pipeline
+    from stockforge.sources import open_source
+
+    base, cfg = panel
+    provider = ScriptedProvider()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+    _listing(tmp_path / "exports", "wedding-invite")
+    pipe = Pipeline(cfg)
+    pipe.pull(open_source("folder", str(tmp_path / "exports")))
+    pipe.build(pipe.store.designs()[0]["id"])
+
+    sent = []
+    import stockforge.publish as publish_stage
+    monkeypatch.setattr(publish_stage, "upload_batch",
+                        lambda *a, **k: sent.append(a) or {})
+
+    status, body = post_raw(base, "/api/publish", {"dry_run": True})
+    assert status == 200, body
+    assert body["uploaded"] is False
+    assert body["files"] >= 1
+    assert sent == [], "a dry run uploaded something"
+    for path in body["metadata"].values():
+        assert Path(path).is_file()

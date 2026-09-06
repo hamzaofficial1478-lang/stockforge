@@ -76,6 +76,13 @@ to know they were missing.
 
 `stockforge count shop your-shop-name` answers it without pulling anything.
 
+The links door takes a file of URLs, one per line, or a comma-separated string;
+anything in it that isn't a URL is ignored, because half of what comes out of a
+spreadsheet isn't one. A link straight to an image works anywhere. A link to a
+listing *page* is read by the same scraper the shop door uses, and that only
+knows Etsy's CDN — a listing page on another site comes back with no images and
+is skipped rather than half-read.
+
 ### One listing is one design
 
 A listing carries four to six images of the same product: one or two flat

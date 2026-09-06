@@ -298,3 +298,26 @@ def test_unlicensed_fonts_are_never_matched():
     unchecked = FontEntry(path="x.ttf", family="X", style="R",
                           category="serif", embeddable=False)
     assert match(FontClass(category="serif", weight=400), [unchecked]) == (None, 0.0)
+
+
+def test_every_setting_the_code_reads_is_written_down():
+    """A setting readable by the code and documented nowhere is the same as a
+    setting that does not exist: nobody can find it, and the Setup screen is
+    built from the same list. Four were in that state."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    env = (root / ".env.example").read_text()
+    named = set(re.findall(r"^#?\s*(SF_\w+)=", env, re.M))
+
+    read: set[str] = set()
+    for py in (root / "stockforge").rglob("*.py"):
+        read |= set(re.findall(r'"(SF_[A-Z_]+)"', py.read_text()))
+
+    # These two are prefixes handed to from_env(), not variables in their own
+    # right; the settings they build are documented under their full names.
+    read -= {"SF_VISION", "SF_REASON", "SF_FTP_"}
+
+    assert read <= named, (
+        f"{sorted(read - named)} can be set but appear nowhere in .env.example")

@@ -170,3 +170,90 @@ def test_both_csvs_are_written_side_by_side(tmp_path):
     paths = write_metadata([_meta("one.eps")], tmp_path)
     assert set(paths) == {"adobe", "shutterstock"}
     assert all(p.is_file() for p in paths.values())
+
+
+# --- the CSVs the agencies actually ingest --------------------------------
+
+def _row(**kw):
+    from stockforge.publish.metadata import Metadata
+    base = dict(filename="a.eps", title="A botanical wedding invitation template",
+                description="A botanical wedding invitation template",
+                keywords=["wedding", "botanical"], category="Graphic Resources")
+    return Metadata(**{**base, **kw})
+
+
+def test_every_row_lines_up_with_its_heading(tmp_path):
+    """A row that does not line up puts every value in the wrong column, which
+    uploads cleanly and is worse than failing."""
+    import csv
+
+    from stockforge.publish.metadata import write_metadata
+
+    written = write_metadata([_row(), _row(filename="b.eps")], tmp_path)
+    for name, path in written.items():
+        rows = list(csv.reader(path.open()))
+        header = rows[0]
+        assert len(rows) == 3, f"{name}: {len(rows) - 1} rows for two designs"
+        for row in rows[1:]:
+            assert len(row) == len(header), (
+                f"{name}: {len(row)} values against {len(header)} columns")
+
+
+def test_the_filename_is_the_first_column_of_both(tmp_path):
+    """It is what ties a row to the file beside it. Every other column can be
+    edited on the site; this one has to match on upload."""
+    import csv
+
+    from stockforge.publish.metadata import write_metadata
+
+    for path in write_metadata([_row(filename="design-01.eps")], tmp_path).values():
+        rows = list(csv.reader(path.open()))
+        assert rows[0][0] == "Filename"
+        assert rows[1][0] == "design-01.eps"
+
+
+def test_keywords_are_capped_rather_than_sent_and_rejected(tmp_path):
+    """Adobe takes 49 and Shutterstock 50. Both order by importance and weight
+    the first ten most, so truncating keeps the ones that matter."""
+    import csv
+
+    from stockforge.publish.metadata import MAX_KEYWORDS, write_metadata
+
+    many = _row(keywords=[f"word{i}" for i in range(120)])
+    for name, path in write_metadata([many], tmp_path).items():
+        row = list(csv.reader(path.open()))[1]
+        keywords = [k for k in row[2].split(",") if k.strip()]
+        assert len(keywords) == MAX_KEYWORDS, f"{name} sent {len(keywords)}"
+        assert keywords[0].strip() == "word0", "it dropped the most important ones"
+
+
+def test_the_column_layouts_are_pinned_and_dated(tmp_path):
+    """They were hardcoded inside two functions with nothing recording where
+    they came from or when. Neither site announces a change and both have made
+    them, so a heading one has since renamed is rejected on upload with no
+    clue which of the two is wrong."""
+    import csv
+
+    from stockforge.publish.metadata import (
+        ADOBE_COLUMNS, COLUMNS_CHECKED, SHUTTERSTOCK_COLUMNS, write_metadata)
+
+    assert COLUMNS_CHECKED, "no record of when these were last checked"
+
+    written = write_metadata([_row()], tmp_path)
+    assert list(csv.reader(written["adobe"].open()))[0] == ADOBE_COLUMNS
+    assert list(csv.reader(written["shutterstock"].open()))[0] == SHUTTERSTOCK_COLUMNS
+
+
+def test_a_comma_in_a_title_does_not_break_the_row(tmp_path):
+    """csv handles the quoting; this is here because getting it wrong silently
+    shifts every later column."""
+    import csv
+
+    from stockforge.publish.metadata import write_metadata
+
+    tricky = _row(title='Wedding, botanical — "greenery" set',
+                   description='Wedding, botanical — "greenery" set')
+    for path in write_metadata([tricky], tmp_path).values():
+        rows = list(csv.reader(path.open()))
+        assert len(rows[1]) == len(rows[0])
+        assert any("greenery" in cell for cell in rows[1])
