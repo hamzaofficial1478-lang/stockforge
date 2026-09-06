@@ -340,12 +340,16 @@ in a 3:1 box stays a eucalyptus instead of arriving three times too wide.
 <svg viewBox="0 0 100 100" data-kind="divider" data-stretch="true">
 ```
 
-Frames are the awkward case, and worth knowing about before you draw one. A
-frame has to fill its box, so it's marked stretchable, and its border is
-geometry rather than a stroke — which means in a box far from square one pair
-of bars comes out heavier than the other. At a normal poster frame that's
-about half again; at a 5:1 band it's unmistakable. Draw borders you intend to
-stretch a long way as bands rather than frames.
+Frames are the case not to use it on. A motif's border thickness is baked into
+the 100-unit square it's drawn on, so stretching one makes the side bars a
+different weight from the top and bottom — five times apart in a 5:1 box. The
+shipped frames aren't stretchable for that reason: they keep their shape and
+centre.
+
+A frame that has to *fill* a box is a shape, not a motif. `ShapeElement` draws
+`rect` and `arch` from the box's own dimensions with a real `stroke_ratio`, so
+the border is even at any aspect, and the structure prompt already tells the
+analyser that frames, rules, panels and borders are geometry.
 
 ```bash
 stockforge motifs list

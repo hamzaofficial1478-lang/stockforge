@@ -153,10 +153,16 @@ def _shape(spec: DesignSpec, el: ShapeElement, w: float, h: float) -> str:
         return (f'<line x1="{x:.2f}" y1="{y + bh / 2:.2f}" x2="{x + bw:.2f}" y2="{y + bh / 2:.2f}" '
                 f'stroke="{stroke}" stroke-width="{sw:.2f}" stroke-linecap="round"{rot}/>')
     if el.primitive == "arch":
-        # the ubiquitous arched panel — a rect with a semicircular top
-        r = bw / 2
-        return (f'<path d="M {x:.2f} {y + bh:.2f} L {x:.2f} {y + r:.2f} '
-                f'A {r:.2f} {r:.2f} 0 0 1 {x + bw:.2f} {y + r:.2f} '
+        # The ubiquitous arched panel — a rect with an arched top. The rise was
+        # half the width regardless of the box, so any box wider than it is
+        # tall got an arc taller than the space it was given: the sides ran
+        # downwards and the curve escaped off the top of the box entirely. The
+        # rise is capped at the height now, which makes a wide arch elliptical
+        # rather than out of bounds, and a tall one is unchanged.
+        rx = bw / 2
+        ry = min(bw / 2, bh)
+        return (f'<path d="M {x:.2f} {y + bh:.2f} L {x:.2f} {y + ry:.2f} '
+                f'A {rx:.2f} {ry:.2f} 0 0 1 {x + bw:.2f} {y + ry:.2f} '
                 f'L {x + bw:.2f} {y + bh:.2f} Z" {common}{rot}/>')
     if el.primitive == "polygon":
         n = el.sides or 6

@@ -199,3 +199,109 @@ def test_a_drawing_that_keeps_its_shape_is_centred_in_the_space(assets, tmp_path
     trim_w = 127 / (25.4 / 96.0)
     # it sits further right than the box's own edge, because it was centred
     assert float(placed.group(1)) > box.x * trim_w
+
+
+# --- borders that stay the same thickness all the way round ---------------
+
+SHIPPED = Path(__file__).resolve().parent.parent / "assets" / "motifs"
+
+
+def _with_shipped(library_id: str, box: Box):
+    from stockforge.schema import MotifElement, MotifKind
+    spec = _spec()
+    # Only the element under test: these measure where ink lands, and the rest
+    # of a design's type would be measured along with it.
+    spec.pages[0].elements = [MotifElement(
+        motif=MotifKind.FRAME, description="a frame",
+        library_id=library_id, box=box)]
+    return spec
+
+
+def _with_shape(shape):
+    spec = _spec()
+    spec.pages[0].elements = [shape]
+    return spec
+
+
+def _ink_box(svg_text, tmp_path, name, width=700):
+    """Where the drawn ink actually lands, in pixels."""
+    import cv2
+    import numpy as np
+
+    from stockforge.stages.export import svg_to_png
+    src = tmp_path / f"{name}.svg"
+    src.write_text(svg_text)
+    png = svg_to_png(src, tmp_path / f"{name}.png", width=width)
+    img = cv2.imread(str(png), cv2.IMREAD_GRAYSCALE)
+    ink = img < 200
+    ys, xs = np.where(ink)
+    return img, ink, (xs.min(), ys.min(), xs.max(), ys.max())
+
+
+def test_a_frame_motif_keeps_an_even_border_in_a_wide_box(tmp_path, fonts_dir):
+    """Border thickness is baked into the 100-unit square a motif is drawn on,
+    so scaling each axis to the box independently made the side bars a
+    different weight from the top and bottom — five times heavier in a 5:1 box.
+    """
+    import numpy as np
+
+    svg = render(_with_shipped("frame-thin-01", Box(x=0.05, y=0.40, w=0.90, h=0.18)),
+                 fonts_dir, SHIPPED).svg
+    img, ink, (x0, y0, x1, y1) = _ink_box(svg, tmp_path, "frame")
+
+    mid_row = ink[(y0 + y1) // 2]
+    mid_col = ink[:, (x0 + x1) // 2]
+    side_bar = int(np.sum(mid_row[: (x0 + x1) // 2]))
+    top_bar = int(np.sum(mid_col[: (y0 + y1) // 2]))
+
+    assert side_bar > 0 and top_bar > 0, "nothing was drawn"
+    ratio = max(side_bar, top_bar) / min(side_bar, top_bar)
+    assert ratio < 1.5, (f"side bar {side_bar}px, top bar {top_bar}px "
+                         f"— {ratio:.1f} times apart")
+
+
+def test_a_frame_motif_is_not_distorted_by_its_box(tmp_path, fonts_dir):
+    """It keeps its shape and is centred, rather than being pulled to fit."""
+    svg = render(_with_shipped("frame-thin-01", Box(x=0.05, y=0.40, w=0.90, h=0.18)),
+                 fonts_dir, SHIPPED).svg
+    _img, _ink, (x0, y0, x1, y1) = _ink_box(svg, tmp_path, "square")
+    w, h = x1 - x0, y1 - y0
+    assert abs(w - h) / max(w, h) < 0.1, f"drawn {w}x{h}, which is not square"
+
+
+# --- an arch has to fit the box it was given ------------------------------
+
+@pytest.mark.parametrize("box,label", [
+    (Box(x=0.05, y=0.60, w=0.90, h=0.15), "wide"),
+    (Box(x=0.30, y=0.20, w=0.40, h=0.60), "tall"),
+    (Box(x=0.20, y=0.30, w=0.60, h=0.30), "middling"),
+])
+def test_an_arch_stays_inside_its_box(tmp_path, fonts_dir, box, label):
+    """The rise was half the width whatever the box, so any box wider than it
+    was tall got an arc taller than the space it had: the sides ran downwards
+    and the curve escaped off the top of the page."""
+    from stockforge.schema import ShapeElement
+
+    spec = _with_shape(ShapeElement(primitive="arch", fill=None,
+                                    stroke=ColourRole.INK,
+                                    stroke_ratio=0.004, box=box))
+    svg = render(spec, fonts_dir, SHIPPED).svg
+    img, _ink, (x0, y0, x1, y1) = _ink_box(svg, tmp_path, f"arch-{label}")
+
+    px_h = img.shape[0]
+    top, bottom = box.y * px_h, (box.y + box.h) * px_h
+    assert y0 >= top - 4, f"{label}: the arch starts {top - y0:.0f}px above its box"
+    assert y1 <= bottom + 4, f"{label}: it runs {y1 - bottom:.0f}px below its box"
+
+
+def test_a_tall_arch_is_still_a_semicircle(fonts_dir):
+    """The cap must not change the shape where it already fitted."""
+    from stockforge.schema import ShapeElement
+
+    spec = _with_shape(ShapeElement(primitive="arch", fill=None,
+                                    stroke=ColourRole.INK, stroke_ratio=0.004,
+                                    box=Box(x=0.25, y=0.15, w=0.50, h=0.70)))
+    svg = render(spec, fonts_dir, SHIPPED).svg
+    d = re.search(r'<path d="([^"]+)"', svg).group(1)
+    rx, ry = re.search(r"A ([\d.]+) ([\d.]+)", d).groups()
+    assert abs(float(rx) - float(ry)) < 0.5, f"a tall arch became elliptical: {rx}x{ry}"
