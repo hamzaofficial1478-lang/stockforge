@@ -84,18 +84,25 @@ def clean_environment():
     setting on the running process so it takes effect without a restart, and
     the font stage puts our own folder on fontconfig's search path. Both are
     right, and both leak between tests without this.
+
+    The provider registry goes with them. It caches per role and set_provider
+    pins one, so a stub installed by one test would otherwise answer for every
+    test after it.
     """
     import os
 
+    from stockforge import providers
     from stockforge.config import settings
 
     before = dict(os.environ)
+    providers.reset()
     try:
         yield
     finally:
         os.environ.clear()
         os.environ.update(before)
         settings.reload()
+        providers.reset()
 
 
 @pytest.fixture
