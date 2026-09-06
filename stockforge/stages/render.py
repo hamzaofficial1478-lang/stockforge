@@ -17,8 +17,8 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from ..schema import (
-    Box, ColourRole, DesignSpec, MotifElement, Page, RasterElement, ShapeElement,
-    TextElement,
+    Box, ColourRole, DesignSpec, FontClass, MotifElement, Page, RasterElement,
+    ShapeElement, TextElement,
 )
 from .fonts import FontEntry, load_manifest, match, open_face
 from .motifs import load as load_motifs
@@ -32,7 +32,8 @@ FIT_MARGIN = 0.98
 class RenderResult:
     def __init__(self, svg: str, missing_motifs: list[str], font_scores: list[float],
                  refits: list[tuple[str, float]] | None = None,
-                 unrendered: list[str] | None = None):
+                 unrendered: list[str] | None = None,
+                 unmatched_fonts: list[str] | None = None):
         self.svg = svg
         self.missing_motifs = missing_motifs
         self.font_scores = font_scores
@@ -43,6 +44,10 @@ class RenderResult:
         # Lines that had to be set smaller than the spec asked in order to fit
         # their box, as (what it was, how much of the asked-for size survived).
         self.refits = refits or []
+        # Type the library could not answer, described the way you would go
+        # looking for it. The same kind of gap as an unmatched motif, and it
+        # grows the font library the same way.
+        self.unmatched_fonts = unmatched_fonts or []
 
     @property
     def worst_font_score(self) -> float:
@@ -232,6 +237,20 @@ def _motif(spec: DesignSpec, el: MotifElement, w: float, h: float, motifs_dir: P
     )
 
 
+def describe_font(f: FontClass) -> str:
+    """The type the design wants, in the words you would use to go looking for
+    it. Goes into the review queue, so it has to be enough to shop from."""
+    bits = [f.category]
+    if f.weight and f.weight != 400:
+        bits.append(f"weight {f.weight}")
+    if getattr(f, "contrast", None):
+        bits.append(f"{f.contrast} contrast")
+    if getattr(f, "width", None) and f.width != "normal":
+        bits.append(str(f.width))
+    bits.extend(getattr(f, "mood", None) or [])
+    return ", ".join(str(b) for b in bits if b)
+
+
 def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
           library: list[FontEntry], fonts_dir: Path) -> tuple[str, float, float]:
     """Set one text element. Returns the node, the font match score, and how
@@ -333,6 +352,7 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
     scores: list[float] = []
     refits: list[tuple[str, float]] = []
     unrenderable_extra: list[str] = []
+    unmatched_fonts: list[str] = []
 
     parts.append('<g id="artwork">')
     for el in page.elements:
@@ -366,13 +386,20 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
             node, s, refit = _text(spec, el, w, h, library, fonts_dir)
             parts.append(node)
             scores.append(s)
+            # Nothing matched, so the family written into the SVG is the
+            # generic "serif" and whatever the machine happens to have gets
+            # drawn. font_scores recorded that and nothing ever read it, so a
+            # design set in a system fallback shipped as a finished one.
+            if s <= 0.0:
+                unmatched_fonts.append(describe_font(el.font))
             if refit < 1.0:
                 first = (el.content.splitlines() or [""])[0]
                 refits.append((f"{el.role.value} {first[:40]!r}", refit))
     parts.append("</g></svg>")
 
     gaps = ([unrenderable] if unrenderable else []) + unrenderable_extra
-    return RenderResult("\n".join(parts), missing, scores, refits, gaps)
+    return RenderResult("\n".join(parts), missing, scores, refits, gaps,
+                        unmatched_fonts)
 
 
 def _raster(el: RasterElement, page: Page, w: float, h: float) -> tuple[str, str | None]:

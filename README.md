@@ -271,7 +271,15 @@ stockforge fonts scan
 ```
 
 Open `assets/fonts/manifest.json` and set `embeddable: true` where you've
-checked. Nothing is used until you do. Google Fonts and anything under the SIL
+checked. Nothing is used until you do.
+
+No fonts ship with this, and until you add some nothing can be set: the family
+written into the SVG falls back to a generic `serif` and whatever the machine
+happens to have gets drawn. That is not silent — a design whose type the
+library cannot answer goes to Review saying what it wanted, in the words you'd
+use to go looking for it ("serif, weight 700, high contrast, elegant"). The
+font library grows the same way the motif library does, off the back of the
+queue. Google Fonts and anything under the SIL
 OFL are the easy wins — publicly available, and since text is outlined on
 export, no font file ever travels inside a delivered file.
 

@@ -258,6 +258,7 @@ class Pipeline:
         # --- ship it ---------------------------------------------------
         out_dir = self.cfg.root / "out" / design_id[:16]
         holes: list[str] = []
+        typeless: list[str] = []
         cramped: list[str] = []
         unrendered: list[str] = []
         twins: list[duplicates_stage.Twin] = []
@@ -275,6 +276,10 @@ class Pipeline:
                             page_index=i, bleed_mm=page.canvas.bleed_mm)
             svg = write_svg(result, self.cfg.root / "renders" / f"{design_id[:16]}-{page.name}.svg")
             holes.extend(result.missing_motifs)
+            # Type nothing in the library could answer. The SVG carries the
+            # generic "serif" for it, so whatever the machine happens to have
+            # gets drawn — which is not a design anyone chose.
+            typeless.extend(result.unmatched_fonts)
             unrendered.extend(f"'{page.name}': {u}" for u in result.unrendered)
             for label, scale in result.refits:
                 log.info("[%s] %s set at %.0f%% to fit its box",
@@ -330,6 +335,9 @@ class Pipeline:
         reasons: list[str] = []
         if holes:
             reasons.append("no library match for: " + "; ".join(sorted(set(holes))[:5]))
+        if typeless:
+            reasons.append("no font in the library for: "
+                           + "; ".join(sorted(set(typeless))[:5]))
         if cramped:
             reasons.append("type does not fit its box: " + "; ".join(cramped[:3]))
         if unrendered:

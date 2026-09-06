@@ -216,3 +216,67 @@ def test_activate_does_nothing_when_there_are_no_fonts_yet(tmp_path, monkeypatch
     empty.mkdir()
     assert fonts_stage.activate(empty) is None
     assert "FONTCONFIG_FILE" not in os.environ
+
+
+# --- type nothing in the library can set ----------------------------------
+
+def _one_line_spec(**font_kw):
+    from stockforge.schema import (
+        Background, Box, Canvas, ColourRole, DesignDNA, DesignSpec, FontClass,
+        Page, Palette, Provenance, Swatch, TextElement, TypeRole)
+    return DesignSpec(
+        source_asset_id="a", design_id="d", confidence=0.9,
+        dna=DesignDNA(category="print", occasion="wedding",
+                      background=Background(treatment="solid"),
+                      palette=Palette(swatches=[
+                          Swatch(role=ColourRole.BACKGROUND, hex="#ffffff", coverage=0.8),
+                          Swatch(role=ColourRole.INK, hex="#111111", coverage=0.2)])),
+        pages=[Page(name="front", canvas=Canvas(width_mm=127, height_mm=178),
+                    elements=[TextElement(
+                        role=TypeRole.TITLE, content="Amelia & Jonah",
+                        box=Box(x=0.1, y=0.4, w=0.8, h=0.12),
+                        font=FontClass(**font_kw), size_ratio=0.05)])],
+        provenance=Provenance(built_with="unknown"))
+
+
+def test_an_empty_font_library_is_reported_not_quietly_substituted(tmp_path, motifs_dir):
+    """With nothing to match, the family written into the SVG is the generic
+    "serif" and whatever the machine happens to have gets drawn. The score
+    recorded that and nothing ever read it, so a whole catalogue could be set
+    in a system fallback and still ship as finished work."""
+    from stockforge.stages.render import render
+
+    empty = tmp_path / "no-fonts"
+    empty.mkdir()
+    result = render(_one_line_spec(category="serif", weight=400,
+                                   contrast="high", mood=["elegant"]),
+                    empty, motifs_dir)
+
+    assert result.unmatched_fonts, "it set the type in a fallback without saying so"
+    assert 'font-family="serif"' in result.svg, "this is the substitution being caught"
+
+
+def test_what_it_reports_is_enough_to_go_shopping_with(tmp_path, motifs_dir):
+    """"no font matched" tells you nothing. The description has to carry what
+    the design actually wants, because the answer is buying or finding one."""
+    from stockforge.stages.render import render
+
+    empty = tmp_path / "no-fonts"
+    empty.mkdir()
+    result = render(_one_line_spec(category="serif", weight=700,
+                                   contrast="high", mood=["elegant", "formal"]),
+                    empty, motifs_dir)
+
+    said = "; ".join(result.unmatched_fonts)
+    assert "serif" in said
+    assert "700" in said
+    assert "high" in said
+    assert "elegant" in said
+
+
+def test_a_library_that_can_set_it_reports_nothing(fonts_dir, motifs_dir):
+    """The complaint has to be about this design, not about every design."""
+    from stockforge.stages.render import render
+
+    result = render(_one_line_spec(category="serif", weight=400), fonts_dir, motifs_dir)
+    assert result.unmatched_fonts == []

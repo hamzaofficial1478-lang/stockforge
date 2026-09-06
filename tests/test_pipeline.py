@@ -512,3 +512,30 @@ def test_no_eps_is_a_master_only_design_not_a_stock_one(workspace, tmp_path, mon
     assert not list(out.glob("*.eps"))
     rows, files = pipe.deliverable()
     assert files == [], "nothing to send, and publish must not claim otherwise"
+
+
+def test_a_design_it_cannot_set_the_type_of_goes_to_review(workspace, tmp_path):
+    """With nothing in the library to match, the family written into the SVG is
+    the generic "serif" and whatever the machine happens to have gets drawn.
+    The score recorded that and nothing read it, so a catalogue set in a system
+    fallback shipped as finished work.
+
+    Review rather than failure: the fix is adding a font, and the queue is what
+    tells you which one.
+    """
+    for f in workspace.fonts_dir.iterdir():
+        f.unlink()
+
+    provider = ScriptedProvider()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+    _listing(tmp_path / "exports", "wedding-invite")
+    pipe = Pipeline(workspace)
+    pipe.pull(open_source("folder", str(tmp_path / "exports")))
+    design_id = pipe.store.designs()[0]["id"]
+
+    assert pipe.build(design_id) == "review"
+    reason = pipe.store.conn.execute(
+        "SELECT reason FROM review WHERE design_id=?", (design_id,)).fetchone()["reason"]
+    assert "no font in the library for" in reason, reason
+    assert "serif" in reason, "it did not say what to go and find"
