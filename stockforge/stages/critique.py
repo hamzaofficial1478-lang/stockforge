@@ -61,15 +61,29 @@ def ssim(a: Path, b: Path, size: tuple[int, int] = (512, 512)) -> float:
     return float(np.mean(num / den))
 
 
+# k-means starts from randomly chosen centres, so the same image clustered
+# twice could land on different ones. Comparing an image with itself came back
+# non-zero about a third of the time, once as high as 0.28 — and the gate below
+# calls a rebuild a copy of its source at 0.03 or less, so a design that really
+# was just the source image slipped through whenever the dice went that way.
+# Seeding makes the same pixels give the same answer every time.
+KMEANS_SEED = 20240921
+
+
 def palette_distance(a: Path, b: Path, k: int = 5) -> float:
     """Mean Lab distance between the dominant colours of each image, normalised
-    to 0..1. Catches an accent that has drifted warm."""
+    to 0..1. Catches an accent that has drifted warm.
+
+    Deterministic: the same pair of images always scores the same. A verdict
+    that changes between two runs over identical input is not a measurement.
+    """
     def dominant(path: Path) -> np.ndarray:
         img = cv2.imread(str(path), cv2.IMREAD_COLOR)
         img = cv2.resize(img, (128, 128), interpolation=cv2.INTER_AREA)
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float32)
-        crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
-        _, _, centres = cv2.kmeans(lab, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
+        crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.1)
+        cv2.setRNGSeed(KMEANS_SEED)
+        _, _, centres = cv2.kmeans(lab, k, None, crit, 8, cv2.KMEANS_PP_CENTERS)
         return centres[np.argsort(centres[:, 0])]
 
     da, db = dominant(a), dominant(b)

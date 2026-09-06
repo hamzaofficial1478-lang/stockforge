@@ -109,12 +109,35 @@ def extract_json(text: str) -> Any:
     raise ProviderError("no parseable JSON in response")
 
 
+SCHEMA_BUDGET = 6000
+
+
+def _drop_titles(node):
+    """Pydantic writes a "title" for every field, restating its own name. It is
+    a third of the schema and tells a model nothing it cannot see."""
+    if isinstance(node, dict):
+        return {k: _drop_titles(v) for k, v in node.items() if k != "title"}
+    if isinstance(node, list):
+        return [_drop_titles(v) for v in node]
+    return node
+
+
 def schema_hint(model: type[BaseModel]) -> str:
     """A compact schema for the prompt. The full JSON Schema pydantic emits is
     enormous and mostly $refs; local models do better with something they can
-    actually read."""
+    actually read.
+
+    It is never cut short. This used to end with `[:6000]`, which silently sent
+    StructureRead — 7466 characters, and the pass that decides everything drawn
+    on the page — as JSON chopped off mid-object. The model was told to satisfy
+    a schema it could not parse. Shrinking it is fine; truncating it is not, so
+    if it will not fit even compacted it goes whole and long.
+    """
     schema = model.model_json_schema()
-    return json.dumps(schema, indent=1)[:6000]
+    compact = json.dumps(schema, separators=(",", ":"))
+    if len(compact) <= SCHEMA_BUDGET:
+        return compact
+    return json.dumps(_drop_titles(schema), separators=(",", ":"))
 
 
 # --------------------------------------------------------------------------

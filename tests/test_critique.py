@@ -139,3 +139,38 @@ def test_a_sane_pair_goes_on_to_the_critic(tmp_path):
     assert stub.calls == 1
     assert crit.verdict == "patch"
     assert crit.similarity == pytest.approx(0.8)
+
+
+# --- the measures have to be measurements ---------------------------------
+
+def test_the_palette_distance_of_an_image_from_itself_is_always_zero(tmp_path):
+    """It was not. k-means starts from randomly chosen centres, so clustering
+    the same image twice landed on different ones about a third of the time,
+    once scoring 0.28. Once is enough: the gate below calls a rebuild a copy of
+    its source at 0.03 or less, so a design that really was just the source
+    image shipped as a rebuild whenever the dice went that way.
+
+    Repeated, because a single run passed this even when it was broken.
+    """
+    page = _page(tmp_path / "a.png")
+    scores = {critique_stage.palette_distance(page, page) for _ in range(40)}
+    assert scores == {0.0}, f"same image, {len(scores)} different answers: {scores}"
+
+
+def test_the_same_pair_scores_the_same_every_time(tmp_path):
+    """A verdict that changes between two runs over identical input is not a
+    measurement, and this one decides whether a design is shipped or reviewed."""
+    a = _page(tmp_path / "a.png", marks=6)
+    b = _page(tmp_path / "b.png", marks=3, shade=170)
+    scores = {critique_stage.palette_distance(a, b) for _ in range(25)}
+    assert len(scores) == 1, f"{len(scores)} different answers for one pair: {scores}"
+
+
+def test_a_rebuild_that_is_really_the_source_is_caught_every_time(tmp_path):
+    """The check this all exists for. It has to fire on all forty runs, not on
+    the two-thirds where the clustering happened to agree."""
+    page = _page(tmp_path / "same.png")
+    for _ in range(40):
+        out = critique_stage.signals(page, page)
+        assert out.fault, "a straight copy of the source passed as a rebuild"
+        assert "same image" in out.fault

@@ -51,7 +51,10 @@ class Surface(BaseModel):
 class Survey(BaseModel):
     category: str = Field(description="invitation, greeting card, banner, poster, menu, planner")
     occasion: str = Field(description="wedding, halloween, christmas, birthday, corporate, ...")
-    style_tags: list[str] = Field(default_factory=list)
+    style_tags: list[str] = Field(
+        default_factory=list,
+        description="the visual language in a few words — botanical, art-deco, "
+                    "hand-drawn, minimal, vintage, whimsical")
     surfaces: list[Surface] = Field(description="one entry per printed surface in this design")
     mockup_indices: list[int] = Field(
         default_factory=list,
@@ -184,9 +187,13 @@ def palette(flat: Path, provider: VisionProvider) -> Palette:
 # --------------------------------------------------------------------------
 
 class TypeRead(BaseModel):
-    elements: list[TextElement]
+    elements: list[TextElement] = Field(
+        description="one entry per line of type on this surface")
     grid: Grid
-    type_pairing: list[FontClass] = Field(default_factory=list)
+    type_pairing: list[FontClass] = Field(
+        default_factory=list,
+        description="the two or three letterform descriptions this design pairs, "
+                    "display first")
 
 
 TYPE_SYSTEM = """You are describing the type on one printed surface so it can be \
@@ -235,7 +242,12 @@ class StructureRead(BaseModel):
     shapes: list[ShapeElement] = Field(default_factory=list)
     motifs: list[MotifElement] = Field(default_factory=list)
     rasters: list[RasterElement] = Field(default_factory=list)
-    motif_vocabulary: list[str] = Field(default_factory=list)
+    motif_vocabulary: list[str] = Field(
+        default_factory=list,
+        description="the decorative language this design draws on, as short "
+                    "phrases — 'eucalyptus sprig', 'carved pumpkin'. Used to "
+                    "build new designs in the same visual family, so name the "
+                    "kind of thing rather than the individual drawing")
 
 
 STRUCTURE_SYSTEM = """You are describing everything on this surface that is not type.
