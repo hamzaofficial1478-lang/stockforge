@@ -70,6 +70,15 @@ _STOP = {
     "left", "right", "top", "bottom", "upper", "lower", "centre", "center",
     "middle", "side", "corner", "above", "below", "view", "facing", "angle",
     "quarter", "profile", "front", "back", "large", "small", "tiny", "big",
+    # Words a <desc> is written in rather than words a drawing is about. They
+    # became matchable tokens: corner-flourish-01 answered to "itself", "sits"
+    # and "turn", and every generic adjective in a description counted against
+    # the share of it that matched.
+    "sits", "sit", "set", "turn", "turns", "turned", "itself", "piece",
+    "both", "nothing", "long",
+    "short", "width", "height", "size", "sized", "shape", "shaped", "style",
+    "styled", "simple", "plain", "decorative", "ornamental", "delicate",
+    "elegant", "pretty", "beautiful", "nice", "modern", "classic", "little",
 }
 
 _WORD = re.compile(r"[a-z]+")
@@ -191,6 +200,13 @@ for _a, _b, _w in [
     ("rule", "flourish", 0.50),
     ("flourish", "border", 0.45),
     ("flourish", "floral", 0.40),
+    # A laurel wreath is leaves and a frame at once, and a garland is both a
+    # botanical and a border. Whichever of the two the analyser reaches for,
+    # the other has to stay findable.
+    ("botanical", "frame", 0.50),
+    ("botanical", "border", 0.50),
+    ("floral", "frame", 0.50),
+    ("botanical", "flourish", 0.45),
     ("geometric", "frame", 0.40),
     ("geometric", "rule", 0.35),
     ("icon", "seasonal", 0.55),
@@ -203,13 +219,22 @@ KIND_WEIGHT = 0.35
 TEXT_WEIGHT = 0.65
 
 
+# What an unrelated kind is worth. Not zero: a mismatch used to score below an
+# untagged motif, so filling in data-kind could only ever hurt a drawing —
+# label a laurel wreath "frame", have the analyser call it botanical, and a
+# perfect match on the words "laurel wreath" came to 0.433 against a threshold
+# of 0.45 and found nothing. Small enough that it cannot carry a weak match on
+# its own: a half-share of the words still lands under the threshold.
+MISMATCHED_KIND = 0.15
+
+
 def _kind_score(entry_kind: str, wanted: str) -> float:
     if not entry_kind:
         # Untagged. Don't reward it and don't punish it — let the words decide.
         return 0.6
     if entry_kind == wanted:
         return 1.0
-    return _NEIGHBOURS.get(frozenset((entry_kind, wanted)), 0.0)
+    return _NEIGHBOURS.get(frozenset((entry_kind, wanted)), MISMATCHED_KIND)
 
 
 def score(entry: MotifEntry, el: MotifElement) -> float:

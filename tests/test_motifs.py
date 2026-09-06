@@ -262,3 +262,102 @@ def test_a_stub_is_written_where_the_matcher_cannot_reach_it(tmp_path):
     assert "ghost" in stub.read_text()
 
     assert [e.library_id for e in motifs_stage.load(tmp_path)] == ["pumpkin-01"]
+
+
+@pytest.fixture
+def shipped_motifs():
+    """The real library in assets/motifs, not a fixture. These are the drawings
+    the program actually comes with, and the point is whether they are findable."""
+    from stockforge.stages.motifs import load
+    return load(Path(__file__).resolve().parent.parent / "assets" / "motifs")
+
+
+# --- a declared kind must never make a drawing harder to find -------------
+
+def _el(description, kind):
+    from stockforge.schema import Box, MotifElement, MotifKind
+    return MotifElement(motif=MotifKind(kind), description=description,
+                        box=Box(x=0.1, y=0.1, w=0.2, h=0.2))
+
+
+def test_a_wrong_kind_is_never_worse_than_no_kind_at_all(motifs_dir):
+    """An untagged motif scored 0.6 for kind and a mismatched one scored 0, so
+    filling in data-kind could only ever hurt a drawing. That is backwards: the
+    tag is there to help."""
+    from stockforge.stages.motifs import MISMATCHED_KIND, _kind_score
+
+    untagged = _kind_score("", "botanical")
+    mismatch = _kind_score("frame", "icon")
+    assert mismatch > 0.0, "a declared kind is still being punished"
+    assert mismatch == MISMATCHED_KIND
+    assert mismatch < untagged, "a wrong kind must not beat an honest blank"
+
+
+def test_the_shipped_laurel_wreath_is_found_by_the_words_for_it(shipped_motifs):
+    """It is leaves and a frame at once. Labelled one and asked for the other,
+    a perfect match on "laurel wreath" came to 0.433 against a 0.45 threshold
+    and left a hole in every design that wanted one."""
+    from stockforge.stages.motifs import match
+
+    for kind in ("botanical", "frame"):
+        best, score = match(_el("a delicate laurel wreath", kind),
+                            shipped_motifs, threshold=0.45)
+        assert best is not None, f"asked as {kind}, scored {score:.3f}, found nothing"
+        assert best.library_id == "wreath-laurel-01"
+
+
+def test_a_wrong_drawing_is_still_refused(shipped_motifs):
+    """The floor must not buy a match for something that is not there. A wrong
+    pumpkin ships; a hole gets drawn."""
+    from stockforge.stages.motifs import match
+
+    for description in ("a grinning carved jack-o-lantern",
+                        "a ghost under a sheet",
+                        "a black cat arching its back"):
+        best, score = match(_el(description, "seasonal"), shipped_motifs, threshold=0.45)
+        assert best is None, f"{description!r} was answered with {best and best.library_id}"
+        assert score < 0.45
+
+
+def test_prose_words_do_not_become_matchable(shipped_motifs):
+    """A <desc> is written in sentences. "sits", "itself" and "turn" were
+    tokens, so the flourish answered to words about nothing."""
+    entry = next(e for e in shipped_motifs if e.library_id == "corner-flourish-01")
+    for junk in ("sits", "itself", "turn", "piece", "set"):
+        assert junk not in entry.tokens, f"{junk!r} is a matchable word"
+    for real in ("flourish", "scroll", "swirl", "curl"):
+        assert real in entry.tokens, f"{real!r} was thrown away with the filler"
+
+
+def test_a_generic_adjective_does_not_cost_a_match(shipped_motifs):
+    """"a simple arch frame" and "an arch frame" want the same drawing. The
+    adjective counted against the share of the words that matched."""
+    from stockforge.stages.motifs import score
+
+    entry = next(e for e in shipped_motifs if e.library_id == "frame-arch-01")
+    plain = score(entry, _el("an arch frame", "frame"))
+    padded = score(entry, _el("a simple decorative arch frame", "frame"))
+    assert padded == plain, f"the adjectives cost {plain - padded:.3f}"
+
+
+def test_a_bare_wreath_still_needs_the_kinds_to_be_related(shipped_motifs):
+    """One word carries only half the text score, so this one turns on the kind
+    alone: a wreath is leaves and a frame at once, and whichever of the two the
+    analyser reaches for the drawing has to stay findable. The mismatch floor
+    deliberately cannot rescue this on its own — that is what makes it a test
+    of the neighbour table rather than of the floor."""
+    from stockforge.stages.motifs import match
+
+    for kind in ("botanical", "frame", "border"):
+        best, score = match(_el("a wreath", kind), shipped_motifs, threshold=0.45)
+        assert best is not None, f"asked as {kind}, scored {score:.3f}, found nothing"
+        assert best.library_id == "wreath-laurel-01"
+
+
+def test_the_floor_alone_cannot_carry_a_single_word(shipped_motifs):
+    """The other side of it. If the floor could carry one word against an
+    unrelated kind, every vaguely worded element would find something."""
+    from stockforge.stages.motifs import match
+
+    best, score = match(_el("a wreath", "icon"), shipped_motifs, threshold=0.45)
+    assert best is None, f"an unrelated kind still matched at {score:.3f}"
