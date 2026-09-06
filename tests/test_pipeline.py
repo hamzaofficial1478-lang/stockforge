@@ -573,3 +573,25 @@ def test_a_design_with_letters_the_font_lacks_goes_to_review(workspace, tmp_path
     reason = pipe.store.conn.execute(
         "SELECT reason FROM review WHERE design_id=?", (design_id,)).fetchone()["reason"]
     assert "no glyph for" in reason, reason
+
+
+def test_the_build_row_records_where_the_files_went(workspace, tmp_path):
+    """builds.pdf_path and builds.preview_path have existed since the first
+    schema and nothing ever wrote to them, so the database knew a design had
+    been built and not where anything it produced had gone."""
+    provider = ScriptedProvider()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+    _listing(tmp_path / "exports", "wedding-invite")
+    pipe = Pipeline(workspace)
+    pipe.pull(open_source("folder", str(tmp_path / "exports")))
+    design_id = pipe.store.designs()[0]["id"]
+    pipe.build(design_id)
+
+    row = pipe.store.conn.execute(
+        "SELECT * FROM builds WHERE design_id=?", (design_id,)).fetchone()
+    for column in ("svg_path", "pdf_path", "preview_path"):
+        assert row[column], f"builds.{column} was left empty"
+        assert Path(row[column]).is_file(), f"builds.{column} points at nothing"
+    assert row["pdf_path"].endswith(".pdf")
+    assert row["preview_path"].endswith(".jpg")

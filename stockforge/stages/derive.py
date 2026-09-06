@@ -200,6 +200,65 @@ def reflow(spec: DesignSpec, before: Grid, after: Grid) -> None:
             setattr(box, span, _clamp(getattr(box, span) * scale, 0.001, 1.4))
 
 
+# How open the page reads, as a multiplier on the distance of each element from
+# the middle of the sheet.
+_RHYTHM_SPREAD = {"tight": 0.88, "even": 1.0, "airy": 1.12}
+
+# Where mixing takes the alignment next. Kept off "split" and "asymmetric" as
+# destinations for a first move — they are real layouts but they change a piece
+# far more than the other two, and mixing is meant to make a sister design.
+_NEXT_SYMMETRY = {"centred": "left", "left": "centred", "right": "centred",
+                  "asymmetric": "centred", "split": "centred"}
+
+_ALIGN_FOR = {"centred": "center", "left": "left", "right": "right",
+              "split": "left", "asymmetric": "left"}
+
+
+def _apply_rhythm(spec: DesignSpec, before: str, after: str) -> None:
+    """Open or close the vertical spacing to match the rhythm.
+
+    Grid.vertical_rhythm was rotated on every mix and read by nothing at all —
+    the eighth thing in this codebase computed and then discarded. Rotating the
+    word without moving anything meant the lever that decides whether a piece
+    reads airy or tight did nothing, and two designs that differed only in
+    rhythm came out identical.
+
+    Everything moves relative to the middle of the sheet, so the piece opens up
+    or closes in around its own centre of gravity rather than drifting down the
+    page.
+    """
+    factor = _RHYTHM_SPREAD[after] / _RHYTHM_SPREAD[before]
+    if abs(factor - 1.0) < 1e-9:
+        return
+    for el in spec.elements():
+        centre = el.box.y + el.box.h / 2
+        moved = 0.5 + (centre - 0.5) * factor
+        el.box.y = _clamp(moved - el.box.h / 2, -0.2, 1.2)
+
+
+def _apply_symmetry(spec: DesignSpec, symmetry: str) -> None:
+    """Set the type to the alignment the grid says it has.
+
+    Grid.symmetry was declared in the schema, never varied, and read by
+    nothing. The renderer has honoured TextElement.align all along, so the two
+    only had to be connected: a design mixed to a left-aligned grid now
+    actually sets its type left, and moves it to the margin instead of leaving
+    it centred with a left-aligned label on it.
+    """
+    align = _ALIGN_FOR.get(symmetry, "center")
+    margin = spec.dna.grid.margin_x
+    for el in spec.elements():
+        if not isinstance(el, TextElement):
+            continue
+        el.align = align
+        if align == "left":
+            el.box.x = _clamp(margin, 0.0, 1.0)
+        elif align == "right":
+            el.box.x = _clamp(1 - margin - el.box.w, 0.0, 1.0)
+        else:
+            el.box.x = _clamp((1 - el.box.w) / 2, 0.0, 1.0)
+
+
 def shift_layout(spec: DesignSpec, strength: float = 0.5) -> None:
     """The lever that actually changes how a design reads.
 
@@ -212,7 +271,10 @@ def shift_layout(spec: DesignSpec, strength: float = 0.5) -> None:
     g.margin_x = max(0.03, min(0.30, g.margin_x * (1 + 0.5 * strength)))
     g.margin_y = max(0.03, min(0.30, g.margin_y * (1 + 0.5 * strength)))
     g.vertical_rhythm = {"tight": "even", "even": "airy", "airy": "tight"}[g.vertical_rhythm]
+    g.symmetry = _NEXT_SYMMETRY[g.symmetry]
     reflow(spec, before, g)
+    _apply_rhythm(spec, before.vertical_rhythm, g.vertical_rhythm)
+    _apply_symmetry(spec, g.symmetry)
 
     for el in spec.elements():
         if isinstance(el, TextElement):

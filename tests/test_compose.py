@@ -165,3 +165,121 @@ def test_health_report_names_what_is_blocking():
     for c in r.checks:
         if c.state == "fail":
             assert c.fix, f"{c.name} fails with no fix explained"
+
+
+# --- the two levers that were computed and thrown away --------------------
+
+def _laid_out():
+    """A page with type spread down it, so a change in rhythm has something
+    to act on."""
+    from stockforge.schema import (
+        Background, Box, Canvas, ColourRole, DesignDNA, DesignSpec, FontClass,
+        Grid, Page, Palette, Provenance, Swatch, TextElement, TypeRole)
+    rows = [(TypeRole.EYEBROW, 0.20), (TypeRole.TITLE, 0.42), (TypeRole.BODY, 0.70)]
+    return DesignSpec(
+        source_asset_id="a", design_id="d", confidence=0.9,
+        dna=DesignDNA(category="invitation", occasion="wedding",
+                      grid=Grid(margin_x=0.08, margin_y=0.08,
+                                symmetry="centred", vertical_rhythm="even"),
+                      background=Background(treatment="solid"),
+                      palette=Palette(swatches=[
+                          Swatch(role=ColourRole.BACKGROUND, hex="#ffffff", coverage=0.8),
+                          Swatch(role=ColourRole.INK, hex="#111111", coverage=0.2)])),
+        pages=[Page(name="front", canvas=Canvas(width_mm=127, height_mm=178),
+                    elements=[TextElement(
+                        role=role, content="Amelia and Jonah",
+                        box=Box(x=0.15, y=y, w=0.70, h=0.08),
+                        font=FontClass(category="serif", weight=400),
+                        size_ratio=0.04) for role, y in rows])],
+        provenance=Provenance(built_with="unknown"))
+
+
+def test_changing_the_rhythm_actually_moves_the_page(monkeypatch):
+    """Grid.vertical_rhythm was rotated on every mix and read by nothing, so
+    the lever that decides whether a piece reads airy or tight did nothing at
+    all and two designs differing only in rhythm came out identical."""
+    from stockforge.stages.derive import shift_layout
+
+    import stockforge.stages.derive as derive_stage
+
+    def spread_after_mixing(with_rhythm):
+        spec = _laid_out()
+        real = derive_stage._apply_rhythm
+        if not with_rhythm:
+            derive_stage._apply_rhythm = lambda *a, **k: None
+        try:
+            shift_layout(spec, strength=0.5)
+        finally:
+            derive_stage._apply_rhythm = real
+        assert spec.dna.grid.vertical_rhythm == "airy"
+        ys = [el.box.y + el.box.h / 2 for el in spec.elements()]
+        return max(ys) - min(ys)
+
+    # Mixing also opens the margins, and reflow moves every box when it does,
+    # so "something moved" would pass with the rhythm still doing nothing —
+    # which is the bug. Compare against the same mix with the rhythm disabled.
+    assert spread_after_mixing(True) > spread_after_mixing(False), \
+        "the rhythm was rotated to airy and the page did not open up"
+
+
+def test_airy_pushes_apart_and_tight_pulls_together():
+    """And in the right direction, about the middle of the sheet rather than
+    sliding the whole piece down the page."""
+    from stockforge.stages.derive import _apply_rhythm
+
+    def spread(after):
+        spec = _laid_out()
+        _apply_rhythm(spec, "even", after)
+        ys = [el.box.y + el.box.h / 2 for el in spec.elements()]
+        return max(ys) - min(ys), sum(ys) / len(ys)
+
+    even_spread, even_centre = spread("even")
+    airy_spread, airy_centre = spread("airy")
+    tight_spread, tight_centre = spread("tight")
+
+    assert airy_spread > even_spread, "airy did not open the page up"
+    assert tight_spread < even_spread, "tight did not close it in"
+    for centre in (airy_centre, tight_centre):
+        assert abs(centre - even_centre) < 0.02, "the piece slid down the page"
+
+
+def test_the_grids_symmetry_reaches_the_type():
+    """Grid.symmetry was declared in the schema, never varied and read by
+    nothing. The renderer has honoured TextElement.align all along; the two
+    were simply never connected."""
+    from stockforge.stages.derive import _apply_symmetry
+
+    spec = _laid_out()
+    assert all(el.align == "center" for el in spec.texts())
+
+    _apply_symmetry(spec, "left")
+    assert all(el.align == "left" for el in spec.texts())
+    assert all(abs(el.box.x - spec.dna.grid.margin_x) < 1e-9 for el in spec.texts()), \
+        "it labelled the type left-aligned and left it sitting in the middle"
+
+    _apply_symmetry(spec, "right")
+    assert all(el.align == "right" for el in spec.texts())
+    for el in spec.texts():
+        assert abs((el.box.x + el.box.w) - (1 - spec.dna.grid.margin_x)) < 1e-9
+
+
+def test_mixing_changes_the_symmetry_too(monkeypatch):
+    from stockforge.stages.derive import shift_layout
+
+    spec = _laid_out()
+    shift_layout(spec, strength=0.5)
+    assert spec.dna.grid.symmetry == "left"
+    assert all(el.align == "left" for el in spec.texts())
+
+
+def test_the_type_stays_on_the_page(monkeypatch):
+    """Every one of these moves boxes, and a box off the sheet is a line the
+    reader never sees."""
+    from stockforge.stages.derive import shift_layout
+
+    spec = _laid_out()
+    for _ in range(6):
+        shift_layout(spec, strength=1.0)
+    for el in spec.elements():
+        assert -0.2 <= el.box.x <= 1.2, el.box
+        assert -0.2 <= el.box.y <= 1.2, el.box

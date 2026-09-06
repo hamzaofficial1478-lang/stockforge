@@ -314,10 +314,17 @@ class Pipeline:
             if twin:
                 twins.append(twin)
             with self.store.tx() as c:
+                # The columns for these have existed since the first schema
+                # and nothing ever filled them, so the database knew a design
+                # had been built and not where anything it produced had gone.
                 c.execute(
-                    "INSERT INTO builds (design_id, page_name, svg_path, state, created_at) "
-                    "VALUES (?,?,?,?,strftime('%s','now'))",
-                    (design_id, page.name, str(svg), "built"),
+                    "INSERT INTO builds (design_id, page_name, svg_path, pdf_path, "
+                    "preview_path, state, created_at) "
+                    "VALUES (?,?,?,?,?,?,strftime('%s','now'))",
+                    (design_id, page.name, str(svg),
+                     str(exported.master_pdf) if exported.master_pdf else None,
+                     str(exported.preview_jpg) if exported.preview_jpg else None,
+                     "built"),
                 )
 
         self.store.save_spec(design_id, derived.model_dump(mode="json"),
