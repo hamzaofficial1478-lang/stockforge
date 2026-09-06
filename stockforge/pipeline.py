@@ -259,6 +259,7 @@ class Pipeline:
         out_dir = self.cfg.root / "out" / design_id[:16]
         holes: list[str] = []
         typeless: list[str] = []
+        toothless: list[str] = []
         cramped: list[str] = []
         unrendered: list[str] = []
         twins: list[duplicates_stage.Twin] = []
@@ -280,6 +281,7 @@ class Pipeline:
             # generic "serif" for it, so whatever the machine happens to have
             # gets drawn — which is not a design anyone chose.
             typeless.extend(result.unmatched_fonts)
+            toothless.extend(result.missing_glyphs)
             unrendered.extend(f"'{page.name}': {u}" for u in result.unrendered)
             for label, scale in result.refits:
                 log.info("[%s] %s set at %.0f%% to fit its box",
@@ -338,6 +340,9 @@ class Pipeline:
         if typeless:
             reasons.append("no font in the library for: "
                            + "; ".join(sorted(set(typeless))[:5]))
+        if toothless:
+            reasons.append("the font has no glyph for: "
+                           + "; ".join(sorted(set(toothless))[:3]))
         if cramped:
             reasons.append("type does not fit its box: " + "; ".join(cramped[:3]))
         if unrendered:

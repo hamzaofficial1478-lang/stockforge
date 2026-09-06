@@ -280,3 +280,50 @@ def test_a_library_that_can_set_it_reports_nothing(fonts_dir, motifs_dir):
 
     result = render(_one_line_spec(category="serif", weight=400), fonts_dir, motifs_dir)
     assert result.unmatched_fonts == []
+
+
+# --- letters the font does not have ---------------------------------------
+
+def test_a_face_reports_the_characters_it_cannot_draw(fonts_dir):
+    """It does not fail on them — it draws the empty box every design app shows
+    for a missing glyph, and measure() charges the fallback width, so the line
+    measures as though it fitted perfectly."""
+    from stockforge.stages.fonts import load_manifest, open_face
+
+    face = open_face(load_manifest(fonts_dir)[0], fonts_dir)
+    assert face.missing("ABC") == [], "it cannot draw its own alphabet"
+    assert face.missing("結婚"), "it claims glyphs it has not got"
+
+
+def test_a_missing_glyph_measures_as_though_it_fitted(fonts_dir):
+    """The reason this needs its own check rather than falling out of the
+    fitting: a box of tofu is charged a normal width, so nothing downstream
+    ever notices."""
+    from stockforge.stages.fonts import load_manifest, open_face
+
+    face = open_face(load_manifest(fonts_dir)[0], fonts_dir)
+    assert face.measure("結婚結婚", 100) > 0, \
+        "if this were zero the fitting would have caught it and this is moot"
+
+
+def test_a_design_set_in_letters_the_font_lacks_goes_to_review(tmp_path, motifs_dir,
+                                                               fonts_dir):
+    """Latin is not the interesting case. Accented names are: a display face
+    with no e-acute turns Renee into Ren[]e on a wedding invitation."""
+    from stockforge.stages.render import render
+
+    plain = _one_line_spec(category="serif", weight=400)
+    plain.pages[0].elements[0].content = "Amelia and Jonah"
+    assert render(plain, fonts_dir, motifs_dir).missing_glyphs == [], \
+        "it complained about letters the face has"
+
+    spec = _one_line_spec(category="serif", weight=400)
+    spec.pages[0].elements[0].content = "Renee and Francois"
+    assert render(spec, fonts_dir, motifs_dir).missing_glyphs == []
+
+    spec.pages[0].elements[0].content = "Renée and François"
+    result = render(spec, fonts_dir, motifs_dir)
+    assert result.missing_glyphs, "a page of empty boxes passed as a page of type"
+    said = result.missing_glyphs[0]
+    assert "é" in said or "ç" in said, said
+    assert "Ren" in said, "it did not say which line"

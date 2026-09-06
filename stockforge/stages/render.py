@@ -33,7 +33,8 @@ class RenderResult:
     def __init__(self, svg: str, missing_motifs: list[str], font_scores: list[float],
                  refits: list[tuple[str, float]] | None = None,
                  unrendered: list[str] | None = None,
-                 unmatched_fonts: list[str] | None = None):
+                 unmatched_fonts: list[str] | None = None,
+                 missing_glyphs: list[str] | None = None):
         self.svg = svg
         self.missing_motifs = missing_motifs
         self.font_scores = font_scores
@@ -48,6 +49,10 @@ class RenderResult:
         # looking for it. The same kind of gap as an unmatched motif, and it
         # grows the font library the same way.
         self.unmatched_fonts = unmatched_fonts or []
+        # Characters the matched face has no glyph for. They draw as the empty
+        # box every design app shows, and the line measures as though it fitted
+        # perfectly, so a page of boxes looks like a page of type from here.
+        self.missing_glyphs = missing_glyphs or []
 
     @property
     def worst_font_score(self) -> float:
@@ -252,9 +257,11 @@ def describe_font(f: FontClass) -> str:
 
 
 def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
-          library: list[FontEntry], fonts_dir: Path) -> tuple[str, float, float]:
-    """Set one text element. Returns the node, the font match score, and how
-    much of the asked-for size survived fitting it to its box."""
+          library: list[FontEntry], fonts_dir: Path
+          ) -> tuple[str, float, float, list[str]]:
+    """Set one text element. Returns the node, the font match score, how much
+    of the asked-for size survived fitting it to its box, and any characters
+    the matched face has no glyph for."""
     entry, score_ = match(el.font, library)
     family = entry.family if entry else "serif"
     # The weight of the face we actually matched, not the one the analyser
@@ -307,7 +314,11 @@ def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
         f'letter-spacing="{el.tracking * size:.2f}" text-anchor="{anchor}" '
         f'dominant-baseline="middle"{rot}>{spans}</text>'
     )
-    return node, score_, refit
+    # Characters this face has no glyph for. The renderer cannot fix it — the
+    # font either has the letter or it does not — but shipping a page of empty
+    # boxes as finished work is not the alternative.
+    gone = face.missing(content) if face else []
+    return node, score_, refit, gone
 
 
 # --------------------------------------------------------------------------
@@ -353,6 +364,7 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
     refits: list[tuple[str, float]] = []
     unrenderable_extra: list[str] = []
     unmatched_fonts: list[str] = []
+    missing_glyphs: list[str] = []
 
     parts.append('<g id="artwork">')
     for el in page.elements:
@@ -383,9 +395,12 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
     parts.append('<g id="type">')
     for el in page.elements:
         if isinstance(el, TextElement):
-            node, s, refit = _text(spec, el, w, h, library, fonts_dir)
+            node, s, refit, gone = _text(spec, el, w, h, library, fonts_dir)
             parts.append(node)
             scores.append(s)
+            if gone:
+                first = (el.content.splitlines() or [""])[0]
+                missing_glyphs.append(f"{''.join(gone)} in {first[:40]!r}")
             # Nothing matched, so the family written into the SVG is the
             # generic "serif" and whatever the machine happens to have gets
             # drawn. font_scores recorded that and nothing ever read it, so a
@@ -399,7 +414,7 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
 
     gaps = ([unrenderable] if unrenderable else []) + unrenderable_extra
     return RenderResult("\n".join(parts), missing, scores, refits, gaps,
-                        unmatched_fonts)
+                        unmatched_fonts, missing_glyphs)
 
 
 def _raster(el: RasterElement, page: Page, w: float, h: float) -> tuple[str, str | None]:

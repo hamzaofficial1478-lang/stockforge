@@ -12,11 +12,18 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 def build_font(path: Path, family: str = "Testface", cap_height: int = 700,
                advance: int = 600, upem: int = 1000) -> Path:
     """A font with metrics we chose, so a test can assert on widths."""
-    letters = [chr(c) for c in range(0x41, 0x5B)] + [chr(c) for c in range(0x61, 0x7B)]
-    order = [".notdef", "space"] + letters
+    # Letters, digits and the punctuation the fixtures actually set. The
+    # renderer now reports characters a face has no glyph for, so a test font
+    # that cannot set "Amelia & Jonah" sends every fixture design to review for
+    # a fault in the fixture rather than in the code.
+    letters = ([chr(c) for c in range(0x41, 0x5B)] + [chr(c) for c in range(0x61, 0x7B)]
+               + [chr(c) for c in range(0x30, 0x3A)]
+               + list("&.,'\"-—–:;!?()/@#%+*"))
+    order = [".notdef", "space"] + [f"g{i:03d}" for i in range(len(letters))]
+    names = {c: f"g{i:03d}" for i, c in enumerate(letters)}
     fb = FontBuilder(upem, isTTF=True)
     fb.setupGlyphOrder(order)
-    fb.setupCharacterMap({32: "space", **{ord(c): c for c in letters}})
+    fb.setupCharacterMap({32: "space", **{ord(c): names[c] for c in letters}})
 
     pen = TTGlyphPen(None)
     pen.moveTo((0, 0))
@@ -26,7 +33,7 @@ def build_font(path: Path, family: str = "Testface", cap_height: int = 700,
     pen.closePath()
     mark, blank = pen.glyph(), TTGlyphPen(None).glyph()
 
-    fb.setupGlyf({n: (mark if n in letters else blank) for n in order})
+    fb.setupGlyf({n: (blank if n in (".notdef", "space") else mark) for n in order})
     fb.setupHorizontalMetrics({n: (advance, 0) for n in order})
     fb.setupHorizontalHeader(ascent=int(upem * 0.8), descent=-int(upem * 0.2))
     fb.setupNameTable({"familyName": family, "styleName": "Regular",

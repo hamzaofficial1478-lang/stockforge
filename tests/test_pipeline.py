@@ -539,3 +539,37 @@ def test_a_design_it_cannot_set_the_type_of_goes_to_review(workspace, tmp_path):
         "SELECT reason FROM review WHERE design_id=?", (design_id,)).fetchone()["reason"]
     assert "no font in the library for" in reason, reason
     assert "serif" in reason, "it did not say what to go and find"
+
+
+def test_a_design_with_letters_the_font_lacks_goes_to_review(workspace, tmp_path):
+    """A missing glyph draws as the empty box every design app shows, and the
+    line measures as though it fitted perfectly, so nothing downstream noticed.
+    An accented name on a wedding invitation is the case that matters."""
+    provider = ScriptedProvider()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+    _listing(tmp_path / "exports", "wedding-invite")
+    pipe = Pipeline(workspace)
+    pipe.pull(open_source("folder", str(tmp_path / "exports")))
+    design_id = pipe.store.designs()[0]["id"]
+
+    import stockforge.stages.derive as derive_stage
+    real = derive_stage.rewrite_placeholders
+
+    def _accented(spec, provider=None):
+        real(spec, provider)
+        for t in spec.texts():
+            if t.placeholder:
+                t.content = "Renée & François"
+                break
+
+    derive_stage.rewrite_placeholders = _accented
+    try:
+        state = pipe.build(design_id)
+    finally:
+        derive_stage.rewrite_placeholders = real
+
+    assert state == "review", state
+    reason = pipe.store.conn.execute(
+        "SELECT reason FROM review WHERE design_id=?", (design_id,)).fetchone()["reason"]
+    assert "no glyph for" in reason, reason

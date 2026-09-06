@@ -148,6 +148,21 @@ class Face:
         """One character's advance, in em."""
         return self.widths.get(ord(ch), self.fallback) / self.units_per_em
 
+    def missing(self, text: str) -> list[str]:
+        """The characters this face has no glyph for.
+
+        A font without them does not fail — it draws the empty box every design
+        app shows for a missing glyph, and `measure` quietly charges the
+        fallback width for it, so the line measures as though it fitted
+        perfectly. A page of boxes is indistinguishable from a page of type
+        until somebody opens the file.
+
+        Latin is not the interesting case. Accented names are: a display face
+        with no e-acute in it turns Renée into Ren[]e on a wedding invitation.
+        """
+        return sorted({ch for ch in text
+                       if not ch.isspace() and ord(ch) not in self.widths})
+
     def measure(self, text: str, size: float, tracking: float = 0.0) -> float:
         """How wide this line will actually be, in the same units as `size`.
 
