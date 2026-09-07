@@ -265,6 +265,13 @@ cp .env.example .env
 apt install inkscape tesseract-ocr        # export and OCR
 ```
 
+On Windows those last two are `winget install Inkscape.Inkscape` and
+`winget install UB-Mannheim.TesseractOCR`. Inkscape's installer does **not**
+add itself to PATH unless you tick a box that is easy to miss, so it is also
+looked for in the usual install folders — you do not need to tick it. If you
+put Inkscape somewhere unusual, set `SF_INKSCAPE` to the full path of
+`inkscape.exe`.
+
 `.env` is read at startup, from the directory you run `stockforge` in, and it's
 the same file the Setup screen writes back to. Anything already exported in
 your shell wins over it, so you can override one setting for a single run.
@@ -289,6 +296,12 @@ font library grows the same way the motif library does, off the back of the
 queue. Google Fonts and anything under the SIL
 OFL are the easy wins — publicly available, and since text is outlined on
 export, no font file ever travels inside a delivered file.
+
+On **Windows** `fonts scan` finishes the job itself: fontconfig is Unix
+machinery with no Windows equivalent, so it also installs the families into
+your own account — copied into `%LOCALAPPDATA%` with a registry entry under
+`HKCU`, which needs no administrator and touches nothing outside your user.
+`stockforge fonts install` does that step alone if you add a family later.
 
 `fonts scan` also writes `fontconfig.conf` next to the manifest. Neither
 Inkscape nor cairo takes a font *file* — both look a family name up through

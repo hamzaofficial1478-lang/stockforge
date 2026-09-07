@@ -200,11 +200,25 @@ def _check_font_rendering(cfg: Settings) -> Check:
                  f"{entry.family} draws at the width its own file says")
 
 
-def _check_binary(name: str, what: str, fix: str, required: bool = True) -> Check:
-    found = shutil.which(name)
+def _find_inkscape(_name: str = "inkscape") -> str | None:
+    """The exporter's own search, so the two cannot disagree."""
+    from .stages.export import _inkscape
+
+    return _inkscape()
+
+
+def _check_binary(name: str, what: str, fix: str, required: bool = True,
+                  find=None) -> Check:
+    """`find` lets a tool be looked for the way the code that runs it looks.
+
+    Checking PATH while the exporter also searches the Windows install
+    directories would report a working Inkscape as missing, which is a worse
+    kind of wrong than not checking at all.
+    """
+    found = (find or shutil.which)(name)
     if found:
-        return Check(what, "ok", found, required=required)
-    return Check(what, "fail" if required else "warn", f"{name} not on PATH",
+        return Check(what, "ok", str(found), required=required)
+    return Check(what, "fail" if required else "warn", f"{name} was not found",
                  fix, required=required)
 
 
@@ -276,9 +290,15 @@ def report(cfg: Settings | None = None) -> Report:
         _check_vision(),
         _check_fonts(cfg),
         _check_font_rendering(cfg),
-        _check_binary("inkscape", "Vector export",
-                      "Install Inkscape. Without it there is no editable-text PDF "
-                      "and no EPS — only rasterised output."),
+        _check_binary(
+            "inkscape", "Vector export",
+            "Install Inkscape — on Windows `winget install Inkscape.Inkscape`, "
+            "otherwise inkscape.org/release. It is looked for on PATH and in the "
+            "usual Windows install folders, so ticking 'add to PATH' during setup "
+            "is not required; if you put it somewhere else, set SF_INKSCAPE to "
+            "the full path of inkscape.exe. Without it there is no editable-text "
+            "PDF and no EPS — only rasterised output.",
+            find=_find_inkscape),
         _check_binary("tesseract", "OCR", "Install tesseract-ocr. Without it the model "
                       "transcribes text itself, which is less accurate.", required=False),
         _check_motifs(cfg),

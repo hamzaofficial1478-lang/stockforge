@@ -20,6 +20,7 @@ guidelines before a big upload rather than trusting these comments.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -43,8 +44,45 @@ class Exported:
     failures: list[str] = field(default_factory=list)
 
 
+# Where the Windows installer actually puts it. It does not add itself to PATH
+# unless you tick a box most people miss, so "install Inkscape" followed by
+# "inkscape not on PATH" was the whole first-run experience on Windows.
+# Read through a name rather than os.name directly: a test that patches
+# os.name reaches into pathlib as well and stops Path working at all.
+ON_WINDOWS = os.name == "nt"
+
+_WINDOWS_GUESSES = (
+    r"C:\Program Files\Inkscape\bin\inkscape.exe",
+    r"C:\Program Files\Inkscape\inkscape.exe",
+    r"C:\Program Files (x86)\Inkscape\bin\inkscape.exe",
+    r"C:\Program Files (x86)\Inkscape\inkscape.exe",
+)
+
+
 def _inkscape() -> str | None:
-    return shutil.which("inkscape")
+    """Where Inkscape is, however it got installed.
+
+    SF_INKSCAPE first, so a copy anywhere at all can be pointed at; then PATH;
+    then the places the Windows installer uses. Looking only on PATH meant a
+    perfectly good installation was invisible.
+    """
+    named = os.environ.get("SF_INKSCAPE", "").strip()
+    if named:
+        if Path(named).is_file():
+            return named
+        found = shutil.which(named)
+        if found:
+            return found
+
+    found = shutil.which("inkscape")
+    if found:
+        return found
+
+    if ON_WINDOWS:
+        for guess in _WINDOWS_GUESSES:
+            if Path(guess).is_file():
+                return guess
+    return None
 
 
 def _run(args: list[str]) -> None:

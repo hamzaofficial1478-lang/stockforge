@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import logging
 import sys
 import textwrap
@@ -354,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-browser", action="store_true")
 
     f = sub.add_parser("fonts", help="manage the font library")
-    f.add_argument("action", choices=["scan", "list"])
+    f.add_argument("action", choices=["scan", "list", "install"])
 
     m = sub.add_parser("motifs", help="inspect the motif library and grow it")
     m.add_argument("action", choices=["list", "match", "todo"])
@@ -382,6 +383,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"wrote {conf} so Inkscape and cairo can find them by name")
             print("Set `embeddable` true only for fonts you hold redistribution "
                   "rights to. Nothing is used until you do.")
+            # fontconfig is a Unix mechanism. On Windows that file achieves
+            # nothing, and the family named in the SVG resolves to whatever the
+            # machine happens to have — so finish the job here rather than
+            # leaving a second step nobody knows to take.
+            if fonts_stage.ON_WINDOWS:
+                print()
+                for name, what in fonts_stage.install_for_windows(settings.fonts_dir):
+                    print(f"  {name:<34} {what}")
+                print("\nInstalled for your user, so Inkscape can find them by name.")
+        elif args.action == "install":
+            try:
+                done = fonts_stage.install_for_windows(settings.fonts_dir)
+            except RuntimeError as exc:
+                print(exc)
+                return 0
+            for name, what in done:
+                print(f"  {name:<34} {what}")
+            print(f"\n{len(done)} font file(s) installed for your user — no "
+                  f"administrator needed, and nothing outside your account changed.")
         else:
             for e in fonts_stage.load_manifest(settings.fonts_dir):
                 print(f"{'ok ' if e.embeddable else '-- '} {e.family:<30} "

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
@@ -321,3 +322,87 @@ def match(want: FontClass, library: list[FontEntry], require_embeddable: bool = 
         return None, 0.0
     best = max(pool, key=lambda e: score(e, want))
     return best, score(best, want)
+
+
+# --------------------------------------------------------------------------
+# making the family resolve on Windows
+# --------------------------------------------------------------------------
+
+ON_WINDOWS = os.name == "nt"
+
+
+def _face_name(path: Path) -> str:
+    """The name Windows lists a font under, from the file itself."""
+    try:
+        from fontTools.ttLib import TTFont
+
+        tt = TTFont(str(path), lazy=True, fontNumber=0)
+        family = style = ""
+        for record in tt["name"].names:
+            if record.nameID == 1 and not family:
+                family = str(record)
+            elif record.nameID == 2 and not style:
+                style = str(record)
+        if family:
+            return f"{family} {style}".strip()
+    except Exception:
+        pass
+    return path.stem
+
+
+def install_for_windows(fonts_dir: Path) -> list[tuple[str, str]]:
+    """Install the library's fonts for the current user.
+
+    fontconfig is how Inkscape and cairo find a family by name, and Windows has
+    no fontconfig — so `fonts scan` writing a config there achieves nothing and
+    the family named in the SVG resolves to whatever the machine happens to
+    have. The files have to be installed.
+
+    Per-user, into LOCALAPPDATA, with a registry entry under HKCU: that needs
+    no administrator, which "right-click, Install for all users" does.
+
+    Returns (font file name, what happened) for every file, including the ones
+    already there. Raises on any platform but Windows, because it would be
+    doing nothing while looking like it worked.
+    """
+    if not ON_WINDOWS:
+        raise RuntimeError(
+            "this is a Windows-only step — on Linux and macOS the generated "
+            "fontconfig.conf already makes the folder visible")
+
+    import winreg                                    # noqa: PLC0415  (Windows only)
+
+    target = Path(os.environ["LOCALAPPDATA"]) / "Microsoft" / "Windows" / "Fonts"
+    target.mkdir(parents=True, exist_ok=True)
+    key_path = r"Software\Microsoft\Windows NT\CurrentVersion\Fonts"
+
+    done: list[tuple[str, str]] = []
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+        for file in sorted(fonts_dir.iterdir()):
+            if file.suffix.lower() not in {".ttf", ".otf", ".ttc"}:
+                continue
+            dest = target / file.name
+            registered = f"{_face_name(file)} ({'OpenType' if file.suffix.lower() == '.otf' else 'TrueType'})"
+            try:
+                if not dest.exists() or dest.stat().st_size != file.stat().st_size:
+                    shutil.copy2(file, dest)
+                winreg.SetValueEx(key, registered, 0, winreg.REG_SZ, str(dest))
+                done.append((file.name, f"installed as {registered}"))
+            except OSError as exc:
+                done.append((file.name, f"could not install: {exc}"))
+
+    _broadcast_font_change()
+    return done
+
+
+def _broadcast_font_change() -> None:
+    """Tell running programs a font was added, so Inkscape sees it without a
+    reboot. Best effort — failing to tell them costs a restart, not the fonts."""
+    try:
+        import ctypes
+
+        HWND_BROADCAST, WM_FONTCHANGE = 0xFFFF, 0x001D
+        ctypes.windll.user32.SendMessageTimeoutW(
+            HWND_BROADCAST, WM_FONTCHANGE, 0, 0, 0, 1000, None)
+    except Exception as exc:
+        log.debug("could not broadcast the font change: %s", exc)
