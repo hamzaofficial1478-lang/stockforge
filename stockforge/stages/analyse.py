@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from collections.abc import Callable
 
 import cv2
 import numpy as np
@@ -373,6 +374,7 @@ def analyse(
     design_id: str | None = None,
     listing_url: str | None = None,
     mockups: set[int] | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> DesignSpec:
     """Full read of one design from its listing images.
 
@@ -383,9 +385,11 @@ def analyse(
     difference. Both ingest and the survey pass worked out which images were
     staged and both threw the answer away.
     """
+    report = on_progress or (lambda step: None)
     provider = provider or vision()
     mockups = set(mockups or ())
 
+    report("Identifying pages — waiting for the vision model")
     sv = survey(images, provider)
     # The model has its own opinion; take both, since either noticing is worth
     # more than neither.
@@ -400,7 +404,9 @@ def analyse(
                               chosen[0] if chosen else 0))
     primary = images[primary_index]
 
+    report("Measuring colors and identifying their roles — waiting for the vision model")
     pal = palette(primary, provider)
+    report("Checking artwork provenance — waiting for the vision model")
     prov = provenance(images, provider)
 
     pages: list[Page] = []
@@ -408,14 +414,16 @@ def analyse(
 
     warnings = [f"raster element: {r}" for r in prov.raster_elements]
 
-    for surface in surfaces:
+    for index, surface in enumerate(surfaces, 1):
         flat = images[surface.image_index]
         if surface.image_index in staged:
             warnings.append(
                 f"'{surface.name}' was read from a staged photograph, not a flat "
                 f"export — the colours and the text are less reliable")
 
+        report(f"Reading text with OCR and matching typography — page {index}/{len(surfaces)}")
         type_read = typography(flat, provider)
+        report(f"Reconstructing shapes and artwork — page {index}/{len(surfaces)}; waiting for the vision model")
         struct = structure(flat, provider)
 
         elements: list[Element] = [*struct.rasters, *struct.shapes,

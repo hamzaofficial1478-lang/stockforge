@@ -45,7 +45,17 @@ big a job is before you start it.
 
 **Queue** — the worker: start, pause, resume, stop, and a slider for how long
 it rests between designs. Live counts of done, to-review and failed, a rate per
-hour, and a rolling log of what just happened.
+hour, and a rolling log of what just happened. The current design shows its
+analysis or export stage, elapsed time, and connection status. The moving bar
+indicates activity; the counts show finished designs rather than a guessed
+model completion percentage. Pause and Stop finish the current design first.
+Failures appear in the queue with their reason; use Review to retry a failed
+design after correcting the problem. Blocked listing imports display a warning
+and suggest uploading the saved image. An Etsy HTTP 403 cannot be fixed by
+pressing Start; the image must first be imported successfully.
+
+Queue regression checks: `python -m pytest tests/test_queue_progress.py` and
+`node --test tests/ui_queue.test.cjs` (Node is only needed for the UI tests).
 
 **Review** — your design and the rebuild side by side, worst first, with three
 buttons: clear it, run it again, or keep it as a master only. Above them, what

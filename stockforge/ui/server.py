@@ -165,14 +165,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(Pipeline(self.cfg).status())
 
         if route == "/api/worker":
-            return self._json(get_worker(self.cfg).progress.as_dict())
+            return self._json(get_worker(self.cfg).snapshot())
 
         if route == "/api/designs":
             pipe = Pipeline(self.cfg)
             state = (query.get("state") or [None])[0]
             limit = int((query.get("limit") or [200])[0])
             rows = pipe.store.designs(state=state)[:limit]
-            return self._json([{**dict(r), "files": self._outputs(r["id"])} for r in rows])
+            issues = {r["design_id"]: r["reason"] for r in pipe.store.pending_review()}
+            return self._json([{**dict(r), "files": self._outputs(r["id"]),
+                                "issue": issues.get(r["id"], "") if r["state"] in ("failed", "review") else ""} for r in rows])
 
         if route == "/api/motif-gaps":
             pipe = Pipeline(self.cfg)
@@ -318,7 +320,10 @@ class Handler(BaseHTTPRequestHandler):
                 pulled = Pipeline(self.cfg).pull(source)
             except Exception as exc:
                 return self._json({"error": str(exc)}, 400)
-            return self._json({"pulled": pulled})
+            warnings = source.warnings[-20:]
+            if not pulled and not warnings:
+                warnings = ["No usable images were imported. Check the source or upload image files from this computer."]
+            return self._json({"pulled": pulled, "warnings": warnings})
 
         if route == "/api/update":
             # The last thing the launcher menu could do that the panel could
@@ -394,18 +399,25 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/worker":
             worker = get_worker(self.cfg)
             action = body.get("action")
-            if "pace" in body:
-                worker.set_pace(float(body["pace"]))
-            if action == "start":
-                limit = body.get("limit")
-                worker.start(int(limit) if limit else None)
-            elif action == "pause":
-                worker.pause()
-            elif action == "resume":
-                worker.resume()
-            elif action == "stop":
-                worker.stop()
-            return self._json(worker.progress.as_dict())
+            try:
+                if "pace" in body:
+                    worker.set_pace(float(body["pace"]))
+                if action == "start":
+                    limit = int(body["limit"]) if body.get("limit") else None
+                    if limit is not None and limit < 1:
+                        raise ValueError("Queue limit must be positive")
+                    worker.start(limit)
+                elif action == "pause":
+                    worker.pause()
+                elif action == "resume":
+                    worker.resume()
+                elif action == "stop":
+                    worker.stop()
+                elif action is not None:
+                    raise ValueError("Unknown worker action")
+                return self._json(worker.snapshot())
+            except (ValueError, TypeError, RuntimeError, OSError) as exc:
+                return self._json({"error": str(exc)}, 400)
 
         if route == "/api/decide":
             did, decision = body.get("design_id"), body.get("decision")

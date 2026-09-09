@@ -18,6 +18,7 @@ class Design:
     tags: list[str] = field(default_factory=list)
     listing_url: str | None = None
     source: str = "folder"
+    import_error: str = ""
 
     @property
     def stable_id(self) -> str:
@@ -31,6 +32,7 @@ class Source(ABC):
         self.target = target
         self.cache_dir = cache_dir
         self.limit = limit
+        self.warnings: list[str] = []
 
     @abstractmethod
     def designs(self) -> Iterator[Design]:

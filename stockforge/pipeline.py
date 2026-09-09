@@ -25,6 +25,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from collections.abc import Callable
 
 from .config import Settings, settings as default_settings
 from .db import Store
@@ -61,7 +62,8 @@ def _seed(*parts: object) -> int:
 
 
 class Pipeline:
-    def __init__(self, cfg: Settings | None = None):
+    def __init__(self, cfg: Settings | None = None, on_progress: Callable[[str], None] | None = None):
+        self.on_progress = on_progress or (lambda step: None)
         self.cfg = cfg or default_settings
         self.cfg.ensure_dirs()
         # Inkscape and cairo find a font by family name through fontconfig, so
@@ -129,6 +131,7 @@ class Pipeline:
     # -- 2-6. work one design ----------------------------------------------
 
     def build(self, design_id: str) -> str:
+        self.on_progress("Preparing source images")
         row = self.store.conn.execute(
             "SELECT * FROM designs WHERE id=?", (design_id,)
         ).fetchone()
@@ -155,10 +158,12 @@ class Pipeline:
         spec = analyse(
             images, asset_id=usable[0]["id"], design_id=design_id,
             listing_url=row["listing_url"], mockups=mockups,
+            on_progress=self.on_progress,
         )
         # Point every decorative element at a drawing in our own library. What
         # nothing matches stays unresolved on purpose — the renderer reports it
         # as a hole and the description tells you what to draw next.
+        self.on_progress("Matching artwork to the motif library")
         holes = motifs_stage.resolve(spec, self.cfg.motifs_dir, self.cfg.motif_threshold)
         if holes:
             log.info("[%s] no motif for: %s", design_id[:8], "; ".join(sorted(set(holes))[:3]))
@@ -191,6 +196,7 @@ class Pipeline:
         recipe = None
 
         for round_ in range(1, self.cfg.max_derive_rounds + 1):
+            self.on_progress(f"Creating and checking variation {round_}")
             strength = self.cfg.derive_strength * round_
             base = spec
             if pool and self.cfg.mix > 0:
@@ -231,6 +237,7 @@ class Pipeline:
 
         # --- polish it -------------------------------------------------
         for round_ in range(self.cfg.max_critique_rounds):
+            self.on_progress(f"Checking layout quality, round {round_ + 1}")
             patches, escalated = [], None
             # Every surface again. A wedding suite is five separate files and
             # the critic had only ever seen the first of them.
@@ -283,6 +290,7 @@ class Pipeline:
 
         used_names: set[str] = set()
         for i, page in enumerate(derived.pages):
+            self.on_progress(f"Matching fonts and drawing page {i + 1}/{len(derived.pages)}: {page.name}")
             # Model-generated labels are display text, never filesystem paths.
             name = re.sub(r"[^\w-]+", "-", page.name, flags=re.ASCII).strip("-")[:70] or "page"
             unique = name
@@ -314,6 +322,7 @@ class Pipeline:
                 # and get it shrunk straight back — so it wants a human.
                 if scale < CRAMPED:
                     cramped.append(f"{label} at {scale:.0%} of its intended size")
+            self.on_progress(f"Exporting editable PDF, SVG and preview for page {i + 1}/{len(derived.pages)}")
             exported = export_stage.export_all(
                 svg, out_dir, stem=stem,
                 preview_px=self.cfg.preview_px)

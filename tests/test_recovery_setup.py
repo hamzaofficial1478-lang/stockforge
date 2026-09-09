@@ -29,10 +29,14 @@ def test_recovery_preserves_the_read_and_produces_editable_files(workspace, tmp_
     providers.set_provider("vision", provider)
     providers.set_provider("reason", provider)
     _listing(tmp_path / "input", "original")
-    pipe = Pipeline(workspace)
+    steps = []
+    pipe = Pipeline(workspace, on_progress=steps.append)
     assert pipe.pull(open_source("folder", str(tmp_path / "input"))) == 1
     did = pipe.store.designs()[0]["id"]
     assert pipe.build(did) == "master_only"
+    assert any("vision model" in step for step in steps)
+    assert any("OCR" in step for step in steps)
+    assert any("Exporting editable PDF" in step for step in steps)
     assert pipe.store.get_spec(did) == pipe.store.get_read(did)
     assert not {"NewCopy", "Distinctiveness", "Critique"}.intersection(provider.seen)
     assert list((workspace.root / "out").rglob("*-master.pdf"))

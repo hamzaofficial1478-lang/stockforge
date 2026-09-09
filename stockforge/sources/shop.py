@@ -122,7 +122,14 @@ def listing_images(url: str, dest: Path, max_images: int = 8) -> Design:
         html = _get(url).decode("utf-8", errors="replace")
     except Exception as exc:
         log.warning("could not read %s: %s", url, exc)
-        return Design(design_id=url, listing_url=url, source="links")
+        status = re.search(r"HTTP \d{3}", str(exc))
+        reason = status.group() if status else "connection failed"
+        message = f"Listing could not be read ({reason})."
+        if reason == "HTTP 403":
+            message += " The website blocked automated access. Upload the saved image instead. For your Etsy shop, use the shop importer with an Etsy API key."
+        else:
+            message += " Check the link or upload the saved image instead."
+        return Design(design_id=url, listing_url=url, source="links", import_error=message)
 
     # keep the largest variant of each distinct image
     seen: dict[str, str] = {}
@@ -143,7 +150,8 @@ def listing_images(url: str, dest: Path, max_images: int = 8) -> Design:
             images.append(got)
         time.sleep(0.3)
 
-    return Design(design_id=url, images=images, title=title, listing_url=url, source="shop")
+    return Design(design_id=url, images=images, title=title, listing_url=url, source="shop",
+                  import_error="" if images else "No downloadable images found on this page. Upload the saved image or paste a direct image URL.")
 
 
 def scrape_listing_urls(shop: str, max_pages: int = 40) -> list[str]:
@@ -220,6 +228,7 @@ class EtsyShopSource(Source):
                 yield design
             else:
                 dropped += 1
+                self.warnings.append(design.import_error or f"No images imported from {url}")
                 log.warning("%s: not one image could be fetched", url)
             time.sleep(1.5)
         _report(seen, dropped)

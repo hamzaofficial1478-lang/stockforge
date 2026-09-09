@@ -13,8 +13,8 @@ Each design is broken into steps that are individually cheap:
 
     read -> derive -> check -> polish -> render -> export
 
-State lives in the database after every step, so a stop is never a loss — the
-next start picks up the step it had not reached yet.
+Pause and Stop finish the current design before taking effect. Finished
+designs are saved; Start processes the remaining pending designs.
 """
 
 from __future__ import annotations
@@ -24,10 +24,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 
 from .config import Settings, settings as default_settings
 from .pipeline import Pipeline
+from .db import Store
 
 log = logging.getLogger("stockforge.worker")
 
@@ -38,28 +38,36 @@ class State(str, Enum):
     PAUSING = "pausing"
     PAUSED = "paused"
     STOPPED = "stopped"
+    STOPPING = "stopping"
+    FAILED = "failed"
 
 
 @dataclass
 class Progress:
     state: State = State.IDLE
     current_design: str | None = None
+    current_design_id: str | None = None
     current_step: str = ""
+    step_started_at: float | None = None
     done: int = 0
     failed: int = 0
     review: int = 0
     remaining: int = 0
     started_at: float | None = None
+    finished_at: float | None = None
     last_error: str = ""
     recent: list[str] = field(default_factory=list)
+    events: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
-        elapsed = (time.time() - self.started_at) if self.started_at else 0
+        elapsed = ((self.finished_at or time.time()) - self.started_at) if self.started_at else 0
         rate = (self.done / elapsed * 3600) if elapsed > 60 and self.done else 0
         return {
             "state": self.state.value,
             "current_design": self.current_design,
+            "current_design_id": self.current_design_id,
             "current_step": self.current_step,
+            "step_elapsed_s": int(time.time() - self.step_started_at) if self.step_started_at else 0,
             "done": self.done,
             "failed": self.failed,
             "review": self.review,
@@ -69,6 +77,7 @@ class Progress:
             "eta_s": int(self.remaining / rate * 3600) if rate else None,
             "last_error": self.last_error,
             "recent": self.recent[-12:],
+            "events": self.events[-30:],
         }
 
 
@@ -97,6 +106,7 @@ class Worker:
             self._stop.clear()
             self._pause.clear()
             self.progress = Progress(state=State.RUNNING, started_at=time.time())
+            self._report("Starting — loading the queue")
             self._thread = threading.Thread(target=self._loop, args=(limit,), daemon=True)
             self._thread.start()
             return True
@@ -114,6 +124,8 @@ class Worker:
     def stop(self) -> None:
         self._stop.set()
         self._pause.clear()
+        if self.alive:
+            self.progress.state = State.STOPPING
 
     def set_pace(self, seconds: float) -> None:
         self.pace_seconds = max(0.0, min(120.0, seconds))
@@ -122,7 +134,22 @@ class Worker:
     def alive(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
 
+    def snapshot(self) -> dict:
+        result = self.progress.as_dict()
+        if not self.alive:
+            store = Store(self.cfg.db_path)
+            try:
+                result["remaining"] = len(store.designs(state="pending"))
+            finally:
+                store.conn.close()
+        return result
+
     # -- the loop ---------------------------------------------------------
+
+    def _report(self, step: str) -> None:
+        self.progress.current_step = step
+        self.progress.step_started_at = time.time()
+        self.progress.events = (self.progress.events + [f"{time.strftime('%H:%M:%S')}  {step}"])[-30:]
 
     def _wait_if_paused(self) -> bool:
         """Returns False if we should stop entirely."""
@@ -137,7 +164,23 @@ class Worker:
         return True
 
     def _loop(self, limit: int | None) -> None:
-        pipe = Pipeline(self.cfg)
+        pipe = None
+        try:
+            pipe = Pipeline(self.cfg, on_progress=self._report)
+            self._run(pipe, limit)
+        except Exception as exc:
+            log.exception("worker stopped unexpectedly")
+            self.progress.last_error = str(exc)[:1000]
+            self.progress.state = State.FAILED
+            self._report("Worker failed — fix the error below and press Start again")
+        finally:
+            self.progress.finished_at = time.time()
+            self.progress.current_design = None
+            self.progress.current_design_id = None
+            if pipe is not None:
+                pipe.store.conn.close()
+
+    def _run(self, pipe: Pipeline, limit: int | None) -> None:
         processed = 0
 
         while not self._stop.is_set():
@@ -147,7 +190,7 @@ class Worker:
             pending = pipe.store.designs(state="pending")
             self.progress.remaining = len(pending)
             if not pending:
-                self.progress.current_step = "nothing pending"
+                self._report("Queue complete" if processed else "No pending designs — add images in Sources")
                 self.progress.state = State.IDLE
                 break
             if limit and processed >= limit:
@@ -158,7 +201,8 @@ class Worker:
             row = pending[0]
             did = row["id"]
             self.progress.current_design = row["design_key"] or did[:12]
-            self.progress.current_step = "reading"
+            self.progress.current_design_id = did
+            self._report("Preparing design")
 
             try:
                 result = pipe.build(did)
@@ -167,7 +211,7 @@ class Worker:
                 pipe.store.set_design_state(did, "failed")
                 pipe.store.queue_review(did, f"exception: {exc}", 0.0)
                 self.progress.failed += 1
-                self.progress.last_error = str(exc)[:300]
+                self.progress.last_error = str(exc)[:1000]
                 result = "failed"
             else:
                 if result == "review":
@@ -177,9 +221,21 @@ class Worker:
                 else:
                     self.progress.failed += 1
 
+            pipe.store.set_design_state(did, result)
+            if result in ("review", "failed"):
+                reason = pipe.store.conn.execute(
+                    "SELECT reason FROM review WHERE design_id=?", (did,)).fetchone()
+                if reason:
+                    self._report(f"{result}: {reason['reason']}")
+                    if result == "failed":
+                        self.progress.last_error = reason["reason"][:1000]
+
             processed += 1
             self.progress.recent.append(f"{self.progress.current_design} -> {result}")
-            self.progress.current_step = "resting"
+            self.progress.remaining = max(0, len(pending) - 1)
+            self.progress.current_design_id = None
+            self.progress.current_design = None
+            self._report(f"Design finished: {result}")
 
             # the breather. This is what makes it liveable to leave running.
             slept = 0.0
@@ -190,7 +246,7 @@ class Worker:
         self.progress.current_design = None
         if self._stop.is_set():
             self.progress.state = State.STOPPED
-            self.progress.current_step = "stopped"
+            self._report("Stopped after the current design; pending designs are saved")
 
 
 # one worker per process, shared by the UI and the CLI

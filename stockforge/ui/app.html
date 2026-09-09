@@ -91,6 +91,10 @@
 
   .bar{height:5px;background:var(--line-soft);border-radius:3px;overflow:hidden;margin:12px 0 4px}
   .bar > i{display:block;height:100%;background:var(--accent);transition:width .4s ease}
+  .bar.busy > i{width:35%!important;animation:working 1.8s ease-in-out infinite}
+  @keyframes working{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}
+  @media(prefers-reduced-motion:reduce){.bar.busy > i{animation:none}}
+  .pill.processing{border-color:var(--accent);color:var(--accent)}
 
   table{width:100%;border-collapse:collapse;font-size:13.5px}
   th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;
@@ -434,11 +438,14 @@
 
   <!-- ── QUEUE ─────────────────────────────────────────────── -->
   <section id="queue" hidden>
-    <p class="lede">One design at a time, with a breather between each. Meant to be left running, not watched.</p>
+    <p class="lede">Follow each design from image analysis to editable files. Model requests can take several minutes; the current stage and elapsed time update here.</p>
     <div class="card">
       <h3>Worker</h3>
-      <p class="hint" id="worker-line">idle</p>
-      <div class="bar"><i id="worker-bar" style="width:0%"></i></div>
+      <p id="worker-line" role="status">Checking worker…</p>
+      <p class="hint" id="worker-detail"></p>
+      <p id="worker-alert" class="fail" role="alert" hidden></p>
+      <div class="bar" id="worker-track"><i id="worker-bar" style="width:0%"></i></div>
+      <p class="hint" id="worker-counts">Checking queue…</p>
       <div class="grid" style="margin-top:14px">
         <div class="stat"><div class="n" id="w-done">0</div><div class="k">done</div></div>
         <div class="stat"><div class="n" id="w-review">0</div><div class="k">to review</div></div>
@@ -447,16 +454,17 @@
       </div>
       <div class="row" style="margin-top:16px">
         <button class="btn primary" id="w-start" onclick="worker('start')">Start</button>
-        <button class="btn" onclick="worker('pause')">Pause</button>
-        <button class="btn" onclick="worker('resume')">Resume</button>
-        <button class="btn" onclick="worker('stop')">Stop</button>
+        <button class="btn" id="w-pause" onclick="worker('pause')" disabled>Pause</button>
+        <button class="btn" id="w-resume" onclick="worker('resume')" disabled>Resume</button>
+        <button class="btn" id="w-stop" onclick="worker('stop')" disabled>Stop</button>
         <span style="min-width:180px">
           <label>Breather — <b id="pace-v">2</b>s between designs</label>
           <input type="range" id="pace" min="0" max="30" step="1" value="2"
-                 oninput="paceV.textContent=this.value" onchange="setPace(this.value)">
+                 oninput="showV('pace-v',this.value)" onchange="setPace(this.value)">
         </span>
       </div>
-      <div class="log" id="w-log"></div>
+      <p class="hint">Pause and Stop take effect after the current design finishes.</p>
+      <div class="log" id="w-log" aria-label="Recent processing activity"></div>
     </div>
     <div class="card">
       <h3>Designs</h3>
@@ -509,8 +517,14 @@ const api = async (path, body) => {
   const opts = (body || POST_ONLY.has(path))
     ? {method:'POST', headers:{'Content-Type':'application/json'},
        body:JSON.stringify(body || {})} : {};
-  const r = await fetch(path, opts);
-  return r.json();
+  try {
+    const r = await fetch(path, {...opts, ...(path === '/api/worker' ? {signal:AbortSignal.timeout(10000)} : {})});
+    const data = await r.json();
+    if (!r.ok && !data.error) data.error = `Request failed (HTTP ${r.status})`;
+    return data;
+  } catch (e) {
+    throw new Error(`Could not reach Stockforge (${path}). Check that the program is running, then try again.`);
+  }
 };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -746,9 +760,18 @@ async function doPull(kind, targetId, limitId){
   const target = $(targetId).value.trim();
   if (!target) return msg.textContent = 'nothing to pull from yet';
   msg.textContent = 'pulling — downloading and flattening images, give it a minute…';
-  const r = await api('/api/pull', {kind, target, limit: $(limitId).value || null});
-  msg.textContent = r.error ? 'error: ' + r.error : `pulled ${r.pulled} designs`;
-  loadTotals();
+  const buttons = [...$('door-' + kind).querySelectorAll('button')];
+  buttons.forEach(b => b.disabled = true);
+  try {
+    const r = await api('/api/pull', {kind, target, limit: $(limitId).value || null});
+    msg.textContent = r.error ? 'Import failed: ' + r.error
+      : `Added ${r.pulled} designs to the queue. ${r.pulled ? 'Open Queue and press Start to convert them.' : 'No images were imported.'}`;
+    if (r.warnings?.length) msg.textContent += '\n' + r.warnings.join('\n');
+    msg.style.whiteSpace = 'pre-wrap';
+    msg.setAttribute('role', 'status');
+    await loadTotals();
+  } catch (e) { msg.textContent = e.message; }
+  finally { buttons.forEach(b => b.disabled = false); }
 }
 
 function loadLinkFile(files){
@@ -802,7 +825,7 @@ function paintUpload(r){
   $('upload-tally').innerHTML =
     `<span><b>${r.accepted || 0}</b> accepted${exts ? ' — ' + esc(exts) : ''}</span>` +
     `<span><b>${r.rejected || 0}</b> not taken</span>` +
-    (r.pulled != null ? `<span><b>${r.pulled}</b> designs made</span>` : '');
+    (r.pulled != null ? `<span><b>${r.pulled}</b> designs queued for conversion</span>` : '');
 
   $('upload-files').hidden = false;
   $('upload-files').innerHTML = (r.files || []).map(f => `
@@ -814,7 +837,7 @@ function paintUpload(r){
       <span class="size">${f.bytes ? bytes(f.bytes) : ''}</span>
     </div>`).join('');
 
-  $('upload-msg').textContent = r.error ? r.error : '';
+  $('upload-msg').textContent = r.error ? r.error : (r.pulled ? 'Images added. Open Queue and press Start to create the editable files.' : '');
 }
 
 function wireDropzone(){
@@ -841,25 +864,54 @@ async function loadTotals(){
 
 /* ── queue ────────────────────────────────────────── */
 async function worker(action){
-  const body = {action};
-  if (action === 'start' && $('pull-limit').value) body.limit = $('pull-limit').value;
-  paintWorker(await api('/api/worker', body));
+  workerCommand = true;
+  $('w-start').disabled = true;
+  $('worker-line').textContent = `Sending ${action} request…`;
+  workerAlert('');
+  try {
+    const w = await api('/api/worker', {action});
+    if (w.error) throw new Error(w.error);
+    workerCommand = false;
+    paintWorker(w);
+    await loadDesigns();
+  } catch (e) { workerAlert(e.message); }
+  finally { workerCommand = false; }
 }
 const setPace = pace => api('/api/worker', {pace: Number(pace)});
+let workerCommand = false;
+let latestWorker = {};
+function workerAlert(message){
+  $('worker-alert').textContent = message;
+  $('worker-alert').hidden = !message;
+}
+const duration = seconds => `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 
 function paintWorker(w){
+  latestWorker = w;
+  if (workerCommand) return;
+  workerAlert(w.last_error || '');
+  const busy = ['running','pausing','stopping'].includes(w.state);
   const total = w.done + w.review + w.failed + w.remaining;
   const pct = total ? Math.round((w.done + w.review + w.failed) / total * 100) : 0;
   $('worker-bar').style.width = pct + '%';
+  $('worker-track').classList.toggle('busy', busy && !!w.current_design_id);
   $('worker-line').textContent = w.current_design
     ? `${w.state} — ${w.current_design} (${w.current_step})`
     : `${w.state}${w.current_step ? ' — ' + w.current_step : ''}`;
+  $('worker-detail').textContent = `Connected · Updated ${new Date().toLocaleTimeString()} · Run time ${duration(w.elapsed_s || 0)}`
+    + (w.current_design_id ? ` · Current stage ${duration(w.step_elapsed_s || 0)}` : '')
+    + (w.state === 'pausing' || w.state === 'stopping' ? ' · Finishing the current design before ' + (w.state === 'pausing' ? 'pausing.' : 'stopping.') : '');
+  $('worker-counts').textContent = `${w.done + w.review + w.failed} of ${total} designs finished · ${w.remaining} remaining`
+    + (busy && w.current_design_id ? ' · Processing current design (stage duration varies)' : ` · ${pct}% of queue finished`);
   $('w-done').textContent = w.done;
   $('w-review').textContent = w.review;
   $('w-failed').textContent = w.failed;
   $('w-rate').textContent = w.per_hour || '—';
-  $('w-start').disabled = w.state === 'running';
-  $('w-log').innerHTML = (w.recent || []).slice().reverse()
+  $('w-start').disabled = busy || w.state === 'paused';
+  $('w-pause').disabled = w.state !== 'running';
+  $('w-resume').disabled = !['paused','pausing'].includes(w.state);
+  $('w-stop').disabled = !['running','pausing','paused'].includes(w.state);
+  $('w-log').innerHTML = [...(w.events || []), ...(w.recent || [])].slice().reverse()
     .map(l => `<div>${esc(l)}</div>`).join('')
     + (w.last_error ? `<div class="fail">last error: ${esc(w.last_error)}</div>` : '');
 }
@@ -874,7 +926,9 @@ async function loadDesigns(){
                           : esc((r.title || r.design_key || r.id).slice(0,60))}</td>
       <td class="mono">${esc(r.source)}</td>
       <td>${r.image_count}</td><td>${r.page_count || '—'}</td>
-      <td><span class="pill ${esc(r.state)}">${esc(r.state)}</span></td>
+      <td><span class="pill ${r.id === latestWorker.current_design_id ? 'processing' : esc(r.state)}">${r.id === latestWorker.current_design_id ? 'processing' : esc(r.state)}</span>
+      ${r.id === latestWorker.current_design_id ? `<div>${esc(latestWorker.current_step)}</div>` : ''}
+      ${r.issue ? `<div class="fail">${esc(r.issue)}</div>` : ''}</td>
       <td>${outputLinks(r.files)}</td></tr>`).join('')}
     </tbody></table>`;
 }
@@ -964,13 +1018,20 @@ function refresh(){
   if (active === 'review')  { loadReview(); loadGaps(); }
   if (active === 'deliver') { loadReady(); loadTotals(); }
 }
-setInterval(async () => {
-  const w = await api('/api/worker');
-  paintWorker(w);
-  if (active === 'queue' && w.state === 'running') loadDesigns();
-}, 2500);
+async function pollWorker(){
+  try {
+    const w = await api('/api/worker');
+    if (w.error) throw new Error(w.error);
+    paintWorker(w);
+    if (active === 'queue') await loadDesigns();
+  } catch (e) {
+    workerAlert(e.message);
+    $('worker-detail').textContent = 'Connection lost — progress cannot be confirmed. Retrying automatically…';
+  } finally { setTimeout(pollWorker, 2000); }
+}
 
 showDoor();
 wireDropzone();
 refresh();
+pollWorker();
 </script>

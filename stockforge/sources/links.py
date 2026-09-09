@@ -56,9 +56,13 @@ class LinksSource(Source):
                 got = fetch(url, dest)
                 if got:
                     yield Design(design_id=url, images=[got], listing_url=url, source="links")
+                else:
+                    self.warnings.append(f"Could not download {url.split('?')[0]}. Check the image link or upload the file.")
                 continue
 
             listing = listing_images(url, cache / f"listing-{i:05d}")
             if listing.images:
                 yield listing
+            else:
+                self.warnings.append(f"{url.split('?')[0]}: {listing.import_error or 'No images found; upload the saved image instead.'}")
             time.sleep(1.0)                      # be a good citizen
