@@ -27,7 +27,7 @@ _cache: dict[str, VisionProvider] = {}
 _built_from: dict[str, tuple] = {}
 # Everything from_env() looks at. Pinned rather than derived so that adding a
 # knob to from_env without adding it here is the thing that breaks the test.
-_WATCHED = ("BASE_URL", "MODEL", "API_KEY", "TIMEOUT", "MAX_EDGE")
+_WATCHED = ("BASE_URL", "MODEL", "API_KEY", "TIMEOUT", "MAX_EDGE", "MAX_TOKENS")
 
 # Roles a caller installed by hand. set_provider is how tests and embedders
 # supply their own, and re-reading the environment must never throw those away.

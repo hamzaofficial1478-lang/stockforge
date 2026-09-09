@@ -77,6 +77,37 @@ def _ok(_n, _body):
     return 200, {"choices": [{"message": {"content": '{"answer": "yes"}'}}]}
 
 
+@pytest.mark.parametrize("content", [None, '{"partial":'])
+def test_truncated_response_retries_once_with_more_room(image, content):
+    def reply(n, body):
+        if n == 1:
+            return 200, {"choices": [{"finish_reason": "length", "message": {"content": content}}]}
+        return _ok(n, body)
+    with _Server(reply) as s:
+        assert OpenAICompatProvider(s.url, "m").chat("s", "u", [image]) == '{"answer": "yes"}'
+    assert [r["max_tokens"] for r in s.requests] == [4096, 16384]
+
+
+def test_repeated_truncation_stops_and_does_not_expose_reasoning(image):
+    def reply(n, body):
+        return 200, {"choices": [{"finish_reason": "length", "message": {"content": None, "reasoning_content": "internal analysis"}}]}
+    with _Server(reply) as s:
+        with pytest.raises(ProviderError, match="response limit") as exc:
+            OpenAICompatProvider(s.url, "m").chat("s", "u", [image])
+    assert len(s.requests) == 2
+    assert "internal analysis" not in str(exc.value)
+
+
+def test_empty_final_answer_has_a_readable_error(image):
+    def reply(n, body):
+        return 200, {"choices": [{"finish_reason": "stop", "message": {"content": None, "reasoning_content": "internal analysis"}}]}
+    with _Server(reply) as s:
+        with pytest.raises(ProviderError, match="no final answer") as exc:
+            OpenAICompatProvider(s.url, "m").chat("s", "u", [image])
+    assert len(s.requests) == 1
+    assert "internal analysis" not in str(exc.value)
+
+
 # --- the happy path ------------------------------------------------------
 
 def test_a_reply_comes_back_as_its_content(image):

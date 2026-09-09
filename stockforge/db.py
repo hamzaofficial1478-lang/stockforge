@@ -326,7 +326,8 @@ class Store:
         with self.tx() as c:
             c.execute(
                 "INSERT INTO review (design_id, reason, score) VALUES (?,?,?) "
-                "ON CONFLICT(design_id) DO UPDATE SET reason=excluded.reason, score=excluded.score",
+                "ON CONFLICT(design_id) DO UPDATE SET reason=excluded.reason, score=excluded.score, "
+                "decision=NULL, decided_at=NULL",
                 (did, reason, score),
             )
 

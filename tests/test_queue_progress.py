@@ -95,3 +95,15 @@ def test_invalid_worker_request_returns_json(panel, monkeypatch):
     monkeypatch.setattr("stockforge.worker._worker", None)
     code, data = post_raw(panel[0], "/api/worker", {"action": "start", "limit": "bad"})
     assert code == 400 and data["error"]
+
+
+def test_a_failed_retry_reappears_in_review(tmp_path):
+    store = Store(tmp_path / "test.db")
+    store.queue_review("design", "first failure", 0)
+    with store.tx() as conn:
+        conn.execute("UPDATE review SET decision='retry', decided_at=1")
+    store.queue_review("design", "second failure", 0)
+    rows = store.pending_review()
+    assert len(rows) == 1 and rows[0]["reason"] == "second failure"
+    assert rows[0]["decided_at"] is None
+    store.conn.close()

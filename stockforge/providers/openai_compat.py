@@ -16,6 +16,7 @@ nothing to rewrite when you swap the model.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import urllib.error
 import urllib.request
@@ -23,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 from .base import ProviderError, VisionProvider, encode_image
+
+log = logging.getLogger("stockforge.providers")
 
 
 class OpenAICompatProvider(VisionProvider):
@@ -89,9 +92,21 @@ class OpenAICompatProvider(VisionProvider):
             raise ProviderError(f"{self.name} could not read a response: {exc}") from exc
 
         try:
-            content = body["choices"][0]["message"]["content"]
+            choice = body["choices"][0]
+            content = choice["message"]["content"]
+            if choice.get("finish_reason") == "length":
+                budget = payload["max_tokens"]
+                if not kw.get("_length_retry") and budget < 32768:
+                    larger = min(32768, budget * 4)
+                    log.warning("[%s] response reached %d tokens; retrying once with %d",
+                                self.model, budget, larger)
+                    return self.chat(system, user_text, images,
+                                     **{**kw, "max_tokens": larger, "_length_retry": True})
+                raise ProviderError(f"{self.model} reached its response limit before finishing. "
+                                    "Increase SF_VISION_MAX_TOKENS or choose another model in Setup, then retry the design from Review.")
             if not isinstance(content, str) or not content.strip():
-                raise ValueError("empty or non-text content")
+                raise ProviderError(f"{self.model} returned no final answer. "
+                                    "Retry the design from Review or choose another model in Setup.")
             return content
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ProviderError(f"{self.name} odd response: {str(body)[:300]}") from exc
@@ -112,5 +127,6 @@ def from_env(prefix: str = "SF_VISION") -> OpenAICompatProvider:
         model=model,
         api_key=os.environ.get(f"{prefix}_API_KEY"),
         timeout=int(os.environ.get(f"{prefix}_TIMEOUT", 300)),
+        max_tokens=int(os.environ.get(f"{prefix}_MAX_TOKENS", 4096)),
         max_image_edge=int(os.environ.get(f"{prefix}_MAX_EDGE", 1280)),
     )
