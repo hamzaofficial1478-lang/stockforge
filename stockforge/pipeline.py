@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 
 from .config import Settings, settings as default_settings
@@ -145,6 +146,8 @@ class Pipeline:
         usable = [a for a in assets if a["flat_path"]]
         images = [Path(a["flat_path"]) for a in usable]
         if not images:
+            self.store.queue_review(design_id, "no usable source images", 0.0)
+            self.store.set_design_state(design_id, "failed")
             return "failed"
         mockups = {i for i, a in enumerate(usable) if a["is_mockup"]}
 
@@ -170,6 +173,11 @@ class Pipeline:
         if not spec.pages:
             self.store.queue_review(design_id, "no printed surface identified", 0.0)
             return "review"
+
+        if self.cfg.preserve_original:
+            # Recovery exports the analyser's read without rewriting names,
+            # borrowing decoration, or rejecting it for resembling its source.
+            return self._export(spec, design_id, distinct=0.0, master_only=True)
 
         # --- make it our own ------------------------------------------
         # Mix first, then derive. Mixing takes the grid from one of your
@@ -255,7 +263,11 @@ class Pipeline:
                 log.warning("[%s] patched spec invalid, keeping previous: %s", design_id[:8], exc)
                 break
 
-        # --- ship it ---------------------------------------------------
+        return self._export(derived, design_id, distinct)
+
+    def _export(self, derived: DesignSpec, design_id: str, distinct: float,
+                master_only: bool = False) -> str:
+        """Export every page, including imperfect recoveries that need editing."""
         out_dir = self.cfg.root / "out" / design_id[:16]
         holes: list[str] = []
         typeless: list[str] = []
@@ -269,13 +281,23 @@ class Pipeline:
         undeliverable: list[str] = []
         not_for_stock: list[str] = []
 
+        used_names: set[str] = set()
         for i, page in enumerate(derived.pages):
+            # Model-generated labels are display text, never filesystem paths.
+            name = re.sub(r"[^\w-]+", "-", page.name, flags=re.ASCII).strip("-")[:70] or "page"
+            unique = name
+            suffix = 2
+            while unique.casefold() in used_names:
+                unique = f"{name}-{suffix}"
+                suffix += 1
+            used_names.add(unique.casefold())
+            stem = f"{design_id[:16]}-{unique}"
             # The delivered file carries the bleed; the previews above did not,
             # because a preview is judged against the source artwork and should
             # be the same view of the piece.
             result = render(derived, self.cfg.fonts_dir, self.cfg.motifs_dir,
                             page_index=i, bleed_mm=page.canvas.bleed_mm)
-            svg = write_svg(result, self.cfg.root / "renders" / f"{design_id[:16]}-{page.name}.svg")
+            svg = write_svg(result, self.cfg.root / "renders" / f"{stem}.svg")
             holes.extend(result.missing_motifs)
             # Type nothing in the library could answer. The SVG carries the
             # generic "serif" for it, so whatever the machine happens to have
@@ -293,7 +315,7 @@ class Pipeline:
                 if scale < CRAMPED:
                     cramped.append(f"{label} at {scale:.0%} of its intended size")
             exported = export_stage.export_all(
-                svg, out_dir, stem=f"{design_id[:16]}-{page.name}",
+                svg, out_dir, stem=stem,
                 preview_px=self.cfg.preview_px)
 
             # Does this look like something we already made? The distinctness
@@ -310,7 +332,7 @@ class Pipeline:
             elif exported.stock_eps is None:
                 not_for_stock.append(f"'{page.name}': {why}")
 
-            twin = self._check_for_a_twin(design_id, page.name, exported.preview_jpg)
+            twin = None if master_only else self._check_for_a_twin(design_id, page.name, exported.preview_jpg)
             if twin:
                 twins.append(twin)
             with self.store.tx() as c:
@@ -363,7 +385,7 @@ class Pipeline:
 
         # No EPS is no stock submission: the agencies take EPS, and publish
         # gathers what to send by globbing for one.
-        state = "ready" if (derived.publishable or self.cfg.publish_all) else "master_only"
+        state = "ready" if not master_only and (derived.publishable or self.cfg.publish_all) else "master_only"
         if not_for_stock and state == "ready":
             state = "master_only"
             log.warning("[%s] master only — %s", design_id[:8], "; ".join(not_for_stock[:2]))

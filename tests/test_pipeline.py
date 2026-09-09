@@ -184,7 +184,7 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.delenv("FONTCONFIG_FILE", raising=False)
     build_font_library(tmp_path / "fonts")
     build_motif_library(tmp_path / "motifs")
-    return Settings(root=tmp_path / "work",
+    return Settings(root=tmp_path / "work", preserve_original=False,
                     fonts_dir=tmp_path / "fonts",
                     motifs_dir=tmp_path / "motifs")
 
@@ -439,8 +439,7 @@ def test_the_run_loop_reports_what_it_did(workspace, tmp_path):
 def _no_inkscape(monkeypatch):
     """Exactly what a Windows machine without Inkscape looks like."""
     import stockforge.stages.export as export_stage
-    monkeypatch.setattr(export_stage.shutil, "which",
-                        lambda name: None if name == "inkscape" else "/usr/bin/" + name)
+    monkeypatch.setattr(export_stage, "_inkscape", lambda: None)
 
 
 def test_a_design_with_no_master_is_failed_not_ready(workspace, tmp_path, monkeypatch):

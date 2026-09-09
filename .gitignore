@@ -6,7 +6,6 @@ venv/
 workspace/
 assets/fonts/*
 !assets/fonts/.gitkeep
-!assets/fonts/manifest.json
 *.db
 *.db-wal
 *.db-shm
@@ -20,3 +19,5 @@ assets/fonts/*
 .coverage.*
 htmlcov/
 .pytest_cache/
+tools/tesseract/
+LOCAL_APPDATA_FONTCONFIG_CACHE/

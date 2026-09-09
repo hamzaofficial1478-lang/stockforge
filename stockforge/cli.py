@@ -355,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-browser", action="store_true")
 
     f = sub.add_parser("fonts", help="manage the font library")
-    f.add_argument("action", choices=["scan", "list", "install"])
+    f.add_argument("action", choices=["scan", "list", "install", "download"])
 
     m = sub.add_parser("motifs", help="inspect the motif library and grow it")
     m.add_argument("action", choices=["list", "match", "todo"])
@@ -375,7 +375,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "fonts":
-        if args.action == "scan":
+        if args.action == "download":
+            from .stages.font_download import download_starter
+            try:
+                entries = download_starter(settings.fonts_dir)
+                print(f"Font library ready: {len(entries)} faces; upstream licenses included.")
+                if fonts_stage.ON_WINDOWS:
+                    for name, what in fonts_stage.install_for_windows(settings.fonts_dir):
+                        print(f"  {name}: {what}")
+            except (OSError, RuntimeError, ValueError) as exc:
+                print(f"Font setup failed: {exc}")
+                return 1
+        elif args.action == "scan":
             entries = fonts_stage.scan(settings.fonts_dir)
             path = fonts_stage.write_manifest(settings.fonts_dir, entries)
             conf = fonts_stage.write_fontconfig(settings.fonts_dir)

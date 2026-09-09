@@ -110,6 +110,7 @@ class FontClass(BaseModel):
     weight: int = Field(ge=100, le=900, description="nearest CSS weight")
     contrast: Literal["low", "medium", "high"] = "medium"
     width: Literal["condensed", "normal", "extended"] = "normal"
+    italic: bool = False
     mood: list[str] = Field(default_factory=list, description="e.g. elegant, playful, rustic, modern")
 
 

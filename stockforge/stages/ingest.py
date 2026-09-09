@@ -128,11 +128,11 @@ def _read_any(src: Path) -> "cv2.typing.MatLike | None":
     if src.suffix.lower() in VECTOR_EXTS:
         import tempfile
 
-        import cairosvg
+        from .export import svg_to_png
         with tempfile.TemporaryDirectory() as tmp:
             png = Path(tmp) / "vector.png"
             try:
-                cairosvg.svg2png(url=str(src), write_to=str(png), output_width=1600)
+                svg_to_png(src, png, width=1600)
             except Exception as exc:
                 raise ValueError(f"could not draw {src.name}: {exc}") from exc
             return cv2.imread(str(png), cv2.IMREAD_COLOR)

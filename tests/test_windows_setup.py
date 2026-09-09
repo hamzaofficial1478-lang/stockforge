@@ -106,10 +106,11 @@ def test_the_fix_text_says_how_to_install_it(tmp_path, monkeypatch):
 
 # --- installing the fonts on Windows ---------------------------------------
 
-def test_it_refuses_to_pretend_on_linux(tmp_path):
+def test_it_refuses_to_pretend_on_linux(tmp_path, monkeypatch):
     """Doing nothing while looking like it worked is how a catalogue gets set
     in the wrong face."""
     from stockforge.stages.fonts import install_for_windows
+    monkeypatch.setattr("stockforge.stages.fonts.ON_WINDOWS", False)
 
     with pytest.raises(RuntimeError) as exc:
         install_for_windows(tmp_path)
@@ -148,6 +149,7 @@ def test_a_font_is_copied_and_registered(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(local))
     monkeypatch.setattr(fonts_stage, "ON_WINDOWS", True)
     monkeypatch.setattr(fonts_stage, "_broadcast_font_change", lambda: None)
+    monkeypatch.setattr(fonts_stage, "_register_font", lambda p: None)
 
     done = fonts_stage.install_for_windows(library)
 

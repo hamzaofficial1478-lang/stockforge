@@ -42,7 +42,7 @@ EDITABLE = {
     "SF_REASON_BASE_URL", "SF_REASON_MODEL", "SF_REASON_API_KEY",
     "SF_ETSY_API_KEY", "SF_ROOT", "SF_FONTS", "SF_MOTIFS",
     "SF_DERIVE_STRENGTH", "SF_DISTINCT_THRESHOLD", "SF_DERIVE_ROUNDS",
-    "SF_CRITIQUE_ROUNDS", "SF_MIX", "SF_MOTIF_THRESHOLD",
+    "SF_CRITIQUE_ROUNDS", "SF_MIX", "SF_MOTIF_THRESHOLD", "SF_PRESERVE_ORIGINAL",
     "SF_PUBLISH", "SF_PUBLISH_ALL",
     "SF_FTP_ADOBE_HOST", "SF_FTP_ADOBE_USER", "SF_FTP_ADOBE_PASS",
     "SF_FTP_SHUTTERSTOCK_HOST", "SF_FTP_SHUTTERSTOCK_USER", "SF_FTP_SHUTTERSTOCK_PASS",
@@ -54,7 +54,7 @@ def read_env(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     out: dict[str, str] = {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -69,7 +69,7 @@ def write_env(path: Path, updates: dict[str, str]) -> None:
     Written to the same place `config.load_env` reads from, which was the other
     half of the problem: settings were saved to a file nothing ever loaded.
     """
-    existing = path.read_text().splitlines() if path.exists() else []
+    existing = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else []
     seen: set[str] = set()
     out: list[str] = []
 
@@ -89,7 +89,8 @@ def write_env(path: Path, updates: dict[str, str]) -> None:
         for k in fresh:
             out.append(f"{k}={updates[k]}")
 
-    path.write_text("\n".join(out).rstrip() + "\n")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
     for k, v in updates.items():          # take effect without a restart
         os.environ[k] = v
 
@@ -109,6 +110,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if ctype == "image/svg+xml":
+                self.send_header("Content-Security-Policy", "sandbox")
             self.end_headers()
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
@@ -168,7 +172,7 @@ class Handler(BaseHTTPRequestHandler):
             state = (query.get("state") or [None])[0]
             limit = int((query.get("limit") or [200])[0])
             rows = pipe.store.designs(state=state)[:limit]
-            return self._json([dict(r) for r in rows])
+            return self._json([{**dict(r), "files": self._outputs(r["id"])} for r in rows])
 
         if route == "/api/motif-gaps":
             pipe = Pipeline(self.cfg)
@@ -191,6 +195,8 @@ class Handler(BaseHTTPRequestHandler):
                     "SELECT flat_path FROM assets WHERE design_id=? ORDER BY width DESC LIMIT 1",
                     (did,)).fetchone()
                 renders = sorted((self.cfg.root / "renders").glob(f"{did[:16]}*.png"))
+                if not renders:
+                    renders = sorted((self.cfg.root / "out" / did[:16]).glob("*-preview.png"))
                 out.append({
                     "design_id": did,
                     "reason": r["reason"],
@@ -200,6 +206,7 @@ class Handler(BaseHTTPRequestHandler):
                     "state": design["state"] if design else None,
                     "source_image": str(asset["flat_path"]) if asset else None,
                     "rebuilds": [str(p) for p in renders],
+                    "files": self._outputs(did),
                 })
             return self._json(out)
 
@@ -212,6 +219,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._serve_file((query.get("path") or [""])[0])
 
         return self._json({"error": "not found"}, 404)
+
+    def _outputs(self, did: str) -> list[str]:
+        files = sorted((self.cfg.root / "out" / did[:16]).glob("*"))
+        files += sorted((self.cfg.root / "renders").glob(f"{did[:16]}-*.svg"))
+        return [str(p) for p in files if p.is_file() and p.suffix.lower() in {".svg", ".pdf", ".eps"}]
 
     def _serve_file(self, raw: str) -> None:
         """Only ever from inside the workspace. A panel that will hand out any
@@ -226,6 +238,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "outside the workspace"}, 403)
         if not path.is_file():
             return self._json({"error": "not found"}, 404)
+        # The workspace also contains model API keys and the SQLite database.
+        if path.suffix.lower() not in {*IMAGE_EXTS_ORDERED, ".pdf", ".eps", ".csv"}:
+            return self._json({"error": "not a design output"}, 403)
         ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         self._send(200, path.read_bytes(), ctype)
 
@@ -268,6 +283,9 @@ class Handler(BaseHTTPRequestHandler):
     # -- POST -------------------------------------------------------------
 
     def do_POST(self) -> None:
+        origin = self.headers.get("Origin")
+        if origin and origin != f"http://{self.headers.get('Host')}":
+            return self._json({"error": "cross-origin requests are not allowed"}, 403)
         route = urlparse(self.path).path
 
         # Read before _body(), which would try to parse a file upload as JSON.
@@ -357,7 +375,7 @@ class Handler(BaseHTTPRequestHandler):
             chosen = models_store.activate(self.cfg.root, str(body.get("id") or ""))
             if chosen is None:
                 return self._json({"error": "no such connection"}, 404)
-            updates = {k: v for k, v in models_store.env_for(chosen).items() if v}
+            updates = models_store.env_for(chosen)
             write_env(env_file(), updates)
             # The panel is meant to take effect now, not on the next start, and
             # the provider registry watches these — so the running pipeline

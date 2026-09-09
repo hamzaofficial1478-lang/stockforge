@@ -105,7 +105,7 @@ def built(tmp_path, monkeypatch):
     monkeypatch.delenv("FONTCONFIG_FILE", raising=False)
     build_font_library(tmp_path / "fonts")
     build_motif_library(tmp_path / "motifs")
-    cfg = Settings(root=tmp_path / "work", fonts_dir=tmp_path / "fonts",
+    cfg = Settings(root=tmp_path / "work", fonts_dir=tmp_path / "fonts", preserve_original=False,
                    motifs_dir=tmp_path / "motifs")
     provider = ScriptedProvider()
     providers.set_provider("vision", provider)

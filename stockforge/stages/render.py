@@ -217,7 +217,7 @@ def _motif(spec: DesignSpec, el: MotifElement, w: float, h: float, motifs_dir: P
         return ""
 
     x, y, bw, bh = _px(el.box, w, h)
-    body = _motif_body(src.read_text())
+    body = _motif_body(src.read_text(encoding="utf-8"))
 
     # Motif files are authored on a 0..100 unit square. Scaling each axis to
     # the box independently is only right for the drawings that are meant to be
@@ -275,6 +275,7 @@ def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
     # asking for 400 of a family whose bold we matched draws — and measures —
     # a different file from the one we chose.
     weight = entry.weight if entry else el.font.weight
+    italic = entry.to_class().italic if entry else el.font.italic
     face = open_face(entry, fonts_dir) if entry else None
 
     content = el.content
@@ -317,6 +318,7 @@ def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
     node = (
         f'<text font-family="{escape(family)}" font-size="{size:.2f}" '
         f'font-weight="{weight}" fill="{_fill(spec, el.colour)}" '
+        f'font-style="{"italic" if italic else "normal"}" '
         f'letter-spacing="{el.tracking * size:.2f}" text-anchor="{anchor}" '
         f'dominant-baseline="middle"{rot}>{spans}</text>'
     )
@@ -474,5 +476,5 @@ def _raster(el: RasterElement, page: Page, w: float, h: float) -> tuple[str, str
 
 def write_svg(result: RenderResult, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(result.svg)
+    path.write_text(result.svg, encoding="utf-8")
     return path

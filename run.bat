@@ -12,7 +12,8 @@ cd /d "%~dp0"
 title stockforge
 
 set "PYEXE="
-where py >nul 2>&1 && set "PYEXE=py -3"
+if exist "%~dp0.venv\Scripts\python.exe" "%~dp0.venv\Scripts\python.exe" -c "pass" >nul 2>&1 && set "PYEXE="%~dp0.venv\Scripts\python.exe""
+if not defined PYEXE where py >nul 2>&1 && set "PYEXE=py -3"
 if not defined PYEXE where python >nul 2>&1 && set "PYEXE=python"
 
 if not defined PYEXE (

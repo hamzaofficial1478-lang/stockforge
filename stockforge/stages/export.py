@@ -86,7 +86,12 @@ def _inkscape() -> str | None:
 
 
 def _run(args: list[str]) -> None:
-    proc = subprocess.run(args, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120,
+                              creationflags=subprocess.CREATE_NO_WINDOW if ON_WINDOWS else 0)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ExportError(f"could not run {args[0]}: {exc}") from exc
     if proc.returncode != 0:
         raise ExportError(f"{args[0]} failed: {proc.stderr.strip()[:400]}")
 

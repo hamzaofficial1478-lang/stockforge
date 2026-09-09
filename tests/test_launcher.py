@@ -57,6 +57,16 @@ def test_a_font_the_renderer_cannot_see_is_caught(workspace, monkeypatch):
     the family goes into the SVG and something else gets drawn."""
     from stockforge.health import _check_font_rendering
 
+    def substituted_font(svg, png, width):
+        import cv2
+        import numpy as np
+        image = np.full((200, width), 255, dtype=np.uint8)
+        image[20:120, 10:width // 4] = 0
+        cv2.imwrite(str(png), image)
+        return png
+
+    monkeypatch.setattr("stockforge.stages.export.svg_to_png", substituted_font)
+
     monkeypatch.delenv("FONTCONFIG_FILE", raising=False)
     check = _check_font_rendering(workspace)
 

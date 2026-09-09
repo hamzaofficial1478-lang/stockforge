@@ -19,6 +19,8 @@ import json
 import logging
 import os
 import shutil
+import hashlib
+from xml.sax.saxutils import escape
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
@@ -47,6 +49,7 @@ class FontEntry:
         return FontClass(
             category=self.category, weight=self.weight,
             contrast=self.contrast, width=self.width, mood=self.mood or [],
+            italic=any(s in self.style.lower() for s in ("italic", "oblique")),
         )
 
 
@@ -54,8 +57,8 @@ class FontEntry:
 
 _CATEGORY_HINTS = {
     "script": ("script", "hand", "signature", "calligr", "brush"),
-    "serif": ("serif", "garamond", "playfair", "libre", "lora", "crimson", "cormorant"),
     "slab": ("slab", "rockwell", "roboto slab"),
+    "serif": ("serif", "garamond", "playfair", "libre", "lora", "crimson", "cormorant"),
     "mono": ("mono", "code", "courier"),
     "display": ("display", "poster", "deco", "titling"),
     "blackletter": ("black letter", "blackletter", "gothic", "fraktur"),
@@ -76,7 +79,7 @@ def _guess(family: str, style: str) -> tuple[str, int, str]:
             category = cat
             break
     weight = 400
-    for w, needles in _WEIGHT_HINTS.items():
+    for w, needles in sorted(_WEIGHT_HINTS.items(), key=lambda item: -max(map(len, item[1]))):
         if any(n in blob for n in needles):
             weight = w
             break
@@ -94,27 +97,34 @@ def scan(fonts_dir: Path) -> list[FontEntry]:
     """
     from fontTools.ttLib import TTFont         # imported here so `scan` is optional
 
+    previous = {e.path.replace("\\", "/"): e for e in load_manifest(fonts_dir)}
     entries: list[FontEntry] = []
     for path in sorted(fonts_dir.rglob("*")):
         if path.suffix.lower() not in {".ttf", ".otf"}:
             continue
         try:
-            tt = TTFont(str(path), lazy=True, fontNumber=0)
-            names = {r.nameID: r.toUnicode() for r in tt["name"].names if r.nameID in (1, 2)}
+            with TTFont(str(path), lazy=True, fontNumber=0) as tt:
+                names = {r.nameID: r.toUnicode() for r in tt["name"].names if r.nameID in (1, 2)}
+                actual_weight = int(tt["OS/2"].usWeightClass) if "OS/2" in tt else None
         except Exception:
             continue
         family, style = names.get(1, path.stem), names.get(2, "Regular")
         category, weight, width = _guess(family, style)
+        relative = path.relative_to(fonts_dir).as_posix()
+        if relative in previous:
+            entries.append(previous[relative])
+            continue
         entries.append(FontEntry(
-            path=str(path.relative_to(fonts_dir)), family=family, style=style,
-            category=category, weight=weight, width=width, mood=[],
+            path=relative, family=family, style=style,
+            category=category, weight=actual_weight or weight, width=width, mood=[],
         ))
     return entries
 
 
 def write_manifest(fonts_dir: Path, entries: list[FontEntry]) -> Path:
     out = fonts_dir / MANIFEST
-    out.write_text(json.dumps([asdict(e) for e in entries], indent=2))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps([asdict(e) for e in entries], indent=2), encoding="utf-8")
     return out
 
 
@@ -122,7 +132,7 @@ def load_manifest(fonts_dir: Path) -> list[FontEntry]:
     path = fonts_dir / MANIFEST
     if not path.exists():
         return []
-    return [FontEntry(**d) for d in json.loads(path.read_text())]
+    return [FontEntry(**d) for d in json.loads(path.read_text(encoding="utf-8"))]
 
 
 # --------------------------------------------------------------------------
@@ -195,6 +205,7 @@ def open_face(entry: FontEntry, fonts_dir: Path) -> Face | None:
         return _faces[key]
 
     face: Face | None = None
+    tt = None
     try:
         from fontTools.ttLib import TTFont
 
@@ -219,6 +230,9 @@ def open_face(entry: FontEntry, fonts_dir: Path) -> Face | None:
         )
     except Exception as exc:
         log.warning("could not read %s: %s", path.name, exc)
+    finally:
+        if tt is not None:
+            tt.close()
 
     _faces[key] = face
     return face
@@ -233,6 +247,7 @@ _FONTCONFIG_XML = """<?xml version="1.0"?>
 <!-- Written by stockforge. `stockforge fonts scan` overwrites it. -->
 <fontconfig>
   <dir>{fonts}</dir>
+  <cachedir>{cache}</cachedir>
 {system}
 </fontconfig>
 """
@@ -248,11 +263,12 @@ _SYSTEM_CONFIGS = (
 def write_fontconfig(fonts_dir: Path) -> Path:
     system = "\n".join(f'  <include ignore_missing="yes">{p}</include>'
                        for p in _SYSTEM_CONFIGS)
-    body = _FONTCONFIG_XML.format(fonts=fonts_dir.resolve(), system=system)
+    body = _FONTCONFIG_XML.format(fonts=escape(str(fonts_dir.resolve())),
+                                 cache=escape(str(fonts_dir.resolve() / ".cache")), system=system)
     path = fonts_dir / FONTCONFIG
     path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists() or path.read_text() != body:
-        path.write_text(body)
+    if not path.exists() or path.read_text(encoding="utf-8") != body:
+        path.write_text(body, encoding="utf-8")
     return path
 
 
@@ -313,7 +329,8 @@ def score(entry: FontEntry, want: FontClass) -> float:
         overlap = len(set(m.lower() for m in want.mood) & set(m.lower() for m in entry.mood))
         mood = min(1.0, 0.5 + 0.25 * overlap)
 
-    return 0.50 * cat + 0.18 * weight + 0.12 * contrast + 0.10 * width + 0.10 * mood
+    style_penalty = 0.15 if entry.to_class().italic != want.italic else 0.0
+    return max(0.0, 0.50 * cat + 0.18 * weight + 0.12 * contrast + 0.10 * width + 0.10 * mood - style_penalty)
 
 
 def match(want: FontClass, library: list[FontEntry], require_embeddable: bool = True) -> tuple[FontEntry | None, float]:
@@ -378,21 +395,32 @@ def install_for_windows(fonts_dir: Path) -> list[tuple[str, str]]:
 
     done: list[tuple[str, str]] = []
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
-        for file in sorted(fonts_dir.iterdir()):
+        for file in sorted(fonts_dir.rglob("*")):
             if file.suffix.lower() not in {".ttf", ".otf", ".ttc"}:
                 continue
-            dest = target / file.name
+            # Families commonly ship as separate folders with the same filenames.
+            relative = file.relative_to(fonts_dir).as_posix()
+            dest = target / (file.name if file.parent == fonts_dir else
+                             f"stockforge-{hashlib.sha256(relative.encode()).hexdigest()[:12]}-{file.name}")
             registered = f"{_face_name(file)} ({'OpenType' if file.suffix.lower() == '.otf' else 'TrueType'})"
             try:
-                if not dest.exists() or dest.stat().st_size != file.stat().st_size:
+                if not dest.exists() or dest.read_bytes() != file.read_bytes():
                     shutil.copy2(file, dest)
                 winreg.SetValueEx(key, registered, 0, winreg.REG_SZ, str(dest))
+                _register_font(dest)
                 done.append((file.name, f"installed as {registered}"))
             except OSError as exc:
                 done.append((file.name, f"could not install: {exc}"))
 
     _broadcast_font_change()
     return done
+
+
+def _register_font(path: Path) -> None:
+    """Make newly installed fonts available in this Windows session."""
+    import ctypes
+
+    ctypes.windll.gdi32.AddFontResourceW(str(path))
 
 
 def _broadcast_font_change() -> None:

@@ -35,7 +35,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from ..providers import VisionProvider, reason
+from ..providers import VisionProvider, reason, vision
 from ..schema import ColourRole, DesignSpec, FontClass, Grid, Swatch, TextElement
 
 log = logging.getLogger("stockforge.derive")
@@ -98,6 +98,7 @@ def shift_type(spec: DesignSpec, keep_category: bool = True,
             contrast={"low": "medium", "medium": "high", "high": "medium"}[f.contrast],
             width=f.width,
             mood=f.mood,
+            italic=f.italic,
         )
 
 
@@ -323,7 +324,7 @@ when the character is gone and the derivation should be dialled back."""
 
 
 def check(source: Path, derived: Path, provider: VisionProvider | None = None) -> Distinctiveness:
-    provider = provider or reason()
+    provider = provider or vision()
     return provider.structured(
         DISTINCT_SYSTEM,
         "First image: the existing design. Second: the new piece. "
@@ -348,6 +349,8 @@ def derive(spec: DesignSpec, strength: float = 0.5, seed: int | None = None,
     rng = random.Random(seed)
 
     out = spec.model_copy(deep=True)
+    if strength <= 0:
+        return out
     rewrite_placeholders(out, provider)
     shift_palette(
         out,

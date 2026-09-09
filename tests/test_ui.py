@@ -103,7 +103,7 @@ def panel(tmp_path, monkeypatch):
     monkeypatch.setenv("SF_ENV_FILE", str(tmp_path / ".env"))
     build_font_library(tmp_path / "fonts")
     build_motif_library(tmp_path / "motifs")
-    cfg = Settings(root=tmp_path / "work", fonts_dir=tmp_path / "fonts",
+    cfg = Settings(root=tmp_path / "work", fonts_dir=tmp_path / "fonts", preserve_original=False,
                    motifs_dir=tmp_path / "motifs")
     cfg.ensure_dirs()
 
@@ -160,7 +160,7 @@ def test_an_unknown_route_is_a_404(panel):
 
 def test_a_file_inside_the_workspace_is_served(panel):
     base, cfg = panel
-    target = cfg.root / "renders" / "hello.txt"
+    target = cfg.root / "renders" / "hello.svg"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("artwork")
 

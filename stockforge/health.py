@@ -92,7 +92,7 @@ def _check_fonts(cfg: Settings) -> Check:
         return Check("Font library", "fail", f"{len(files)} fonts, no manifest yet",
                      "Run `stockforge fonts scan`")
     try:
-        entries = json.loads(manifest.read_text())
+        entries = json.loads(manifest.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
         return Check("Font library", "fail", f"manifest unreadable: {exc}",
                      "Delete it and run `stockforge fonts scan` again")
@@ -167,7 +167,7 @@ def _check_font_rendering(cfg: Settings) -> Check:
 
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "probe.svg"
-            source.write_text(svg)
+            source.write_text(svg, encoding="utf-8")
             drawn = cv2.imread(str(svg_to_png(source, Path(tmp) / "probe.png",
                                               width=int(expected * 2))),
                                cv2.IMREAD_GRAYSCALE)
@@ -285,7 +285,9 @@ def _check_workspace(cfg: Settings) -> Check:
 
 
 def report(cfg: Settings | None = None) -> Report:
+    from .stages import ocr, fonts
     cfg = cfg or default_settings
+    fonts.activate(cfg.fonts_dir)
     return Report(checks=[
         _check_vision(),
         _check_fonts(cfg),
@@ -299,8 +301,9 @@ def report(cfg: Settings | None = None) -> Report:
             "the full path of inkscape.exe. Without it there is no editable-text "
             "PDF and no EPS — only rasterised output.",
             find=_find_inkscape),
-        _check_binary("tesseract", "OCR", "Install tesseract-ocr. Without it the model "
-                      "transcribes text itself, which is less accurate.", required=False),
+        _check_binary("tesseract", "OCR", "Install Tesseract OCR or set SF_TESSERACT "
+                      "to tesseract.exe. Without it the model transcribes text itself.",
+                      required=False, find=lambda _: ocr.executable()),
         _check_motifs(cfg),
         _check_workspace(cfg),
         _check_etsy(),

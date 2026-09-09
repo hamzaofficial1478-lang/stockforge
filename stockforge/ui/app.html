@@ -230,9 +230,14 @@
 
     <div class="card">
       <h3>How much of the original to keep</h3>
-      <p class="hint">Every rebuild starts as a faithful read of your listing and is then moved
-        away from it. These decide how far. <b>Moving them up makes the result less like what you
-        uploaded, not more.</b></p>
+      <label for="SF_PRESERVE_ORIGINAL">Conversion mode</label>
+      <select id="SF_PRESERVE_ORIGINAL">
+        <option value="1">Recover original — keep text, colors and layout</option>
+        <option value="0">Create a new variation</option>
+      </select>
+      <p class="hint">Recovery creates an editable master from the image without rewriting or mixing it.
+        Font matches and missing artwork may still need editing. The variation controls below apply
+        only when you choose “Create a new variation”. Save settings before starting the queue.</p>
 
       <div class="presets">
         <button class="btn small" onclick="preset('close')">Close to the original — 70/30</button>
@@ -543,7 +548,7 @@ async function loadHealth(){
   $('tagline').textContent = h.workable ? 'ready' : 'setup needed';
 }
 
-const CFG_KEYS = ['SF_ETSY_API_KEY','SF_MIX','SF_DERIVE_STRENGTH','SF_DISTINCT_THRESHOLD',
+const CFG_KEYS = ['SF_PRESERVE_ORIGINAL','SF_ETSY_API_KEY','SF_MIX','SF_DERIVE_STRENGTH','SF_DISTINCT_THRESHOLD',
   'SF_DERIVE_ROUNDS','SF_MOTIF_THRESHOLD',
   'SF_FTP_ADOBE_HOST','SF_FTP_ADOBE_USER','SF_FTP_ADOBE_PASS',
   'SF_FTP_SHUTTERSTOCK_HOST','SF_FTP_SHUTTERSTOCK_USER','SF_FTP_SHUTTERSTOCK_PASS'];
@@ -581,6 +586,7 @@ const PRESETS = {
   far:      {SF_MIX:0.70, SF_DERIVE_STRENGTH:0.70, SF_DISTINCT_THRESHOLD:0.75, SF_DERIVE_ROUNDS:3},
 };
 function preset(name){
+  $('SF_PRESERVE_ORIGINAL').value = '0';
   for (const [key, value] of Object.entries(PRESETS[name])) $(key).value = value;
   for (const [id, key] of [['mix-v','SF_MIX'], ['str-v','SF_DERIVE_STRENGTH'],
                            ['dist-v','SF_DISTINCT_THRESHOLD'], ['motif-v','SF_MOTIF_THRESHOLD']])
@@ -862,14 +868,19 @@ async function loadDesigns(){
   const rows = await api('/api/designs?limit=300');
   if (!rows.length){ $('design-table').innerHTML = '<div class="empty">nothing pulled in yet</div>'; return; }
   $('design-table').innerHTML = `<table><thead><tr>
-      <th>Design</th><th>Source</th><th>Images</th><th>Pages</th><th>State</th></tr></thead><tbody>
+      <th>Design</th><th>Source</th><th>Images</th><th>Pages</th><th>State</th><th>Editable files</th></tr></thead><tbody>
     ${rows.map(r => `<tr>
       <td>${r.listing_url ? `<a href="${esc(r.listing_url)}" target="_blank" rel="noreferrer">${esc((r.title || r.design_key || r.id).slice(0,60))}</a>`
                           : esc((r.title || r.design_key || r.id).slice(0,60))}</td>
       <td class="mono">${esc(r.source)}</td>
       <td>${r.image_count}</td><td>${r.page_count || '—'}</td>
-      <td><span class="pill ${esc(r.state)}">${esc(r.state)}</span></td></tr>`).join('')}
+      <td><span class="pill ${esc(r.state)}">${esc(r.state)}</span></td>
+      <td>${outputLinks(r.files)}</td></tr>`).join('')}
     </tbody></table>`;
+}
+
+function outputLinks(files){
+  return (files || []).map(path => `<a class="mono" href="${fileURL(path)}" download>${esc(path.split(/[\\/]/).pop())}</a>`).join('<br>') || '—';
 }
 
 /* ── review ───────────────────────────────────────── */
@@ -903,6 +914,7 @@ async function loadReview(){
     <div class="card">
       <h3>${esc((r.title || r.design_id).slice(0,80))}</h3>
       <p class="hint">${esc(r.reason)} &nbsp;·&nbsp; score ${(r.score ?? 0).toFixed(2)}</p>
+      <p>${outputLinks(r.files)}</p>
       <div class="compare">
         <figure><figcaption>your design</figcaption>
           ${r.source_image ? `<img loading="lazy" src="${fileURL(r.source_image)}" alt="">`

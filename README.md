@@ -4,15 +4,29 @@ Reads your own design images, works out how each design was built, and produces
 **editable vector files** — plus new designs mixed from your own back catalogue,
 with metadata and delivery to both contributor sites.
 
-Runs entirely on your own hardware. No paid API anywhere in it.
+Uses a local or OpenAI-compatible hosted model. Hosted endpoints use the
+credentials and usage limits of the provider you configure.
 
 ```bash
 pip install -e .
+stockforge fonts download
 stockforge ui
 ```
 
 That opens the control panel, which is where everything happens. The command
 line does the same jobs if you prefer it.
+
+The default **Recover original** mode keeps the analyser's text, colors and
+layout and exports an editable SVG and PDF. It does not rewrite names, mix
+other designs in, or require the result to differ from the source. Select
+**Create a new variation** in Setup (or `SF_PRESERVE_ORIGINAL=0`) for the
+mixing and derivation workflow described below. Download completed files from
+the Queue or Review screens. Open the SVG in Inkscape to edit individual
+elements; the master PDF retains live text and embeds the selected fonts.
+
+Recovery is an approximation: font matches can differ, and illustrations
+without a motif-library match require manual artwork. Photographic regions
+remain raster images inside the editable document.
 
 ---
 
@@ -277,17 +291,30 @@ the same file the Setup screen writes back to. Anything already exported in
 your shell wins over it, so you can override one setting for a single run.
 `SF_ENV_FILE` points at a different file if you'd rather keep it elsewhere.
 
-Fonts are the one manual step, and it's worth the hour. Drop families you can
-use into `assets/fonts/`, then:
+Install the starter library with:
+
+```bash
+stockforge fonts download
+```
+
+This downloads 17 static faces from eight Google Fonts families: Lato,
+Crimson Text, Great Vibes, Allura, Bebas Neue, Arvo, Cutive Mono and
+UnifrakturMaguntia. The catalog pins a Google Fonts revision and SHA-256
+checksums; OFL license files are stored beside the fonts. Downloads can be
+resumed and intact files are reused. The verified starter faces are marked
+usable automatically, and Windows registers them for the current user.
+
+For additional families, put your files in `assets/fonts/` and run:
 
 ```bash
 stockforge fonts scan
 ```
 
-Open `assets/fonts/manifest.json` and set `embeddable: true` where you've
-checked. Nothing is used until you do.
+Open `assets/fonts/manifest.json` and set `embeddable: true` for added fonts
+whose license you have checked. Scanning again preserves existing approval,
+category and mood settings. Nested family folders are supported.
 
-No fonts ship with this, and until you add some nothing can be set: the family
+Font binaries are downloaded separately. Until you add some, the family
 written into the SVG falls back to a generic `serif` and whatever the machine
 happens to have gets drawn. That is not silent — a design whose type the
 library cannot answer goes to Review saying what it wanted, in the words you'd
@@ -297,11 +324,15 @@ queue. Google Fonts and anything under the SIL
 OFL are the easy wins — publicly available, and since text is outlined on
 export, no font file ever travels inside a delivered file.
 
-On **Windows** `fonts scan` finishes the job itself: fontconfig is Unix
-machinery with no Windows equivalent, so it also installs the families into
+On **Windows** `fonts scan` also installs the families into
 your own account — copied into `%LOCALAPPDATA%` with a registry entry under
 `HKCU`, which needs no administrator and touches nothing outside your user.
 `stockforge fonts install` does that step alone if you add a family later.
+
+OCR searches PATH, the standard Windows Tesseract install folders, and
+`tools/tesseract/tesseract.exe` for an app-local installation. `SF_TESSERACT`
+can point to another executable. English OCR needs `eng.traineddata` in its
+`tessdata` folder; the Windows package also includes orientation data.
 
 `fonts scan` also writes `fontconfig.conf` next to the manifest. Neither
 Inkscape nor cairo takes a font *file* — both look a family name up through

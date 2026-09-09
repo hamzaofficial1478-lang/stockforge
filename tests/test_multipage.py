@@ -99,7 +99,7 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.delenv("FONTCONFIG_FILE", raising=False)
     build_font_library(tmp_path / "fonts")
     build_motif_library(tmp_path / "motifs")
-    return Settings(root=tmp_path / "work", fonts_dir=tmp_path / "fonts",
+    return Settings(root=tmp_path / "work", fonts_dir=tmp_path / "fonts", preserve_original=False,
                     motifs_dir=tmp_path / "motifs")
 
 

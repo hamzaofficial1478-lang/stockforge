@@ -131,7 +131,7 @@ def _attr(tag: str, name: str) -> str:
 def read(path: Path) -> MotifEntry:
     """Read one motif file. Never raises on odd content — a motif we cannot
     understand still gets its filename, which is usually enough."""
-    raw = path.read_text(errors="replace")
+    raw = path.read_text(encoding="utf-8", errors="replace")
     tag = m.group(0) if (m := _SVG_TAG.search(raw)) else ""
 
     kind = _attr(tag, "data-kind").lower()

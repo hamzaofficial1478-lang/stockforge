@@ -53,7 +53,7 @@ def load(root: Path) -> list[Connection]:
     if not path.exists():
         return []
     try:
-        raw = json.loads(path.read_text())
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         log.warning("could not read %s: %s", path, exc)
         return []
@@ -69,7 +69,7 @@ def load(root: Path) -> list[Connection]:
 
 def save(root: Path, connections: list[Connection]) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    _path(root).write_text(json.dumps([asdict(c) for c in connections], indent=2))
+    _path(root).write_text(json.dumps([asdict(c) for c in connections], indent=2), encoding="utf-8")
 
 
 def upsert(root: Path, data: dict) -> Connection:
@@ -169,7 +169,7 @@ def test(base_url: str, model: str, api_key: str = "", timeout: int = 90) -> dic
     if not model:
         return {"ok": False, "error": "no model named"}
     base = base_url.rstrip("/")
-    payload = {"model": model, "max_tokens": 24, "temperature": 0,
+    payload = {"model": model, "max_tokens": 512, "temperature": 0,
                "messages": [{"role": "user",
                              "content": "Reply with the single word: ready"}]}
     started = time.time()
@@ -186,6 +186,9 @@ def test(base_url: str, model: str, api_key: str = "", timeout: int = 90) -> dic
     took = time.time() - started
     try:
         said = body["choices"][0]["message"]["content"]
+        if not isinstance(said, str) or not said.strip():
+            return {"ok": False, "error": "The model returned no answer. Check its token budget and reasoning settings.",
+                    "seconds": round(took, 1)}
     except (KeyError, IndexError, TypeError):
         return {"ok": False, "error": f"an odd reply: {str(body)[:200]}",
                 "seconds": round(took, 1)}

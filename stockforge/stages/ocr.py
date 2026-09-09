@@ -12,6 +12,7 @@ text itself and the pipeline carries on — a little less accurate, not broken.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -49,8 +50,31 @@ class Line:
                 f'{self.confidence:.0%} confidence')
 
 
+ON_WINDOWS = os.name == "nt"
+
+
+def executable() -> str | None:
+    named = os.environ.get("SF_TESSERACT", "").strip()
+    if named and Path(named).is_file():
+        return named
+    found = shutil.which(named or "tesseract")
+    if found:
+        return found
+    if ON_WINDOWS:
+        bundled = Path(__file__).resolve().parents[2] / "tools" / "tesseract" / "tesseract.exe"
+        if bundled.is_file():
+            return str(bundled)
+        for root in (os.environ.get("ProgramFiles", r"C:\Program Files"),
+                     os.environ.get("LOCALAPPDATA", "")):
+            for relative in ("Tesseract-OCR/tesseract.exe", "Programs/Tesseract-OCR/tesseract.exe"):
+                candidate = Path(root) / relative
+                if candidate.is_file():
+                    return str(candidate)
+    return None
+
+
 def available() -> bool:
-    return shutil.which("tesseract") is not None
+    return executable() is not None
 
 
 @contextmanager
@@ -93,8 +117,8 @@ def read(path: Path, min_confidence: float = 45.0) -> list[Line]:
             return []
         try:
             proc = subprocess.run(
-                ["tesseract", str(target), "stdout", "--psm", "11", "tsv"],
-                capture_output=True, text=True, timeout=120,
+                [executable(), str(target), "stdout", "--psm", "11", "tsv"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             log.debug("ocr failed on %s: %s", path.name, exc)

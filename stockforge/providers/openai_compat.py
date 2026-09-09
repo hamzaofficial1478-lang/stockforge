@@ -85,10 +85,15 @@ class OpenAICompatProvider(VisionProvider):
             raise ProviderError(f"{self.name} HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise ProviderError(f"{self.name} unreachable: {exc.reason}") from exc
+        except (TimeoutError, OSError, ValueError) as exc:
+            raise ProviderError(f"{self.name} could not read a response: {exc}") from exc
 
         try:
-            return body["choices"][0]["message"]["content"]
-        except (KeyError, IndexError) as exc:
+            content = body["choices"][0]["message"]["content"]
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("empty or non-text content")
+            return content
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ProviderError(f"{self.name} odd response: {str(body)[:300]}") from exc
 
 

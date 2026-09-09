@@ -70,7 +70,7 @@ def load_env(path: Path | None = None) -> dict[str, str]:
     path = path or env_file()
     loaded: dict[str, str] = {}
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8-sig")
     except OSError:
         return loaded
 
@@ -98,6 +98,7 @@ class Settings:
     motifs_dir: Path = field(default_factory=lambda: _p("SF_MOTIFS", "./assets/motifs"), metadata={"env": "SF_MOTIFS"})
 
     # --- pipeline --------------------------------------------------------
+    preserve_original: bool = field(default_factory=lambda: _b("SF_PRESERVE_ORIGINAL", True), metadata={"env": "SF_PRESERVE_ORIGINAL"})
     max_critique_rounds: int = field(default_factory=lambda: _i("SF_CRITIQUE_ROUNDS", 2), metadata={"env": "SF_CRITIQUE_ROUNDS"})
     ship_threshold: float = field(default_factory=lambda: _f("SF_SHIP_THRESHOLD", 0.85), metadata={"env": "SF_SHIP_THRESHOLD"})
     escalate_threshold: float = field(default_factory=lambda: _f("SF_ESCALATE_THRESHOLD", 0.60), metadata={"env": "SF_ESCALATE_THRESHOLD"})

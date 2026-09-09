@@ -111,7 +111,10 @@ def dominant_colours(path: Path, k: int = 6) -> list[tuple[str, float]]:
     img = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if img is None:
         return []
-    img = cv2.resize(img, (160, 160), interpolation=cv2.INTER_AREA)
+    # Area averaging blends thin type with its background, inventing lighter
+    # ink colors. Sample original pixels instead.
+    img = cv2.resize(img, (256, 256), interpolation=cv2.INTER_NEAREST)
+    pixels = img.reshape(-1, 3)
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float32)
     crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.5)
     _, labels, centres = cv2.kmeans(lab, k, None, crit, 5, cv2.KMEANS_PP_CENTERS)
@@ -119,8 +122,11 @@ def dominant_colours(path: Path, k: int = 6) -> list[tuple[str, float]]:
     out: list[tuple[str, float]] = []
     total = len(labels)
     for i, centre in enumerate(centres):
-        patch = np.uint8([[centre]])
-        b, g, r = cv2.cvtColor(patch, cv2.COLOR_LAB2BGR)[0][0]
+        members = pixels[labels.ravel() == i]
+        colors, counts = np.unique(members, axis=0, return_counts=True)
+        if not len(colors):
+            continue
+        b, g, r = colors[counts.argmax()]
         coverage = float((labels == i).sum()) / total
         out.append((f"#{r:02x}{g:02x}{b:02x}", coverage))
     return sorted(out, key=lambda c: -c[1])
