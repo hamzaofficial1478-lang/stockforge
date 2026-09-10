@@ -57,6 +57,17 @@ pressing Start; the image must first be imported successfully.
 Queue regression checks: `python -m pytest tests/test_queue_progress.py` and
 `node --test tests/ui_queue.test.cjs` (Node is only needed for the UI tests).
 
+**Model tests** send real requests and measure wall-clock response time. Vision
+connections are tested with a generated image containing random digits and a
+colored background; both answers and JSON parsing must be correct. Text tests
+only check a short text reply. Neither is a full design benchmark: conversion
+uses several larger requests. The panel shows elapsed time while a test runs.
+
+Muse Glimmer uses low reasoning effort and NVIDIA's recommended temperature
+0.95/top-p 1.0. Its reasoning and answer share the response budget; truncated
+responses are retried once with more room. See the
+[NVIDIA request reference](https://docs.api.nvidia.com/nim/re/reference/meta-muse-glimmer-30b-infer).
+
 **Review** — your design and the rebuild side by side, worst first, with three
 buttons: clear it, run it again, or keep it as a master only. Above them, what
 to draw next: every decorative element nothing in your library could answer,

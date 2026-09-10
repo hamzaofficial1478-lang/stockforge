@@ -366,7 +366,8 @@ class Handler(BaseHTTPRequestHandler):
             # so fall back to the stored key for the connection being tested.
             key = str(body.get("api_key") or "") or (known.api_key if known else "")
             return self._json(models_store.test(
-                str(body.get("base_url") or ""), str(body.get("model") or ""), key))
+                str(body.get("base_url") or ""), str(body.get("model") or ""), key,
+                role=str(body.get("role") or (known.role if known else "vision"))))
 
         if route == "/api/models/save":
             saved = models_store.upsert(self.cfg.root, body)

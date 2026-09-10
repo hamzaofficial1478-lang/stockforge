@@ -643,7 +643,7 @@ function paintConns(){
              id="said-${c.id}">${esc(c.last_result || '')}</div>
       </div>
       <div class="row">
-        <button class="btn small" onclick="testSaved('${c.id}')">Test</button>
+        <button class="btn small" onclick="testSaved('${c.id}')">${c.role === 'vision' ? 'Test image reading' : 'Test text connection'}</button>
         ${c.active ? '' :
           `<button class="btn small primary" onclick="makeLive('${c.id}')">Make live</button>`}
         <button class="btn small" onclick="editConn('${c.id}')">Edit</button>
@@ -698,20 +698,28 @@ async function fetchModels(){
 async function testDraft(){
   const d = draft();
   if (!d.model) return $('conn-msg').textContent = 'choose a model first';
-  $('conn-msg').textContent = 'sending one request…';
-  const r = await api('/api/models/test', d);
-  $('conn-msg').textContent = r.ok
-    ? `replied "${r.said}" in ${r.seconds}s`
-    : 'no — ' + r.error;
+  await testConnection($('conn-msg'), d);
 }
 
 async function testSaved(id){
   const c = CONNS.find(x => x.id === id);
   const cell = $('said-' + id);
-  cell.className = 'said'; cell.textContent = 'testing…';
-  const r = await api('/api/models/test', {id, base_url: c.base_url, model: c.model});
-  cell.className = 'said ' + (r.ok ? 'ok' : 'bad');
-  cell.textContent = r.ok ? `ok — replied "${r.said}" in ${r.seconds}s` : r.error;
+  await testConnection(cell, {id, base_url:c.base_url, model:c.model, role:c.role});
+}
+
+async function testConnection(cell, body){
+  if (cell.dataset.testing) return;
+  cell.dataset.testing = '1';
+  const started = Date.now();
+  const update = () => { cell.textContent = `${body.role === 'vision' ? 'Sending a real image and checking its text and color' : 'Sending a real text request'}… ${Math.floor((Date.now() - started) / 1000)}s elapsed`; };
+  cell.className = 'said'; update();
+  const timer = setInterval(update, 1000);
+  try {
+    const r = await api('/api/models/test', body);
+    cell.className = 'said ' + (r.ok ? 'ok' : 'bad');
+    cell.textContent = r.ok ? `Passed in ${r.seconds}s. ${r.scope}` : `Test failed: ${r.error}`;
+  } catch (e) { cell.textContent = e.message; cell.className = 'said bad'; }
+  finally { clearInterval(timer); delete cell.dataset.testing; }
 }
 
 async function saveConn(){

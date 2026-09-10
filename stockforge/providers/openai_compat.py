@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -26,6 +27,13 @@ from typing import Any
 from .base import ProviderError, VisionProvider, encode_image
 
 log = logging.getLogger("stockforge.providers")
+
+
+def model_options(model: str) -> dict:
+    """NVIDIA's Muse Glimmer sampling defaults, with bounded reasoning effort."""
+    if model.lower() == "meta/muse-glimmer-30b":
+        return {"temperature": 0.95, "top_p": 1.0, "reasoning_effort": "low"}
+    return {}
 
 
 class OpenAICompatProvider(VisionProvider):
@@ -64,6 +72,7 @@ class OpenAICompatProvider(VisionProvider):
             "temperature": kw.get("temperature", self.temperature),
             "max_tokens": kw.get("max_tokens", self.max_tokens),
         }
+        payload.update(model_options(self.model))
         # Servers that support it will honour this and save us a repair round.
         # Ones that do not ignore it, so it is safe to send unconditionally.
         if kw.get("json_mode", True):
@@ -77,6 +86,7 @@ class OpenAICompatProvider(VisionProvider):
                 **({"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}),
             },
         )
+        started = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 body = json.loads(resp.read())
@@ -94,6 +104,9 @@ class OpenAICompatProvider(VisionProvider):
         try:
             choice = body["choices"][0]
             content = choice["message"]["content"]
+            log.info("[%s] response in %.1fs; finish=%s; output tokens=%s",
+                     self.model, time.monotonic() - started, choice.get("finish_reason", "unknown"),
+                     (body.get("usage") or {}).get("completion_tokens", "unknown"))
             if choice.get("finish_reason") == "length":
                 budget = payload["max_tokens"]
                 if not kw.get("_length_retry") and budget < 32768:

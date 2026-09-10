@@ -11,6 +11,9 @@ real request to the one you picked, and only then make it the live one.
 from __future__ import annotations
 
 import json
+import base64
+import io
+import secrets
 import logging
 import time
 import urllib.error
@@ -18,6 +21,8 @@ import urllib.request
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from ..providers.openai_compat import model_options
+from ..providers.base import extract_json
 
 log = logging.getLogger("stockforge.ui.models")
 
@@ -159,7 +164,8 @@ def fetch(base_url: str, api_key: str = "", timeout: int = 20) -> dict:
     return {"models": names}
 
 
-def test(base_url: str, model: str, api_key: str = "", timeout: int = 90) -> dict:
+def test(base_url: str, model: str, api_key: str = "", timeout: int = 90,
+         role: str = "text") -> dict:
     """Send one real request and report what came back.
 
     Not a ping. A server can be up, and reachable, and still not serve the
@@ -172,6 +178,22 @@ def test(base_url: str, model: str, api_key: str = "", timeout: int = 90) -> dic
     payload = {"model": model, "max_tokens": 512, "temperature": 0,
                "messages": [{"role": "user",
                              "content": "Reply with the single word: ready"}]}
+    expected = None
+    if role == "vision":
+        from PIL import Image, ImageDraw, ImageFont
+        color, rgb = secrets.choice([("red", "#dd3030"), ("green", "#168540"), ("blue", "#2464c8")])
+        digits = str(secrets.randbelow(90000) + 10000)
+        img = Image.new("RGB", (320, 160), rgb)
+        ImageDraw.Draw(img).text((70, 55), digits, fill="white", font=ImageFont.load_default(size=42))
+        encoded = io.BytesIO()
+        img.save(encoded, format="PNG")
+        expected = {"color": color, "text": digits}
+        payload.update(max_tokens=4096, response_format={"type": "json_object"})
+        payload["messages"][0]["content"] = [
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(encoded.getvalue()).decode()}},
+            {"type": "text", "text": 'Read the image. Return JSON with "color" (the background color name) and "text" (the printed digits as a string).'},
+        ]
+    payload.update(model_options(model))
     started = time.time()
     try:
         body = _request(f"{base}/chat/completions", api_key, payload, timeout)
@@ -192,4 +214,14 @@ def test(base_url: str, model: str, api_key: str = "", timeout: int = 90) -> dic
     except (KeyError, IndexError, TypeError):
         return {"ok": False, "error": f"an odd reply: {str(body)[:200]}",
                 "seconds": round(took, 1)}
-    return {"ok": True, "said": str(said).strip()[:200], "seconds": round(took, 1)}
+    if expected is not None:
+        try:
+            observed = extract_json(said)
+            if (str(observed.get("color", "")).lower() != expected["color"]
+                    or str(observed.get("text", "")) != expected["text"]):
+                raise ValueError("The model did not correctly read the test image's color and digits.")
+        except (RuntimeError, ValueError, AttributeError) as exc:
+            return {"ok": False, "error": str(exc), "seconds": round(took, 1)}
+    scope = ("Image color, text and JSON verified. Full designs need several larger requests."
+             if expected else "Text connection verified; image reading and conversion speed are not tested.")
+    return {"ok": True, "said": str(said).strip()[:200], "seconds": round(took, 1), "scope": scope}
