@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from .base import ProviderError, VisionProvider, encode_image
+from .registry import Backend, register
 
 log = logging.getLogger("stockforge.providers.claude")
 
@@ -179,3 +180,16 @@ def from_env(prefix: str = "SF_VISION") -> ClaudeProvider:
         timeout=float(os.environ.get(f"{prefix}_TIMEOUT", 300)),
         retries=int(os.environ.get(f"{prefix}_RETRIES", 2)),
     )
+
+
+BACKEND = register(Backend(
+    name="claude",
+    label="Claude — sign in, nothing to install",
+    build=from_env,
+    ready=available,
+    settings=("EFFORT",),
+    doc=("Anthropic's own API, which does not speak the OpenAI shape. Sign in "
+         "once with `ant auth login` and no key is stored anywhere. It is a "
+         "paid API billed to your Anthropic account — the sign-in saves the "
+         "key handling, not the bill."),
+))

@@ -199,10 +199,7 @@
         Anthropic account &mdash; signing in instead of pasting a key saves the key handling, not the bill.</p>
       <div class="grid">
         <div><label for="SF_VISION_BACKEND">Model backend</label>
-          <select id="SF_VISION_BACKEND" onchange="backendChanged()">
-            <option value="openai">My own server &mdash; NIM, vLLM, Ollama, LM&nbsp;Studio</option>
-            <option value="claude">Claude &mdash; sign in, nothing to install</option>
-          </select></div>
+          <select id="SF_VISION_BACKEND" onchange="backendChanged()"></select></div>
         <div id="claude-effort-wrap" hidden><label for="SF_VISION_EFFORT">How hard Claude thinks</label>
           <select id="SF_VISION_EFFORT">
             <option value="low">Low &mdash; cheapest, fine for most designs</option>
@@ -210,11 +207,24 @@
             <option value="high">High &mdash; for designs it keeps getting wrong</option>
           </select></div>
       </div>
-      <p class="hint" id="claude-note" hidden>
-        Sign in once in a terminal with <code>ant auth login</code>, then save. If the Setup check
-        below still says it is not signed in, run <code>pip install anthropic</code> first.
-        Set the model on a connection below, or leave it blank for <code>claude-opus-5</code>.
-      </p>
+      <p class="hint" id="backend-doc"></p>
+      <p class="hint" id="backend-fix" style="color:var(--bad)" hidden></p>
+      <details class="more">
+        <summary>Use a different model service, or add your own backend</summary>
+        <div id="preset-list" style="margin-top:10px"></div>
+        <p class="hint" style="margin-top:10px">
+          Anything speaking OpenAI&rsquo;s chat shape works with the backend above &mdash; that
+          covers GPT, and Hermes, Qwen, Llama or Mistral run on Ollama, vLLM or OpenRouter.
+          Those are models, not backends: pick the service here and set the model on a
+          connection below.
+        </p>
+        <p class="hint">
+          For something that speaks a different shape altogether, write a module with a
+          <code>BACKEND</code> in it and type its import path into the box above &mdash;
+          <code>my_package.my_backend</code>. Nothing in stockforge needs changing.
+          <code>docs/backends.md</code> has a working example to copy.
+        </p>
+      </details>
     </div>
 
     <div class="card">
@@ -593,10 +603,69 @@ const CFG_KEYS = ['SF_PRESERVE_ORIGINAL','SF_VISION_BACKEND','SF_VISION_EFFORT',
   'SF_FTP_ADOBE_HOST','SF_FTP_ADOBE_USER','SF_FTP_ADOBE_PASS',
   'SF_FTP_SHUTTERSTOCK_HOST','SF_FTP_SHUTTERSTOCK_USER','SF_FTP_SHUTTERSTOCK_PASS'];
 
+let BACKENDS = {};
+
+async function loadBackends(){
+  const r = await api('/api/backends');
+  BACKENDS = Object.fromEntries(r.backends.map(b => [b.name, b]));
+  const sel = $('SF_VISION_BACKEND');
+  // The setting can be an import path while the backend registers under its
+  // own name. Show the name, keep the path as the value that gets saved.
+  const v = r.selected.vision;
+  const chosen = sel.value || v.name || v.setting;
+  if (v.name && v.setting && v.name !== v.setting) BACKENDS[v.setting] = BACKENDS[v.name];
+  sel.innerHTML = '';
+  for (const b of r.backends){
+    const o = document.createElement('option');
+    // Keep the import path as the saved value where that is how it was reached.
+    o.value = (v.name === b.name && v.setting) ? v.setting : b.name;
+    o.textContent = b.label + (b.ready ? '' : '  (not ready)');
+    sel.appendChild(o);
+  }
+  // A backend set by hand that is not registered yet — a module path — still
+  // has to show, or saving the form would silently reset it to the first entry.
+  if (chosen && !BACKENDS[chosen] && ![...sel.options].some(o => o.value === chosen)){
+    const o = document.createElement('option');
+    o.value = chosen; o.textContent = chosen + '  (your own)';
+    sel.appendChild(o);
+  }
+  sel.value = chosen;
+  await loadBackends();
+}
+
 function backendChanged(){
-  const claude = $('SF_VISION_BACKEND').value === 'claude';
-  $('claude-effort-wrap').hidden = !claude;
-  $('claude-note').hidden = !claude;
+  const name = $('SF_VISION_BACKEND').value;
+  const b = BACKENDS[name];
+  $('backend-doc').textContent = b ? b.doc : 'A backend of your own, loaded from that import path.';
+  $('backend-fix').textContent = b && !b.ready ? b.fix : '';
+  $('backend-fix').hidden = !(b && !b.ready);
+  // Effort is Claude's knob, not everyone's. Shown when the chosen backend
+  // declares it rather than by name, so a custom backend gets it too.
+  const wantsEffort = name === 'claude';
+  $('claude-effort-wrap').hidden = !wantsEffort;
+
+  const presets = (b && b.presets) || [];
+  $('preset-list').innerHTML = presets.length ? '' : '<span class="empty">nothing to preset for this one</span>';
+  for (const p of presets){
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.style.cssText = 'justify-content:space-between;padding:5px 0';
+    row.innerHTML = `<span><b>${p.label}</b>` +
+      `<span class="mono" style="opacity:.65"> ${p.base_url}</span>` +
+      (p.needs_key ? ' <span class="mono" style="opacity:.65">needs a key</span>' : '') +
+      (p.note ? `<br><span class="hint">${p.note}</span>` : '') + '</span>';
+    const btn = document.createElement('button');
+    btn.className = 'btn small';
+    btn.textContent = 'Use this';
+    btn.onclick = () => {
+      $('conn-base').value = p.base_url;
+      if (p.model) $('conn-model').value = p.model;
+      $('conn-form-wrap').open = true;
+      $('conn-base').scrollIntoView({behavior:'smooth', block:'center'});
+    };
+    row.appendChild(btn);
+    $('preset-list').appendChild(row);
+  }
 }
 
 async function loadConfig(){

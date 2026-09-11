@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from .base import ProviderError, VisionProvider, encode_image
+from .registry import Backend, Preset, register
 
 log = logging.getLogger("stockforge.providers")
 
@@ -241,3 +242,46 @@ def from_env(prefix: str = "SF_VISION") -> OpenAICompatProvider:
         retries=int(os.environ.get(f"{prefix}_RETRIES", 2)),
         backoff=float(os.environ.get(f"{prefix}_BACKOFF", 2.0)),
     )
+
+
+# --------------------------------------------------------------------------
+# what this backend is, for the registry
+# --------------------------------------------------------------------------
+
+# Addresses only. What a given model can do is not guessed at here — Setup's
+# Test button sends a real image and finds out, which beats a table that goes
+# stale the week after it is written. Hermes, Qwen, Llama, Mistral and the rest
+# are models you run on one of these, not backends of their own.
+PRESETS = (
+    Preset("ollama", "Ollama — on this machine",
+           "http://localhost:11434/v1",
+           note="ollama pull llama3.2-vision, or hermes3 for the text role"),
+    Preset("vllm", "vLLM or NVIDIA NIM — on this machine",
+           "http://localhost:8000/v1"),
+    Preset("lmstudio", "LM Studio — on this machine",
+           "http://localhost:1234/v1"),
+    Preset("openai", "OpenAI — GPT",
+           "https://api.openai.com/v1", model="gpt-4o", needs_key=True),
+    Preset("nvidia", "NVIDIA — hosted",
+           "https://integrate.api.nvidia.com/v1", needs_key=True,
+           note="caps an inline image at 180 kB; images are encoded to fit"),
+    Preset("openrouter", "OpenRouter — many models, one key",
+           "https://openrouter.ai/api/v1", needs_key=True,
+           note="where to reach Hermes and most open models without hosting them"),
+    Preset("together", "Together AI",
+           "https://api.together.xyz/v1", needs_key=True),
+    Preset("groq", "Groq",
+           "https://api.groq.com/openai/v1", needs_key=True),
+)
+
+BACKEND = register(Backend(
+    name="openai",
+    label="OpenAI-compatible server",
+    build=from_env,
+    settings=("BASE_URL", "MAX_IMAGE_BYTES", "BACKOFF"),
+    doc=("Anything speaking OpenAI's chat-completions shape — which is most "
+         "things. Run a model yourself with Ollama, vLLM, NIM or LM Studio, or "
+         "point it at a hosted service. This is the default and costs nothing "
+         "when the model is your own."),
+    presets=PRESETS,
+))

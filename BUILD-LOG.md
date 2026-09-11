@@ -475,3 +475,57 @@ honest answer is that those are not the same thing.
 415 tests pass with Inkscape and Tesseract present. The 22 that fail without
 them are the export and OCR paths, and they fail the same way on a clean
 checkout — nothing to do with these changes.
+
+---
+
+## 8. Backends became a registry
+
+The owner's objection, and it was the right one: the program should not be
+hardcoded to Anthropic, and adding GPT or Hermes or anything else should not
+mean editing stockforge.
+
+The switch was an `if backend == "claude"` with an `else`. Fine for two, wrong
+for three, and it quietly said this was an OpenAI program with Anthropic bolted
+on — not what you want from something meant to outlive whichever model is best
+this month.
+
+A backend is now a small object: what it is called, how to build it, whether it
+can run, and which settings it reads. The two that ship register themselves the
+same way a stranger's would, and nothing in the lookup privileges them. Adding
+one takes no change to any file here — write a module with a `BACKEND` in it and
+put its import path where the backend name goes.
+
+The first attempt got the rule wrong: only names with a dot in them were tried
+as modules, so a top-level `acme_gemini` fell through to "no such backend". An
+arbitrary rule for someone to trip over. Anything not already registered is now
+tried as an import, dotted or not, and the error says what it tried and why it
+failed.
+
+Worth stating plainly because the owner named them: **GPT and Hermes are models,
+not backends.** Both already worked through the OpenAI-compatible backend — GPT
+at `api.openai.com`, Hermes on Ollama or OpenRouter. What was missing was any
+way to find that out, so the backend now carries presets: eight addresses with a
+button that fills one in. Only addresses, no capability claims — the Test button
+sends a real image and finds out, which beats a table that goes stale.
+
+The health check no longer names Claude. It asks the selected backend whether it
+is ready and shows what it says, with a deeper check for the two built-ins that
+can offer one. A custom backend gets reported from its own `ready()`, which is
+why that returns a fix string rather than a bool.
+
+Two things the tests earned. `settings` on a backend is not decoration: a
+provider is built once and rebuilt when a watched setting changes, so a backend
+reading a setting it did not declare means changing that setting does nothing at
+all, silently. There is a test that fails if the declaration stops being honoured.
+And `docs/backends.md`'s worked example is executed by the suite — a backend
+example that does not run is worse than none, because someone copies it, it
+fails, and they conclude the extension point is broken.
+
+One thing came out rather than in. The cache fingerprint had the resolved
+backend name folded into it as belt and braces; a mutation test showed nothing
+depended on it, because `BACKEND` is itself a watched setting and changing it
+moves the fingerprint anyway. A line that looks like it is doing safety work and
+is not is worse than no line, so it went, and the test now documents which
+mechanism actually provides the guarantee.
+
+430 tests pass.

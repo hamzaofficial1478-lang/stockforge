@@ -163,6 +163,26 @@ class Handler(BaseHTTPRequestHandler):
                 "set": sorted(k for k, v in merged.items() if v),
             })
 
+        if route == "/api/backends":
+            # The Setup menu is built from this, so a backend someone added
+            # appears there without the panel knowing anything about it.
+            from ..providers import ProviderError, all_backends, backend as selected, resolve
+
+            def pick(prefix: str) -> dict:
+                """What the setting says, and which backend that turns out to
+                be. They differ when the setting is an import path: the setting
+                must keep the path, the menu has to match on the name."""
+                raw = selected(prefix)
+                try:
+                    return {"setting": raw, "name": resolve(prefix).name, "error": ""}
+                except ProviderError as exc:
+                    return {"setting": raw, "name": "", "error": str(exc)[:300]}
+
+            return self._json({
+                "selected": {"vision": pick("SF_VISION"), "reason": pick("SF_REASON")},
+                "backends": [b.as_dict() for b in all_backends()],
+            })
+
         if route == "/api/status":
             return self._json(Pipeline(self.cfg).status())
 

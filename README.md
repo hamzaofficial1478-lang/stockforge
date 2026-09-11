@@ -201,6 +201,39 @@ didn't. Three things are done about it, in order:
 Only then does the design fail, and the message says whose fault it was and
 that Review is where you pick it back up.
 
+### Any model, and any way of reaching one
+
+The backend is a registry, not a hardcoded choice. Two ship with the program:
+
+| backend | what it talks to |
+|---|---|
+| `openai` | anything speaking OpenAI's chat shape — Ollama, vLLM, NIM, LM Studio, OpenAI itself, OpenRouter, Together, Groq |
+| `claude` | Anthropic's own API, which doesn't speak that shape |
+
+Most of what you'd want is already covered by the first one, because **GPT,
+Hermes, Qwen, Llama and Mistral are models, not backends** — you run them on a
+server that speaks the OpenAI shape and set `SF_VISION_MODEL`. Setup lists the
+common addresses with a button that fills them in.
+
+For something that speaks a different shape — Gemini, Bedrock, an in-house
+endpoint — write a module with a `BACKEND` in it and put its import path where
+the backend name goes:
+
+```bash
+SF_VISION_BACKEND=my_package.my_backend
+```
+
+No fork, no plugin folder, no entry points. It turns up in the Setup menu, the
+health check reports on it, and every analysis pass goes through it.
+`docs/backends.md` has a complete worked example — and a test that runs that
+example, so it can't quietly stop being true.
+
+One thing the tables won't tell you honestly: the **vision** role needs a model
+that can genuinely see an image, and plenty of good ones can't. Hermes 3 is
+text-only — fine for titles and keywords, no use for reading a design. The
+**Test it** button sends a real image with a colour and a number in it and
+checks the answer, which is the only claim about a model worth trusting.
+
 ### Or don't run a model at all
 
 ```bash
