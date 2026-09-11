@@ -15,7 +15,8 @@ from __future__ import annotations
 import os
 
 from .base import ProviderError, VisionProvider, extract_json
-from .openai_compat import OpenAICompatProvider, from_env
+from .openai_compat import OpenAICompatProvider
+from .openai_compat import from_env as _openai_from_env
 
 _cache: dict[str, VisionProvider] = {}
 # What the environment said when each cached provider was built. A provider is
@@ -27,11 +28,34 @@ _cache: dict[str, VisionProvider] = {}
 _built_from: dict[str, tuple] = {}
 # Everything from_env() looks at. Pinned rather than derived so that adding a
 # knob to from_env without adding it here is the thing that breaks the test.
-_WATCHED = ("BASE_URL", "MODEL", "API_KEY", "TIMEOUT", "MAX_EDGE", "MAX_TOKENS")
+_WATCHED = ("BASE_URL", "MODEL", "API_KEY", "TIMEOUT", "MAX_EDGE", "MAX_TOKENS",
+            "MAX_IMAGE_BYTES", "RETRIES", "BACKOFF", "BACKEND", "EFFORT")
 
 # Roles a caller installed by hand. set_provider is how tests and embedders
 # supply their own, and re-reading the environment must never throw those away.
 _pinned: set[str] = set()
+
+
+def backend(prefix: str = "SF_VISION") -> str:
+    """Which backend a role is pointed at.
+
+    Set explicitly with SF_VISION_BACKEND=claude|openai. Left unset, a model id
+    beginning "claude-" means Claude, because someone who typed that into Setup
+    has already said what they meant and should not also have to find a switch.
+    """
+    named = (os.environ.get(f"{prefix}_BACKEND") or "").strip().lower()
+    if named:
+        return named
+    model = (os.environ.get(f"{prefix}_MODEL") or "").strip().lower()
+    return "claude" if model.startswith("claude-") else "openai"
+
+
+def from_env(prefix: str = "SF_VISION") -> VisionProvider:
+    """Build whichever backend this role is configured for."""
+    if backend(prefix) == "claude":
+        from .claude import from_env as _claude_from_env
+        return _claude_from_env(prefix)
+    return _openai_from_env(prefix)
 
 
 def _fingerprint(prefix: str) -> tuple:

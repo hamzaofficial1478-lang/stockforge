@@ -193,6 +193,31 @@
     </div>
 
     <div class="card">
+      <h3>Where the thinking happens</h3>
+      <p class="hint">Run a model on your own machine, or sign in to Claude and let it do the reading.
+        Your own model costs nothing to run. Claude needs no setup but is a paid API billed to your
+        Anthropic account &mdash; signing in instead of pasting a key saves the key handling, not the bill.</p>
+      <div class="grid">
+        <div><label for="SF_VISION_BACKEND">Model backend</label>
+          <select id="SF_VISION_BACKEND" onchange="backendChanged()">
+            <option value="openai">My own server &mdash; NIM, vLLM, Ollama, LM&nbsp;Studio</option>
+            <option value="claude">Claude &mdash; sign in, nothing to install</option>
+          </select></div>
+        <div id="claude-effort-wrap" hidden><label for="SF_VISION_EFFORT">How hard Claude thinks</label>
+          <select id="SF_VISION_EFFORT">
+            <option value="low">Low &mdash; cheapest, fine for most designs</option>
+            <option value="medium">Medium</option>
+            <option value="high">High &mdash; for designs it keeps getting wrong</option>
+          </select></div>
+      </div>
+      <p class="hint" id="claude-note" hidden>
+        Sign in once in a terminal with <code>ant auth login</code>, then save. If the Setup check
+        below still says it is not signed in, run <code>pip install anthropic</code> first.
+        Set the model on a connection below, or leave it blank for <code>claude-opus-5</code>.
+      </p>
+    </div>
+
+    <div class="card">
       <h3>Models</h3>
       <p class="hint">Any OpenAI-compatible server — NVIDIA NIM, vLLM, Ollama, LM&nbsp;Studio.
         Add a connection, test it, then make it live. Nothing is used until you do.</p>
@@ -562,10 +587,17 @@ async function loadHealth(){
   $('tagline').textContent = h.workable ? 'ready' : 'setup needed';
 }
 
-const CFG_KEYS = ['SF_PRESERVE_ORIGINAL','SF_ETSY_API_KEY','SF_MIX','SF_DERIVE_STRENGTH','SF_DISTINCT_THRESHOLD',
+const CFG_KEYS = ['SF_PRESERVE_ORIGINAL','SF_VISION_BACKEND','SF_VISION_EFFORT',
+  'SF_ETSY_API_KEY','SF_MIX','SF_DERIVE_STRENGTH','SF_DISTINCT_THRESHOLD',
   'SF_DERIVE_ROUNDS','SF_MOTIF_THRESHOLD',
   'SF_FTP_ADOBE_HOST','SF_FTP_ADOBE_USER','SF_FTP_ADOBE_PASS',
   'SF_FTP_SHUTTERSTOCK_HOST','SF_FTP_SHUTTERSTOCK_USER','SF_FTP_SHUTTERSTOCK_PASS'];
+
+function backendChanged(){
+  const claude = $('SF_VISION_BACKEND').value === 'claude';
+  $('claude-effort-wrap').hidden = !claude;
+  $('claude-note').hidden = !claude;
+}
 
 async function loadConfig(){
   const c = await api('/api/config');
@@ -576,6 +608,7 @@ async function loadConfig(){
   for (const [id, key] of [['mix-v','SF_MIX'], ['str-v','SF_DERIVE_STRENGTH'],
                            ['dist-v','SF_DISTINCT_THRESHOLD'], ['motif-v','SF_MOTIF_THRESHOLD']])
     showV(id, (+$(key).value).toFixed(2));
+  backendChanged();
 }
 
 async function saveConfig(){

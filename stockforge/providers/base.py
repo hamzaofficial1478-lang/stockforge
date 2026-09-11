@@ -38,22 +38,55 @@ class ProviderError(RuntimeError):
     pass
 
 
-def encode_image(path: Path, max_edge: int = 1280) -> tuple[str, str]:
+def encode_image(path: Path, max_edge: int = 1280,
+                 max_bytes: int | None = None) -> tuple[str, str]:
     """Return (base64, mime). Downscaled — a 4000px listing image costs a local
-    model a lot of latency and tells it nothing a 1280px one does not."""
+    model a lot of latency and tells it nothing a 1280px one does not.
+
+    `max_bytes` caps the *encoded* size, which matters on hosted endpoints.
+    NVIDIA's hosted NIM accepts an inline base64 image up to 180 kB and fails
+    the whole request above it — with a 500 from the worker rather than a 413,
+    so nothing in the error says what was actually wrong. A busy design at
+    1280px lands either side of that line depending on how much detail it has,
+    which is why this was intermittent rather than a clean failure. We step
+    quality down first, because it costs the least, and only then the edge.
+    """
     import cv2
 
     img = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if img is None:
         raise ProviderError(f"unreadable image: {path}")
-    h, w = img.shape[:2]
-    if max(h, w) > max_edge:
-        s = max_edge / max(h, w)
-        img = cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
-    ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
-    if not ok:
-        raise ProviderError(f"could not encode: {path}")
-    return base64.standard_b64encode(buf.tobytes()).decode(), "image/jpeg"
+
+    def at(edge: int, quality: int):
+        out = img
+        h, w = img.shape[:2]
+        if max(h, w) > edge:
+            s = edge / max(h, w)
+            out = cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", out, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+        if not ok:
+            raise ProviderError(f"could not encode: {path}")
+        return base64.standard_b64encode(buf.tobytes()).decode()
+
+    b64 = at(max_edge, 88)
+    if max_bytes is None or len(b64) <= max_bytes:
+        return b64, "image/jpeg"
+
+    for edge, quality in ((max_edge, 72), (max_edge, 60),
+                          (1024, 72), (800, 72), (640, 70), (512, 65)):
+        if edge > max_edge:
+            continue
+        b64 = at(edge, quality)
+        if len(b64) <= max_bytes:
+            log.debug("%s encoded at %dpx q%d to fit %d bytes", path.name, edge, quality, max_bytes)
+            return b64, "image/jpeg"
+
+    # Nothing fit. Send the smallest we made rather than failing the design —
+    # the server may well accept it, and a rejected request is recoverable
+    # where a raised exception here is not.
+    log.warning("%s still %d bytes encoded, over the %d byte budget",
+                path.name, len(b64), max_bytes)
+    return b64, "image/jpeg"
 
 
 # --------------------------------------------------------------------------

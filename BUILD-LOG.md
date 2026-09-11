@@ -398,3 +398,80 @@ That last line is the whole point, and it did not exist a day ago.
 tool. Everything it does has been made to work and made to stay working. Whether
 what it does is any good on your actual catalogue is a question no amount of
 further code will answer.
+
+---
+
+## 7. The endpoint 500, and a second brain
+
+Written after the first real run against a hosted endpoint failed.
+
+### What happened
+
+```
+failed
+exception: meta/muse-glimmer-30b@https://integrate.api.nvidia.com/v1 HTTP 500:
+{"type":"urn:nvcf-worker-service:problem-details:internal-server-error",
+ "title":"Internal Server Error","status":500,
+ "detail":"Internal error while making inference request"}
+```
+
+The design went to `failed` and stopped there. Three things were wrong with
+that, and only the first is about NVIDIA.
+
+**Nothing enforced the endpoint's image limit.** NVIDIA's hosted NIM accepts an
+inline base64 image up to 180 kB and fails the whole request above it — with a
+500 from the worker rather than a 413, so nothing in the error says size. A
+design at 1280px measures around 148 kB when it is mostly flat colour and goes
+well over when it is busy, which is why this failed on some listings and not
+others. `encode_image` now takes a byte budget and steps quality down, then
+dimensions, until it fits.
+
+**Nothing retried.** A 500 here almost always means the worker behind the
+endpoint fell over on that one request. The code retried a truncated reply and
+retried a 400 that mentioned `response_format`, but the one failure most likely
+to be transient went straight to `failed`. It now retries with backoff, and
+honours `Retry-After` so a 429 does not turn into a ban.
+
+**Nothing got smaller.** After the retries, the request steps down a rung at a
+time: `response_format` goes, then `model_options` — which for Muse Glimmer
+sends `reasoning_effort`, exactly the kind of extra a hosted worker can choke on
+— and finally the image shrinks. A 400 is still answered straight away, because
+a 400 is a real answer and stepping down would only obscure it.
+
+The error text now says the failure was the endpoint's rather than the design's,
+and that Review is where to pick it back up. That matters more than it sounds:
+the old message read like the design was at fault.
+
+Checked by mutation: putting 500 back outside the transient set, removing the
+byte budget, and defaulting the budget high all fail these tests. The budget
+test caught a mistake of its own on the first pass — it set the limit explicitly
+and so never checked the default, which is the thing that has to be right for
+someone who has never heard of the limit.
+
+### A second brain
+
+The owner asked whether they could sign in with Claude instead of holding an API
+key. They can, and it needed almost nothing: the Anthropic SDK already resolves
+credentials in an order where an API key is only the first option and a profile
+from `ant auth login` is another. `Anthropic()` with no arguments picks that up.
+So `providers/claude.py` deliberately passes **no** `api_key`, because passing
+one would shadow the profile and defeat the point — there is a test that fails
+if anyone adds it back.
+
+`SF_VISION_BACKEND` chooses; a model id starting `claude-` chooses it for you,
+because someone who typed that has already said what they meant. Effort defaults
+to `low` against five thousand designs. A refusal is caught before the content
+is read, or it looks like an empty reply and the repair loop spends three more
+calls learning the same thing.
+
+This breaks ground rule 4 in the handoff — no paid APIs — on the owner's direct
+request. The local backend is untouched and still the default. The README says
+plainly that this is a paid API and that signing in saves the key handling, not
+the bill, because the question was asked in terms of "my Claude tokens" and the
+honest answer is that those are not the same thing.
+
+### State
+
+415 tests pass with Inkscape and Tesseract present. The 22 that fail without
+them are the export and OCR paths, and they fail the same way on a clean
+checkout — nothing to do with these changes.

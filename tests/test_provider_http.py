@@ -303,3 +303,146 @@ def test_from_env_without_a_model_says_which_setting_to_set(monkeypatch):
     with pytest.raises(ProviderError) as exc:
         from_env("SF_VISION")
     assert "SF_VISION_MODEL" in str(exc.value)
+
+
+# --- when the server itself falls over -----------------------------------
+#
+# The failure the owner actually hit, verbatim:
+#
+#   HTTP 500: {"type":"urn:nvcf-worker-service:problem-details:internal-server-error",
+#              "title":"Internal Server Error","status":500,
+#              "detail":"Internal error while making inference request"}
+#
+# That killed the design outright. Nothing retried, and the design went to
+# `failed` — for a fault that was the endpoint's, not the design's.
+
+NVIDIA_500 = {
+    "type": "urn:nvcf-worker-service:problem-details:internal-server-error",
+    "title": "Internal Server Error",
+    "status": 500,
+    "detail": "Internal error while making inference request",
+}
+
+
+def _fast(url, model="m", **kw):
+    """No real waiting — the backoff is what we are testing around, not with."""
+    return OpenAICompatProvider(url, model, backoff=0.001, **kw)
+
+
+def test_a_500_is_retried_rather_than_failing_the_design(image):
+    def flaky(n, _body):
+        if n == 1:
+            return 500, NVIDIA_500
+        return 200, {"choices": [{"message": {"content": '{"ok": true}'}}]}
+
+    with _Server(flaky) as s:
+        got = _fast(s.url).chat("s", "u", [image])
+
+    assert got == '{"ok": true}'
+    assert len(s.requests) == 2, "a 500 was not retried"
+
+
+def test_a_persistent_500_steps_the_request_down(image):
+    """When retrying the same request keeps failing, send a smaller one:
+    without response_format, without the model's extra sampling options, and
+    finally with a smaller image. Any of the three can be what upset it."""
+    def always_500(_n, _body):
+        return 500, NVIDIA_500
+
+    with _Server(always_500) as s:
+        with pytest.raises(ProviderError):
+            _fast(s.url, "meta/muse-glimmer-30b").chat("s", "u", [image])
+
+    first, last = s.requests[0], s.requests[-1]
+    assert first["response_format"] == {"type": "json_object"}
+    assert "reasoning_effort" in first, "the model's extras were never sent"
+    assert "response_format" not in last, "it never dropped response_format"
+    assert "reasoning_effort" not in last, "it never dropped the extras"
+
+    def payload_bytes(r):
+        return len(r["messages"][1]["content"][0]["image_url"]["url"])
+    assert payload_bytes(last) < payload_bytes(first), "it never shrank the image"
+
+
+def test_the_error_for_a_dead_endpoint_says_whose_fault_it_is(image):
+    """"HTTP 500" alone reads as "your design is broken". It is not."""
+    with _Server(lambda n, b: (500, NVIDIA_500)) as s:
+        with pytest.raises(ProviderError) as exc:
+            _fast(s.url).chat("s", "u", [image])
+    text = str(exc.value)
+    assert "500" in text
+    assert "server's own fault" in text
+    assert "Review" in text, "it does not say how to pick the design back up"
+
+
+def test_a_429_waits_for_the_time_the_server_asked_for(image):
+    """Hosted endpoints rate-limit. Ignoring Retry-After gets you banned."""
+    class H(BaseHTTPRequestHandler):
+        calls = 0
+
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            H.calls += 1
+            if H.calls == 1:
+                raw = b'{"error":"slow down"}'
+                self.send_response(429)
+                self.send_header("Retry-After", "0.01")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+                return
+            raw = json.dumps({"choices": [{"message": {"content": "fine"}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    H.calls = 0
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{httpd.server_address[1]}/v1"
+        assert OpenAICompatProvider(url, "m", backoff=30).chat("s", "u", [image]) == "fine"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert H.calls == 2
+
+
+def test_a_400_is_still_answered_straight_away(image):
+    """Stepping down is for faults that might be about the request's size or
+    dialect. A 400 that is not about response_format is a real answer."""
+    with _Server(lambda n, b: (400, {"error": "model does not accept images"})) as s:
+        with pytest.raises(ProviderError):
+            _fast(s.url).chat("s", "u", [image])
+    assert len(s.requests) == 1, "a plain 400 should not be retried"
+
+
+def test_an_oversized_image_is_brought_under_the_endpoint_budget(tmp_path):
+    """NVIDIA's hosted NIM rejects an inline image over 180 kB, and reports it
+    as a 500 with nothing in the message about size."""
+    import cv2
+
+    rng = np.random.default_rng(0)
+    busy = rng.integers(0, 255, (2400, 1800, 3), dtype=np.uint8)
+    path = tmp_path / "busy.jpg"
+    cv2.imwrite(str(path), busy)
+
+    # Built with defaults on purpose: the budget has to be right out of the
+    # box, because nobody configures a limit they have never heard of.
+    with _Server(_ok) as s:
+        OpenAICompatProvider(s.url, "m").chat("s", "u", [path])
+
+    url = s.requests[0]["messages"][1]["content"][0]["image_url"]["url"]
+    b64 = url.split(",", 1)[1]
+    assert len(b64) <= 180_000, f"sent {len(b64)} bytes, over the endpoint's limit"
+    assert base64.b64decode(b64)[:2] == b"\xff\xd8", "not a JPEG any more"
+
+
+def test_the_default_budget_is_the_hosted_endpoint_limit():
+    """180 kB is NVIDIA's documented ceiling for an inline base64 image. Going
+    over it is what produced the 500 above, so the default has to be under."""
+    assert OpenAICompatProvider("http://x/v1", "m").max_image_bytes <= 180_000

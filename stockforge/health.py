@@ -54,14 +54,35 @@ class Report:
 
 # --------------------------------------------------------------------------
 
+def _check_claude() -> Check:
+    """The signed-in route. Nothing to start, nothing to paste — but it does
+    need the SDK present and an account signed in."""
+    from .providers.claude import DEFAULT_MODEL, available
+
+    model = os.environ.get("SF_VISION_MODEL") or DEFAULT_MODEL
+    ok, fix = available()
+    if not ok:
+        return Check("Vision model", "fail", f"Claude selected, but {fix[:1].lower()}{fix[1:]}", fix)
+    signed_in = not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    how = "signed in" if signed_in else "using ANTHROPIC_API_KEY"
+    return Check("Vision model", "ok", f"{model} via Claude ({how})")
+
+
 def _check_vision() -> Check:
+    from .providers import backend
+
+    if backend("SF_VISION") == "claude":
+        return _check_claude()
+
     base = os.environ.get("SF_VISION_BASE_URL", "http://localhost:8000/v1")
     model = os.environ.get("SF_VISION_MODEL")
     if not model:
         return Check("Vision model", "fail",
                      "SF_VISION_MODEL is not set",
                      "Set SF_VISION_MODEL to whatever your server is serving, "
-                     "e.g. nvidia/llama-3.2-90b-vision-instruct")
+                     "e.g. nvidia/llama-3.2-90b-vision-instruct — or set it to "
+                     "claude-opus-5 and sign in with `ant auth login` to use "
+                     "Claude instead of running a model yourself.")
     try:
         req = urllib.request.Request(f"{base.rstrip('/')}/models")
         key = os.environ.get("SF_VISION_API_KEY")

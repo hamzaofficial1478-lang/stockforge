@@ -180,6 +180,49 @@ Local models wrap their JSON in prose, leave trailing commas and occasionally
 drop a brace. The provider layer extracts, validates, and hands the validation
 errors straight back for a repair round. Two retries fixes almost everything.
 
+### When the endpoint falls over
+
+A hosted endpoint fails in ways a local one does not, and it rarely says what
+went wrong. NVIDIA's returns a bare `HTTP 500 — internal error while making
+inference request`, which reads as though your design broke something. It
+didn't. Three things are done about it, in order:
+
+- **The image is encoded to fit.** A hosted endpoint caps an inline image —
+  NVIDIA's limit is 180 kB — and going over it comes back as that same 500 with
+  nothing about size in it. A busy design at 1280px lands either side of the
+  line depending on how much detail it has, which is why this failed on some
+  designs and not others. Quality comes down first, then the dimensions.
+- **A 500 is retried.** Usually the worker behind the endpoint fell over on
+  that one request and the identical request works a moment later.
+- **Then the request is made smaller.** `response_format` goes, the model's
+  extra sampling options go, and the image shrinks — any of the three can be
+  what a fussy hosted worker objected to.
+
+Only then does the design fail, and the message says whose fault it was and
+that Review is where you pick it back up.
+
+### Or don't run a model at all
+
+```bash
+pip install anthropic
+ant auth login          # opens a browser, signs you in, stores the result
+```
+
+Then set the backend to Claude on the Setup screen. Nothing is pasted into
+stockforge and no key is stored in the workspace — the Anthropic SDK looks for
+an API key first and a signed-in profile second, so signing in is enough.
+
+Two things worth being clear about. This is a **paid API**, billed to your
+Anthropic account; it is not the same pool as a Claude.ai chat subscription,
+and signing in rather than pasting a key removes the key handling, not the
+bill. And it is a deliberate exception to this project's no-paid-APIs rule —
+your own model stays the default and nothing about it changes. Use this when
+the local model is down, or when a design keeps coming back wrong and you want
+a second opinion on it.
+
+Effort defaults to `low`, because five passes across five thousand designs is a
+real bill. Raise it on Setup for the designs that need it.
+
 They also change values they were told not to change. The palette pass hands
 the model measured hex codes and asks only for roles; when one comes back
 altered it's snapped to the nearest colour that was actually measured, so the

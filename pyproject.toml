@@ -12,6 +12,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Only needed to use Claude as the model backend. Nothing else imports it.
+claude = ["anthropic>=1.0"]
 dev = ["pytest>=8.0", "pyftpdlib>=1.5"]   # pyftpdlib: a real FTP server for the delivery tests
 
 [project.scripts]
