@@ -136,6 +136,14 @@ class Settings:
     # only the obvious.
     duplicate_distance: int = field(default_factory=lambda: _i("SF_DUPLICATE_DISTANCE", 20), metadata={"env": "SF_DUPLICATE_DISTANCE"})
 
+    # --- did we actually rebuild it ---------------------------------------
+    # How much of a surface may be placed photograph before we stop calling it
+    # a rebuild. A design the model reads as one big photographic area comes
+    # back as the original picture with the text set beside it — which passes
+    # every other check, because nothing else asks whether anything was
+    # actually redrawn.
+    max_raster: float = field(default_factory=lambda: _f("SF_MAX_RASTER", 0.40), metadata={"env": "SF_MAX_RASTER"})
+
     # --- output ----------------------------------------------------------
     preview_px: int = field(default_factory=lambda: _i("SF_PREVIEW_PX", 1400), metadata={"env": "SF_PREVIEW_PX"})
 

@@ -175,3 +175,54 @@ def test_a_placed_photograph_makes_the_design_unsellable(tmp_path):
     _hold_back_rasters(spec.pages, spec.provenance, spec.warnings)
     assert spec.publishable is False
     assert any("painted wood" in w for w in spec.warnings)
+
+
+# --- when the photograph swallows the design -----------------------------
+#
+# The failure the owner hit, and the one that looks most like success. The
+# model read a watercolour invitation as one photographic area. The renderer
+# placed the original pixels faithfully — it was right to — and the text was
+# set beside them. Out came the source image with words next to it. Every
+# other check passed, because none of them asks whether anything was redrawn.
+
+def _covering(tmp_path, share_w, share_h, **kw):
+    return _spec(tmp_path, [RasterElement(
+        description="the whole invitation as a photo",
+        box=Box(x=0.01, y=0.01, w=share_w, h=share_h))], **kw)
+
+
+def test_a_photograph_over_most_of_the_page_is_not_a_rebuild(tmp_path):
+    """Roughly what came back: three quarters of the surface placed as one
+    photograph, the text laid out beside it."""
+    spec = _covering(tmp_path, 0.74, 0.96)
+    flagged = spec.photocopied_pages(limit=0.40)
+    assert flagged, "a design that is mostly photograph was called a rebuild"
+    name, share = flagged[0]
+    assert 0.70 < share < 0.72
+
+
+def test_a_small_photographic_area_is_perfectly_fine(tmp_path):
+    """A photo inside a design is normal and is what RasterElement is for.
+    Only a photo that *is* the design is the failure."""
+    assert _covering(tmp_path, 0.30, 0.25).photocopied_pages(limit=0.40) == []
+
+
+def test_several_smaller_photographs_still_add_up(tmp_path):
+    """Four quarter-page photographs are as much a photocopy as one big one,
+    and splitting it up must not be a way round the check."""
+    spec = _spec(tmp_path, [
+        RasterElement(description=f"panel {i}",
+                      box=Box(x=0.02 + 0.24 * i, y=0.1, w=0.22, h=0.8))
+        for i in range(4)
+    ])
+    assert spec.photocopied_pages(limit=0.40), "four photographs got through"
+
+
+def test_a_design_with_no_photograph_is_never_flagged(tmp_path):
+    assert _spec(tmp_path, []).photocopied_pages(limit=0.40) == []
+
+
+def test_the_limit_is_adjustable(tmp_path):
+    spec = _covering(tmp_path, 0.6, 0.6)          # 36% of the page
+    assert spec.photocopied_pages(limit=0.40) == []
+    assert spec.photocopied_pages(limit=0.30), "the limit is not being honoured"

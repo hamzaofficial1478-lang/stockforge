@@ -46,6 +46,13 @@
   .card > .hint{color:var(--ink-3);font-size:13px;margin:0 0 14px}
 
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .explain{background:var(--sunk,rgba(0,0,0,.03));border-radius:8px;padding:12px 14px;margin:10px 0 0}
+  .explain p{margin:0 0 9px;font-size:13px;line-height:1.55;color:var(--ink)}
+  .explain p:last-child{margin-bottom:0}
+  .explain b{font-weight:600}
+  .why{margin:2px 0 8px;font-size:13px;line-height:1.5}
+  .btn.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 35%,transparent)}
+  .btn.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
   .gap{padding:10px 0;border-top:1px solid var(--line)}
   .gap:first-of-type{border-top:0}
   .gap b{font-variant-numeric:tabular-nums}
@@ -244,12 +251,15 @@
               <option value="vision">Reading designs (needs to see images)</option>
               <option value="text">Titles and keywords (text only)</option>
             </select></div>
-          <div><label>Server address</label>
+          <div><label>How it connects</label>
+            <select id="conn-backend" onchange="connBackendChanged()"></select></div>
+          <div id="conn-base-wrap"><label>Server address</label>
             <input id="conn-base" placeholder="http://localhost:11434/v1"></div>
-          <div><label>API key (hosted servers only)</label>
+          <div id="conn-key-wrap"><label>API key (hosted servers only)</label>
             <input id="conn-key" type="password" placeholder="leave blank for local"></div>
         </div>
-        <div class="row" style="margin-top:10px">
+        <p class="hint" id="conn-signin" hidden></p>
+        <div class="row" style="margin-top:10px" id="conn-fetch-wrap">
           <button class="btn small" onclick="fetchModels()">Fetch models from that server</button>
           <span id="fetch-msg" class="mono"></span>
         </div>
@@ -509,12 +519,33 @@
 
   <!-- ── REVIEW ────────────────────────────────────────────── -->
   <section id="review" hidden>
-    <p class="lede">Worst first. Everything the program was confident about has already gone through — this is only what it wants a second opinion on.</p>
+    <p class="lede">Everything the program was confident about has already finished. This page is only the designs it stopped on, and for each one it says what stopped it.</p>
 
     <div class="card" id="gaps-card" hidden>
-      <h3>What to draw next</h3>
-      <p class="hint">Every decorative element nothing in your library could answer, gathered across the whole catalogue and ranked by how many designs are waiting on it. The same thing described a dozen ways is one row. <span class="mono">stockforge motifs todo --scaffold</span> writes a tagged stub for each.</p>
-      <div id="gaps-list"></div>
+      <h3>Artwork it needs and hasn&rsquo;t got</h3>
+      <div class="explain">
+        <p><b>What this list is.</b> Each row is a piece of decoration the program found in
+        your designs &mdash; a bat, a pumpkin, a calendar icon &mdash; that it has no drawing
+        for in <span class="mono">assets/motifs/</span>.</p>
+        <p><b>Why it stopped instead of guessing.</b> It will not trace your original or
+        invent a shape. Tracing produces the jagged, muddy vectors both agencies reject on
+        sight, and a made-up pumpkin is not the one that sold. So it leaves the gap and
+        tells you, which is the only honest answer it has.</p>
+        <p><b>What happens next, and it does need you.</b> Nothing on this list clears
+        itself. Someone has to draw each one once, as a plain SVG on a 0&ndash;100 square,
+        and drop it in <span class="mono">assets/motifs/</span>. Press the button below and
+        the program writes a named, tagged, empty file for each row so you are opening a
+        file rather than working out what to make. Draw into it, press
+        <b>Run again</b> on the designs below, and they carry on from where they stopped.</p>
+        <p><b>Why it is worth doing once.</b> The number on the left is how many designs are
+        stuck on that one drawing. Draw the bat once and every design using a bat is
+        unblocked, for good, across the whole catalogue.</p>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn" onclick="doScaffold()">Write me a starter file for each</button>
+        <span id="scaffold-msg" class="mono"></span>
+      </div>
+      <div id="gaps-list" style="margin-top:14px"></div>
     </div>
 
     <div id="review-list"><div class="empty">loading…</div></div>
@@ -604,6 +635,7 @@ const CFG_KEYS = ['SF_PRESERVE_ORIGINAL','SF_VISION_BACKEND','SF_VISION_EFFORT',
   'SF_FTP_SHUTTERSTOCK_HOST','SF_FTP_SHUTTERSTOCK_USER','SF_FTP_SHUTTERSTOCK_PASS'];
 
 let BACKENDS = {};
+let CFG_MIX = 0.5;
 
 async function loadBackends(){
   const r = await api('/api/backends');
@@ -630,6 +662,7 @@ async function loadBackends(){
     sel.appendChild(o);
   }
   sel.value = chosen;
+  CFG_MIX = parseFloat(c.values.SF_MIX) || 0.5;
   await loadBackends();
 }
 
@@ -757,7 +790,8 @@ function paintConns(){
 function draft(){
   return {id: EDITING, label: $('conn-label').value.trim(),
           base_url: $('conn-base').value.trim(), model: $('conn-model').value.trim(),
-          api_key: $('conn-key').value, role: $('conn-role').value};
+          api_key: $('conn-key').value, role: $('conn-role').value,
+          backend: $('conn-backend') ? $('conn-backend').value : 'openai'};
 }
 
 function resetConnForm(){
@@ -826,7 +860,10 @@ async function testConnection(cell, body){
 
 async function saveConn(){
   const d = draft();
-  if (!d.base_url || !d.model)
+  // A signed-in backend has no server address, so demanding one would make it
+  // impossible to save the very thing the sign-in route exists for.
+  const needsServer = (d.backend || 'openai') === 'openai';
+  if (needsServer && (!d.base_url || !d.model))
     return $('conn-msg').textContent = 'a server address and a model are both needed';
   const r = await api('/api/models/save', d);
   if (r.error) return $('conn-msg').textContent = r.error;
@@ -1053,19 +1090,55 @@ async function loadGaps(){
   $('gaps-card').hidden = gaps.length === 0;
   if (!gaps.length) return;
   const blocked = gaps.reduce((n, g) => n + g.designs, 0);
-  $('gaps-list').innerHTML = gaps.map(g => `
+  $('gaps-list').innerHTML = gaps.map(g => {
+    // A score is how close the nearest thing in the library is, 0 to 1. Below
+    // about 0.4 it is not the same object at all, and saying so in words beats
+    // a number the reader has to learn how to read.
+    const near = !g.nearest_id ? 'Nothing in your library is remotely like this.'
+      : g.nearest_score >= 0.55
+        ? `You may already have this: <span class="mono">${esc(g.nearest_id)}</span> is a fair match. Worth a look before drawing anything.`
+        : `The closest thing you have is <span class="mono">${esc(g.nearest_id)}</span>, and it is not close &mdash; a different object, so this one needs drawing.`;
+    return `
     <div class="gap">
       <div class="row">
-        <b>${g.designs}</b> design${g.designs === 1 ? '' : 's'} waiting
+        <b>${g.designs}</b> design${g.designs === 1 ? '' : 's'} need${g.designs === 1 ? 's' : ''} this drawing
         <span class="tag">${esc(g.kind)}</span>
-        <span class="what">${esc(g.description)}</span>
       </div>
-      <p class="hint">${g.nearest_id
-        ? `nearest you have: <span class="mono">${esc(g.nearest_id)}</span> at ${g.nearest_score.toFixed(2)}`
-        : 'nothing in the library is close'}${
-        g.variants.length ? ` · also seen as “${esc(g.variants[0])}”` : ''}</p>
-    </div>`).join('')
-    + `<p class="hint" style="margin-top:12px">${gaps.length} to draw, ${blocked} design-slots waiting.</p>`;
+      <p class="what" style="margin:4px 0">${esc(g.description)}</p>
+      <p class="hint">${near}${
+        g.variants.length ? `<br>Also described as &ldquo;${esc(g.variants[0])}&rdquo; elsewhere &mdash; one drawing covers both.` : ''}</p>
+    </div>`;
+  }).join('')
+    + `<p class="hint" style="margin-top:12px"><b>${gaps.length} drawing${gaps.length === 1 ? '' : 's'} to make.</b> `
+    + `Between them they are holding up ${blocked} design${blocked === 1 ? '' : 's'}. `
+    + `Until they exist, those designs stay on this page.</p>`;
+}
+
+function connBackendChanged(){
+  // A signed-in backend has no server to point at and no key to paste. Showing
+  // those boxes anyway is what made it look as though a key was still required.
+  const name = $('conn-backend').value;
+  const b = BACKENDS[name];
+  const server = !b || (b.presets && b.presets.length) || name === 'openai';
+  $('conn-base-wrap').hidden = !server;
+  $('conn-key-wrap').hidden = !server;
+  $('conn-fetch-wrap').hidden = !server;
+  const note = $('conn-signin');
+  if (server){ note.hidden = true; return; }
+  note.hidden = false;
+  note.innerHTML = b && b.ready
+    ? `Signed in &mdash; no key needed. Just name the model, or leave it blank for the default.`
+    : `${esc((b && b.fix) || 'Not signed in yet.')}`;
+}
+
+async function doScaffold(){
+  const msg = $('scaffold-msg');
+  msg.textContent = 'writing…';
+  try {
+    const r = await api('/api/scaffold', {});
+    msg.textContent = r.error ? r.error
+      : `wrote ${r.written} starter file${r.written === 1 ? '' : 's'} into ${r.folder}/_todo — draw into them, then press Run again below`;
+  } catch (e){ msg.textContent = String(e); }
 }
 
 async function loadReview(){
@@ -1074,26 +1147,62 @@ async function loadReview(){
     $('review-list').innerHTML = '<div class="card"><div class="empty">Nothing waiting on you.</div></div>';
     return;
   }
-  $('review-list').innerHTML = rows.map(r => `
+  $('review-list').innerHTML = rows.map(r => {
+    const mix = r.mix == null ? null : Math.round(r.mix * 100);
+    const balance = mix == null
+      ? `using the Setup default (${Math.round((CFG_MIX ?? 0.5) * 100)}% borrowed)`
+      : `${100 - mix}% this design, ${mix}% borrowed from your others`;
+    return `
     <div class="card">
       <h3>${esc((r.title || r.design_id).slice(0,80))}</h3>
-      <p class="hint">${esc(r.reason)} &nbsp;·&nbsp; score ${(r.score ?? 0).toFixed(2)}</p>
-      <p>${outputLinks(r.files)}</p>
+      <p class="why"><b>Why it stopped:</b> ${esc(r.reason)}</p>
+      <p class="hint">Balance used: ${balance}</p>
       <div class="compare">
         <figure><figcaption>your design</figcaption>
           ${r.source_image ? `<img loading="lazy" src="${fileURL(r.source_image)}" alt="">`
                            : '<div class="empty">no flat image</div>'}</figure>
-        <figure><figcaption>rebuild</figcaption>
+        <figure><figcaption>what it made</figcaption>
           ${r.rebuilds?.length ? `<img loading="lazy" src="${fileURL(r.rebuilds[0])}" alt="">`
-                               : '<div class="empty">not rendered</div>'}</figure>
+                               : '<div class="empty">nothing was drawn</div>'}</figure>
       </div>
-      <div class="row">
+      <p class="hint">Files: ${outputLinks(r.files)}</p>
+      <div class="row" style="margin-top:8px;gap:8px;align-items:center">
+        <label class="mono" style="opacity:.7">balance for the next run</label>
+        <select class="small" onchange="setMix('${r.design_id}', this.value)">
+          ${[['default','use the Setup default'],['0','100% this design — copy it, borrow nothing'],
+             ['0.3','70 / 30 — mostly this design'],['0.5','50 / 50 — even mix'],
+             ['0.7','30 / 70 — mostly borrowed'],['1','0 / 100 — borrow everything it can']]
+            .map(([v,l]) => `<option value="${v}"${String(r.mix ?? 'default') === v ? ' selected' : ''}>${l}</option>`).join('')}
+        </select>
+        <span class="mono" id="mix-msg-${r.design_id}"></span>
+      </div>
+      <div class="row" style="margin-top:10px">
         <button class="btn primary small" onclick="decide('${r.design_id}','approve')">Clear for delivery</button>
         <button class="btn small" onclick="decide('${r.design_id}','retry')">Run again</button>
         <button class="btn small" onclick="decide('${r.design_id}','reject')">Keep as master only</button>
+        <button class="btn small danger" onclick="removeDesign('${r.design_id}', this)">Remove</button>
         ${r.listing_url ? `<a class="mono" href="${esc(r.listing_url)}" target="_blank" rel="noreferrer">listing ↗</a>` : ''}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+}
+
+async function setMix(id, value){
+  const msg = $('mix-msg-' + id);
+  await api('/api/mix', {design_id: id, mix: value});
+  if (msg){
+    msg.textContent = 'saved — press Run again to use it';
+    setTimeout(() => msg.textContent = '', 4000);
+  }
+}
+
+async function removeDesign(id, btn){
+  // Rows only. The finished files stay on disk, because clearing a long list
+  // is tidying up and should not quietly bin what you came here for.
+  if (!confirm('Remove this design from the list?\n\nAny files it already produced stay on disk — this only clears it from stockforge.')) return;
+  if (btn) btn.disabled = true;
+  await api('/api/remove', {design_id: id});
+  loadReview(); loadGaps(); loadStatus();
 }
 async function decide(id, decision){
   await api('/api/decide', {design_id:id, decision});

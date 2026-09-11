@@ -36,6 +36,10 @@ class Connection:
     base_url: str = "http://localhost:8000/v1"
     model: str = ""
     api_key: str = ""
+    # Which backend talks to it. "openai" wants a base URL and maybe a key;
+    # "claude" wants neither, because it uses the account you signed in with.
+    # Anything else is an import path to someone's own backend.
+    backend: str = "openai"
     role: str = "vision"           # vision | text
     active: bool = False
     last_tested: float = 0.0
@@ -84,7 +88,7 @@ def upsert(root: Path, data: dict) -> Connection:
     if existing is None:
         existing = Connection(id=data.get("id") or uuid.uuid4().hex[:12])
         connections.append(existing)
-    for key in ("label", "base_url", "model", "role"):
+    for key in ("label", "base_url", "model", "role", "backend"):
         if data.get(key) is not None:
             setattr(existing, key, str(data[key]).strip())
     # An empty key means "leave it alone", because the browser is never sent
@@ -122,7 +126,17 @@ def activate(root: Path, connection_id: str) -> Connection | None:
 def env_for(connection: Connection) -> dict[str, str]:
     """The settings that make this connection the one the pipeline uses."""
     prefix = "SF_VISION" if connection.role == "vision" else "SF_REASON"
-    return {f"{prefix}_BASE_URL": connection.base_url,
+    backend = connection.backend or "openai"
+    if backend != "openai":
+        # A signed-in backend has no server to point at, and writing a stale
+        # key here would shadow the sign-in — which is the whole thing it
+        # exists to avoid. Both are cleared rather than left lying around.
+        return {f"{prefix}_BACKEND": backend,
+                f"{prefix}_MODEL": connection.model,
+                f"{prefix}_BASE_URL": "",
+                f"{prefix}_API_KEY": ""}
+    return {f"{prefix}_BACKEND": "openai",
+            f"{prefix}_BASE_URL": connection.base_url,
             f"{prefix}_MODEL": connection.model,
             f"{prefix}_API_KEY": connection.api_key}
 

@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS designs (
     page_count    INTEGER DEFAULT 0,
     stock_safe    INTEGER,               -- NULL until provenance runs
     state         TEXT NOT NULL DEFAULT 'pending',
+    mix           REAL,                  -- NULL = use the global setting
+    derive        REAL,                  -- NULL = use the global setting
     created_at    REAL NOT NULL
 );
 
@@ -132,6 +134,15 @@ class Store:
         if "read_json" not in columns:
             with self.tx() as c:
                 c.execute("ALTER TABLE specs ADD COLUMN read_json TEXT")
+
+        # How much each design borrows, set per design rather than only for the
+        # whole run. One setting for five thousand designs means the careful
+        # ones and the throwaway ones get the same treatment.
+        design_columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(designs)")}
+        with self.tx() as c:
+            for column in ("mix", "derive"):
+                if column not in design_columns:
+                    c.execute(f"ALTER TABLE designs ADD COLUMN {column} REAL")
 
         if not row or "PRIMARY KEY (id, design_id)" in row["sql"]:
             return
@@ -330,6 +341,28 @@ class Store:
                 "decision=NULL, decided_at=NULL",
                 (did, reason, score),
             )
+
+    def set_design_mix(self, did: str, mix: float | None, derive: float | None) -> None:
+        """Per-design borrowing. None on either means follow the global setting."""
+        with self.tx() as c:
+            c.execute("UPDATE designs SET mix=?, derive=? WHERE id=?", (mix, derive, did))
+
+    def remove_design(self, did: str) -> dict[str, int]:
+        """Forget a design entirely — its rows, not its files.
+
+        Files are left alone on purpose. Removing a row is a tidying-up action
+        someone takes in a hurry on a list of five thousand; deleting the
+        finished PDFs they came here for is not something to do as a side
+        effect of that.
+        """
+        counts: dict[str, int] = {}
+        with self.tx() as c:
+            for table, column in (("review", "design_id"), ("builds", "design_id"),
+                                  ("specs", "design_id"), ("assets", "design_id"),
+                                  ("designs", "id")):
+                counts[table] = c.execute(
+                    f"DELETE FROM {table} WHERE {column}=?", (did,)).rowcount
+        return counts
 
     def pending_review(self) -> list[sqlite3.Row]:
         return self.conn.execute(

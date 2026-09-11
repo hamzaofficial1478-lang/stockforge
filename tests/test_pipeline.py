@@ -19,7 +19,8 @@ from stockforge.pipeline import Pipeline
 from stockforge.providers.base import VisionProvider
 from stockforge.schema import (
     Background, Box, ColourRole, Critique, DesignSpec, FontClass, Grid,
-    MotifElement, MotifKind, Provenance, ShapeElement, TextElement, TypeRole,
+    MotifElement, MotifKind, Provenance, RasterElement, ShapeElement, TextElement,
+    TypeRole,
 )
 from stockforge.sources import open_source
 from stockforge.stages import analyse as analyse_stage
@@ -594,3 +595,70 @@ def test_the_build_row_records_where_the_files_went(workspace, tmp_path):
         assert Path(row[column]).is_file(), f"builds.{column} points at nothing"
     assert row["pdf_path"].endswith(".pdf")
     assert row["preview_path"].endswith(".jpg")
+
+
+# --- the photocopy ---------------------------------------------------------
+
+def test_a_design_read_as_one_big_photograph_is_not_called_finished(workspace, tmp_path):
+    """The owner's report, reproduced: "it just gave the original pic and text
+    of side ... it did not give me it's own design".
+
+    That is exactly what the program did. The model read the whole surface as
+    one photographic area, the renderer placed the original pixels — correctly,
+    that is what RasterElement is for — and the text was set beside them. Every
+    check passed and the design was called built, because nothing asked the one
+    question that matters: did we redraw this, or did we photocopy it?
+    """
+    class Photocopier(ScriptedProvider):
+        def _structureread(self):
+            read = super()._structureread()
+            read.motifs = []
+            read.shapes = []
+            read.rasters = [RasterElement(
+                description="the whole watercolour invitation",
+                box=Box(x=0.01, y=0.01, w=0.74, h=0.96))]
+            return read
+
+    provider = Photocopier()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+
+    _listing(tmp_path / "exports", "halloween-invite")
+    pipe = Pipeline(workspace)
+    pipe.pull(open_source("folder", str(tmp_path / "exports")))
+    design_id = pipe.store.designs()[0]["id"]
+
+    state = pipe.build(design_id)
+    assert state == "review", f"a photocopy was called {state!r}"
+
+    reason = pipe.store.conn.execute(
+        "SELECT reason FROM review WHERE design_id=?", (design_id,)).fetchone()["reason"]
+    assert "not rebuilt" in reason, reason
+    assert "original picture" in reason, reason
+
+
+def test_a_design_with_a_small_photo_in_it_still_ships(workspace, tmp_path):
+    """A photograph inside a design is normal and is what the element is for.
+    Only a photograph that *is* the design is the failure — the check must not
+    start rejecting ordinary work."""
+    class SmallPhoto(ScriptedProvider):
+        def _structureread(self):
+            read = super()._structureread()
+            read.rasters = [RasterElement(
+                description="a small photographic vignette",
+                box=Box(x=0.35, y=0.30, w=0.28, h=0.22))]
+            return read
+
+    provider = SmallPhoto()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+
+    _listing(tmp_path / "exports", "photo-invite")
+    pipe = Pipeline(workspace)
+    pipe.pull(open_source("folder", str(tmp_path / "exports")))
+    design_id = pipe.store.designs()[0]["id"]
+
+    state = pipe.build(design_id)
+    reason = pipe.store.conn.execute(
+        "SELECT reason FROM review WHERE design_id=?", (design_id,)).fetchone()
+    assert state in ("ready", "master_only"), reason["reason"] if reason else state

@@ -184,11 +184,35 @@ def test_going_live_writes_the_settings_the_pipeline_reads(tmp_path):
                                 "base_url": "http://localhost:1234/v1",
                                 "api_key": "sk-x"})
     assert store.env_for(c) == {
+        "SF_VISION_BACKEND": "openai",
         "SF_VISION_BASE_URL": "http://localhost:1234/v1",
         "SF_VISION_MODEL": "a-model",
         "SF_VISION_API_KEY": "sk-x"}
     assert store.env_for(store.upsert(tmp_path, {"model": "t", "role": "text"}))[
         "SF_REASON_MODEL"] == "t"
+
+
+def test_a_signed_in_connection_needs_no_server_and_no_key(tmp_path):
+    """The owner's ask: add a model by signing in, not by pasting a key. A
+    connection on a signed-in backend has no server to point at."""
+    c = store.upsert(tmp_path, {"model": "claude-opus-5", "role": "vision",
+                                "backend": "claude"})
+    assert store.env_for(c) == {
+        "SF_VISION_BACKEND": "claude",
+        "SF_VISION_MODEL": "claude-opus-5",
+        "SF_VISION_BASE_URL": "",
+        "SF_VISION_API_KEY": ""}
+
+
+def test_going_live_on_a_signed_in_backend_clears_an_old_key(tmp_path):
+    """A key left from a previous connection would shadow the sign-in, which
+    is the one thing the signed-in route exists to avoid."""
+    c = store.upsert(tmp_path, {"model": "claude-opus-5", "role": "vision",
+                                "backend": "claude", "api_key": "sk-stale",
+                                "base_url": "http://localhost:1234/v1"})
+    env = store.env_for(c)
+    assert env["SF_VISION_API_KEY"] == "", "a stale key would shadow the sign-in"
+    assert env["SF_VISION_BASE_URL"] == "", "a stale server address was left behind"
 
 
 def test_a_corrupt_file_does_not_take_the_panel_down_with_it(tmp_path):

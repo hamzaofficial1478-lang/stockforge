@@ -275,6 +275,19 @@ class Page(BaseModel):
     source_image: str | None = Field(default=None)
 
 
+def _raster_share(elements: list) -> float:
+    """How much of a surface is photograph rather than rebuilt artwork, 0..1.
+
+    Overlapping rasters are counted twice and the total is clamped, so this
+    errs high. That is the safe direction: it is a check that refuses to call
+    something a rebuild, and over-reporting sends a design to a human while
+    under-reporting ships a photocopy.
+    """
+    total = sum(min(1.0, e.box.w) * min(1.0, e.box.h)
+                for e in elements if isinstance(e, RasterElement))
+    return min(1.0, total)
+
+
 class Provenance(BaseModel):
     """Where the ingredients came from, and therefore where the output may go.
 
@@ -336,6 +349,24 @@ class DesignSpec(BaseModel):
 
     def rasters(self, page: int | None = None) -> list[RasterElement]:
         return [e for e in self.elements(page) if isinstance(e, RasterElement)]
+
+    def photocopied_pages(self, limit: float = 0.40) -> list[tuple[str, float]]:
+        """Surfaces that came back as a picture of the design rather than a
+        reading of it.
+
+        This is the failure that looks most like success. The model says the
+        whole surface is one photographic area, the renderer faithfully places
+        the original pixels, the text is set beside them, and out comes a file
+        that is the source image with words next to it. Every other check
+        passes, because nothing else asks the one question that matters: did we
+        rebuild this, or did we photocopy it?
+        """
+        out = []
+        for page in self.pages:
+            share = _raster_share(page.elements)
+            if share > limit:
+                out.append((page.name, share))
+        return out
 
     @property
     def publishable(self) -> bool:

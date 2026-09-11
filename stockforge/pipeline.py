@@ -195,14 +195,26 @@ class Pipeline:
         distinct = 0.0
         recipe = None
 
+        # Per design, falling back to the global setting. One number for five
+        # thousand designs means the careful ones and the throwaway ones get
+        # the same treatment, and there was no way to say "leave this one
+        # alone" short of changing the setting between runs.
+        mix = row["mix"] if row["mix"] is not None else self.cfg.mix
+        derive_strength = (row["derive"] if row["derive"] is not None
+                           else self.cfg.derive_strength)
+        log.info("[%s] borrowing %.0f%%, shifting %.0f%%",
+                 design_id[:8], mix * 100, derive_strength * 100)
+
         for round_ in range(1, self.cfg.max_derive_rounds + 1):
-            self.on_progress(f"Creating and checking variation {round_}")
-            strength = self.cfg.derive_strength * round_
+            self.on_progress(
+                f"Creating and checking variation {round_} "
+                f"({mix:.0%} borrowed, {derive_strength:.0%} shifted)")
+            strength = derive_strength * round_
             base = spec
-            if pool and self.cfg.mix > 0:
+            if pool and mix > 0:
                 base, recipe = compose_stage.compose(
                     spec, pool,
-                    mix=min(1.0, self.cfg.mix * round_),
+                    mix=min(1.0, mix * round_),
                     seed=_seed("mix", design_id, round_),
                 )
                 log.info("[%s] mixed: %s", design_id[:8], recipe.summary())
@@ -373,6 +385,21 @@ class Pipeline:
             return "failed"
 
         reasons: list[str] = []
+        # The failure that looks most like success: the model reads the surface
+        # as one photographic area, the renderer places the original pixels
+        # faithfully, and the text is set beside them. What comes out is the
+        # source image with words next to it. Every other check passes, because
+        # nothing else asks whether anything was actually redrawn.
+        photocopied = derived.photocopied_pages(self.cfg.max_raster)
+        if photocopied:
+            worst = max(share for _, share in photocopied)
+            reasons.append(
+                f"not rebuilt — {worst:.0%} of "
+                + ("this surface is" if len(photocopied) == 1
+                   else f"{len(photocopied)} surfaces are")
+                + " placed photograph, so what came out is the original picture "
+                  "with the text set beside it, not a redrawn design"
+            )
         if holes:
             reasons.append("no library match for: " + "; ".join(sorted(set(holes))[:5]))
         if typeless:

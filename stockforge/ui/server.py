@@ -228,6 +228,11 @@ class Handler(BaseHTTPRequestHandler):
                     "title": design["title"] if design else None,
                     "listing_url": design["listing_url"] if design else None,
                     "state": design["state"] if design else None,
+                    # None means this design follows the Setup default. The
+                    # card says which, because "50/50" is meaningless unless
+                    # you can see whether it applied to this design.
+                    "mix": design["mix"] if design else None,
+                    "derive": design["derive"] if design else None,
                     "source_image": str(asset["flat_path"]) if asset else None,
                     "rebuilds": [str(p) for p in renders],
                     "files": self._outputs(did),
@@ -454,6 +459,52 @@ class Handler(BaseHTTPRequestHandler):
                 did, {"approve": "ready", "reject": "master_only", "retry": "pending"}[decision]
             )
             return self._json({"design_id": did, "decision": decision})
+
+        if route == "/api/remove":
+            """Forget a design. Rows only — the files it produced stay put.
+
+            Someone clearing a list of five thousand is tidying, not asking to
+            lose the PDFs they came here for."""
+            ids = body.get("design_ids") or ([body["design_id"]] if body.get("design_id") else [])
+            if not ids:
+                return self._json({"error": "design_id or design_ids is required"}, 400)
+            pipe = Pipeline(self.cfg)
+            removed = [did for did in ids if pipe.store.remove_design(did)["designs"]]
+            return self._json({"removed": len(removed), "design_ids": removed})
+
+        if route == "/api/mix":
+            """How much one design borrows. Null on either means follow Setup."""
+            did = body.get("design_id")
+            if not did:
+                return self._json({"error": "design_id is required"}, 400)
+
+            def level(key):
+                raw = body.get(key)
+                if raw in (None, "", "default"):
+                    return None
+                try:
+                    return min(1.0, max(0.0, float(raw)))
+                except (TypeError, ValueError):
+                    return None
+
+            pipe = Pipeline(self.cfg)
+            mix, derive = level("mix"), level("derive")
+            pipe.store.set_design_mix(did, mix, derive)
+            return self._json({"design_id": did, "mix": mix, "derive": derive})
+
+        if route == "/api/scaffold":
+            """Write a tagged stub for every gap, so drawing them is opening a
+            file rather than working out what to make and where to put it."""
+            from ..stages import motifs as motifs_stage
+
+            pipe = Pipeline(self.cfg)
+            try:
+                gaps = pipe.motif_gaps(limit=int(body.get("limit") or 50))
+                written = [str(motifs_stage.scaffold(g, self.cfg.motifs_dir)) for g in gaps]
+            except Exception as exc:
+                return self._json({"error": str(exc)}, 400)
+            return self._json({"written": len(written), "folder": str(self.cfg.motifs_dir),
+                               "files": written[:20]})
 
         if route == "/api/publish":
             from ..publish import FTPTarget, upload_batch, write_metadata
