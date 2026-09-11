@@ -99,6 +99,7 @@ class Pipeline:
                         width=known["width"], height=known["height"],
                         aspect=known["aspect"], phash=known["phash"],
                         is_mockup=known["is_mockup"], design_id=design.stable_id,
+                        trim=known["trim"], trim_note=known["trim_note"],
                         state="ingested",
                     )
                     flats.append(Path(known["flat_path"]))
@@ -113,6 +114,7 @@ class Pipeline:
                     id=flat.asset_id, src_path=str(image), flat_path=str(flat.flat_path),
                     width=flat.width, height=flat.height, aspect=flat.aspect,
                     phash=flat.phash, is_mockup=int(flat.is_mockup),
+                    trim=flat.trim, trim_note=flat.note,
                     design_id=design.stable_id, state="ingested",
                 )
                 flats.append(flat.flat_path)
@@ -385,6 +387,18 @@ class Pipeline:
             return "failed"
 
         reasons: list[str] = []
+        # A photo we could not find the artwork inside. Everything after this
+        # point measured itself against the whole photograph — the trim, the
+        # text positions, the aspect check — so it is the first thing to say,
+        # because every other complaint about this design is downstream of it.
+        unsure = self.store.conn.execute(
+            "SELECT trim_note FROM assets WHERE design_id=? AND trim='unsure' "
+            "AND trim_note IS NOT NULL AND trim_note != '' LIMIT 1", (design_id,)
+        ).fetchone()
+        if unsure:
+            reasons.append("the artwork was not found inside the listing photo — "
+                           + unsure["trim_note"])
+
         # The failure that looks most like success: the model reads the surface
         # as one photographic area, the renderer places the original pixels
         # faithfully, and the text is set beside them. What comes out is the

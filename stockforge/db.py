@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS assets (
     aspect        REAL,
     phash         TEXT,
     is_mockup     INTEGER DEFAULT 0,
+    trim          TEXT,                  -- cropped | flat | unsure
+    trim_note     TEXT,                  -- why, when it is unsure
     design_id     TEXT NOT NULL,
     state         TEXT NOT NULL DEFAULT 'ingested',
     error         TEXT,
@@ -143,6 +145,16 @@ class Store:
             for column in ("mix", "derive"):
                 if column not in design_columns:
                     c.execute(f"ALTER TABLE designs ADD COLUMN {column} REAL")
+
+        # Whether we found the artwork inside a listing photo. A doubt here has
+        # to reach a person: reading a square photo of a 5x7 card as though it
+        # were the card is a fault every later stage then measures itself
+        # against, and it looks like success the whole way down.
+        asset_columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(assets)")}
+        with self.tx() as c:
+            for column in ("trim", "trim_note"):
+                if column not in asset_columns:
+                    c.execute(f"ALTER TABLE assets ADD COLUMN {column} TEXT")
 
         if not row or "PRIMARY KEY (id, design_id)" in row["sql"]:
             return
