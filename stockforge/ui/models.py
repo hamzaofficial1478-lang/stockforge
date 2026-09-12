@@ -184,6 +184,57 @@ def fetch(base_url: str, api_key: str = "", timeout: int = 20) -> dict:
     return {"models": names}
 
 
+def _wants_a_list(detail: str) -> bool:
+    """Is this 400 the server asking for content as parts rather than a string?"""
+    lowered = detail.lower()
+    return "messages.0.content" in lowered and ("valid list" in lowered or "list" in lowered)
+
+
+def _post_chat(base: str, api_key: str, payload: dict, timeout: int):
+    """One chat request, retried once as content-parts if the server insists.
+
+    Most servers take `content` as a plain string. Some — Qwen's among them —
+    require the list-of-parts form and answer a string with a 400 that talks
+    about JSON shape rather than about anything a person did. Sending parts is
+    valid everywhere, so the retry is free and the message never has to be
+    explained.
+    """
+    try:
+        return _request(f"{base}/chat/completions", api_key, payload, timeout)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 400:
+            raise
+        detail = exc.read().decode(errors="replace")
+        first = payload.get("messages", [{}])[0].get("content")
+        if not (_wants_a_list(detail) and isinstance(first, str)):
+            raise _replay(exc, detail)
+        retried = json.loads(json.dumps(payload))
+        retried["messages"][0]["content"] = [{"type": "text", "text": first}]
+        return _request(f"{base}/chat/completions", api_key, retried, timeout)
+
+
+def _replay(exc: urllib.error.HTTPError, body: str) -> urllib.error.HTTPError:
+    """Hand the error back with its body intact — it has already been read once,
+    and a caller that reads it again gets nothing."""
+    return urllib.error.HTTPError(exc.url, exc.code, exc.reason, exc.headers,
+                                  io.BytesIO(body.encode()))
+
+
+def looks_like_an_image_model(model: str) -> bool:
+    """Is this a model that draws rather than writes?
+
+    A name check, deliberately. Asking the server costs a request and most do
+    not say; the names are unambiguous in practice — qwen-image-3.0,
+    qwen-image-edit-plus, wan2.7-image-pro, z-image-turbo. A false positive
+    only ever produces a message telling you to pick a different role, which
+    is cheap to ignore and right far more often than not.
+    """
+    name = (model or "").lower()
+    if "vl" in name.split("-") or "ocr" in name:        # qwen-vl reads, not draws
+        return False
+    return any(mark in name for mark in ("-image", "image-", "t2i", "text2image"))
+
+
 def _test_image(base: str, model: str, api_key: str, timeout: int) -> dict:
     """Ask an image model for one small picture and check a picture came back.
 
@@ -193,9 +244,13 @@ def _test_image(base: str, model: str, api_key: str, timeout: int) -> dict:
     perfectly good 200. The image arrives as a url or as base64, depending on
     the server, so both are accepted.
     """
+    # Content as a list of parts, not a bare string. Qwen's image models reject
+    # a string outright — "Input should be a valid list: input.messages.0.content"
+    # — and this probe had the same fault it exists to catch.
     payload = {"model": model, "size": "512x512", "n": 1,
-               "messages": [{"role": "user", "content":
-                             "a single plain black circle centred on a white background"}]}
+               "messages": [{"role": "user", "content": [
+                   {"type": "text",
+                    "text": "a single plain black circle centred on a white background"}]}]}
     started = time.time()
     try:
         body = _request(f"{base}/chat/completions", api_key, payload, timeout)
@@ -259,6 +314,16 @@ def test(base_url: str, model: str, api_key: str = "", timeout: int = 90,
     base = base_url.rstrip("/")
     if role == "image":
         return _test_image(base, model, api_key, timeout)
+    if looks_like_an_image_model(model):
+        # Saved under the wrong "Used for". Worth catching before the request
+        # rather than after, because the server's complaint is about JSON shape
+        # and says nothing about the actual mistake — and a live text role
+        # pointed at an image model sends every title and keyword to something
+        # that answers in pictures.
+        return {"ok": False,
+                "error": f"{model} draws pictures, but this connection is set to "
+                         f"\"{'reading designs' if role == 'vision' else 'titles and keywords'}\". "
+                         f"Change Used for to \"Drawing artwork (makes pictures)\" and test again."}
     payload = {"model": model, "max_tokens": 512, "temperature": 0,
                "messages": [{"role": "user",
                              "content": "Reply with the single word: ready"}]}
@@ -280,7 +345,7 @@ def test(base_url: str, model: str, api_key: str = "", timeout: int = 90,
     payload.update(model_options(model))
     started = time.time()
     try:
-        body = _request(f"{base}/chat/completions", api_key, payload, timeout)
+        body = _post_chat(base, api_key, payload, timeout)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")[:300]
         return {"ok": False, "error": f"HTTP {exc.code} — {detail or exc.reason}"}

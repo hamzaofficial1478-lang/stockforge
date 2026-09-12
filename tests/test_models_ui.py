@@ -301,3 +301,105 @@ def test_the_three_roles_do_not_tread_on_each_other(tmp_path):
         c = store.upsert(tmp_path, {"model": f"m-{role}", "role": role})
         prefixes.add(next(k.rsplit("_", 1)[0] for k in store.env_for(c) if k.endswith("_MODEL")))
     assert prefixes == {"SF_VISION", "SF_REASON", "SF_IMAGE"}
+
+
+# --- content as parts, and the wrong "Used for" ---------------------------
+#
+# The owner saved qwen-image-3.0 as "writes text", made it live, and pressed
+# Test. Two faults, one theirs and one mine:
+#
+#   HTTP 400 — {"error":{"message":"Input should be a valid list:
+#               input.messages.0.content", ...}}
+#
+# Qwen wants content as a list of parts. My own image probe sent a bare string
+# too, so choosing the right role would have failed in exactly the same way —
+# the probe had the fault it exists to catch.
+
+QWEN_LIST_ERROR = ('{"error":{"message":"Input should be a valid list: '
+                   'input.messages.0.content","type":"invalid_request_error",'
+                   '"code":"invalid_parameter_error"}}')
+
+
+def test_the_image_probe_sends_content_as_parts(monkeypatch):
+    sent = {}
+    monkeypatch.setattr(store, "_request",
+                        lambda url, key, payload, timeout: sent.update(payload) or _image_reply())
+    assert store.test("http://x/v1", "qwen-image-3.0", role="image")["ok"]
+    content = sent["messages"][0]["content"]
+    assert isinstance(content, list), (
+        "a bare string here is the exact 400 the owner hit")
+    assert content[0]["type"] == "text"
+
+
+def test_an_image_model_saved_as_a_text_model_says_so(monkeypatch):
+    """The live text role pointed at an image model would send every title and
+    keyword to something that answers in pictures. Caught before the request,
+    because the server's own complaint is about JSON shape and mentions
+    nothing a person actually did wrong."""
+    monkeypatch.setattr(store, "_request",
+                        lambda *a: pytest.fail("it should not have asked the server"))
+    result = store.test("http://x/v1", "qwen-image-3.0", role="text")
+    assert not result["ok"]
+    assert "draws pictures" in result["error"]
+    assert "Drawing artwork" in result["error"], "it does not say what to change"
+
+
+def test_the_same_guard_covers_the_reading_role(monkeypatch):
+    monkeypatch.setattr(store, "_request", lambda *a: pytest.fail("no request expected"))
+    result = store.test("http://x/v1", "wan2.7-image-pro", role="vision")
+    assert not result["ok"]
+    assert "reading designs" in result["error"]
+
+
+@pytest.mark.parametrize("model,draws", [
+    ("qwen-image-3.0", True), ("qwen-image-edit-plus", True),
+    ("wan2.7-image-pro", True), ("z-image-turbo", True),
+    ("qwen3-vl-plus", False), ("qwen-vl-max", False),
+    ("qwen-vl-ocr", False), ("meta/muse-glimmer-30b", False),
+    ("qwen3.8-flash", False),
+])
+def test_drawing_models_are_told_from_reading_ones(model, draws):
+    """A vision model reads and must never be mistaken for one that draws —
+    that would block the owner's actual reading models from being saved."""
+    assert store.looks_like_an_image_model(model) is draws, model
+
+
+def test_a_text_model_that_wants_parts_is_retried_rather_than_failed(monkeypatch):
+    """Some servers take only the list form. Sending a string first and parts
+    on the rebound works everywhere, and means nobody has to be told what
+    "input.messages.0.content" means."""
+    import io
+    import urllib.error
+
+    calls = []
+
+    def fake(url, key, payload, timeout):
+        calls.append(payload)
+        if isinstance(payload["messages"][0]["content"], str):
+            raise urllib.error.HTTPError(url, 400, "Bad Request", {},
+                                         io.BytesIO(QWEN_LIST_ERROR.encode()))
+        return {"choices": [{"message": {"content": "ready"}}]}
+
+    monkeypatch.setattr(store, "_request", fake)
+    result = store.test("http://x/v1", "qwen3.8-flash", role="text")
+
+    assert result["ok"], result
+    assert len(calls) == 2, "it did not retry"
+    assert isinstance(calls[1]["messages"][0]["content"], list)
+
+
+def test_a_400_that_is_not_about_shape_is_reported_as_it_came(monkeypatch):
+    """Only that one complaint earns a retry. Everything else is a real answer
+    and has to reach the user with its body intact."""
+    import io
+    import urllib.error
+
+    body = '{"error":{"message":"model not found"}}'
+
+    def fake(url, key, payload, timeout):
+        raise urllib.error.HTTPError(url, 400, "Bad Request", {}, io.BytesIO(body.encode()))
+
+    monkeypatch.setattr(store, "_request", fake)
+    result = store.test("http://x/v1", "qwen3.8-flash", role="text")
+    assert not result["ok"]
+    assert "model not found" in result["error"], "the body was eaten by the retry"
