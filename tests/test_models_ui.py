@@ -160,13 +160,36 @@ def test_deleting_one_leaves_the_others(tmp_path):
     assert store.remove(tmp_path, "nope") is False
 
 
-def test_making_one_live_stands_the_others_down(tmp_path):
+def test_several_reading_models_can_be_live_at_once(tmp_path):
+    """This used to stand the first one down, which quietly made the second
+    lane pointless: it had no model of its own to use. Reading is the one role
+    where more than one is useful, because the lanes hand a different model to
+    each."""
     a = store.upsert(tmp_path, {"label": "A", "model": "a", "role": "vision"})
     b = store.upsert(tmp_path, {"label": "B", "model": "b", "role": "vision"})
     store.activate(tmp_path, a.id)
     store.activate(tmp_path, b.id)
-    live = [c.id for c in store.load(tmp_path) if c.active]
-    assert live == [b.id]
+    assert {c.id for c in store.live(tmp_path, "vision")} == {a.id, b.id}
+
+
+def test_making_one_writer_live_still_stands_the_others_down(tmp_path):
+    """Nothing splits the writing work, so a second live one is only
+    ambiguous. Same for drawing."""
+    for role in ("text", "image"):
+        a = store.upsert(tmp_path, {"label": "A", "model": f"a-{role}", "role": role})
+        b = store.upsert(tmp_path, {"label": "B", "model": f"b-{role}", "role": role})
+        store.activate(tmp_path, a.id)
+        store.activate(tmp_path, b.id)
+        assert [c.id for c in store.live(tmp_path, role)] == [b.id], role
+
+
+def test_a_reading_model_can_be_stood_down_again(tmp_path):
+    a = store.upsert(tmp_path, {"label": "A", "model": "a", "role": "vision"})
+    b = store.upsert(tmp_path, {"label": "B", "model": "b", "role": "vision"})
+    store.activate(tmp_path, a.id)
+    store.activate(tmp_path, b.id)
+    store.deactivate(tmp_path, a.id)
+    assert [c.id for c in store.live(tmp_path, "vision")] == [b.id]
 
 
 def test_a_text_model_going_live_does_not_stand_down_the_vision_one(tmp_path):

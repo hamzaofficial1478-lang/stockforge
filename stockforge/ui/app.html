@@ -191,33 +191,31 @@
     <div id="health-banner"></div>
     <div class="card">
       <h3>What's working</h3>
-      <p class="hint">Anything red has to be fixed before a design can be processed. Amber is optional but usually worth having.</p>
+      <p class="hint">Red must be fixed. Amber is optional.</p>
       <div id="checks"><div class="empty">checking…</div></div>
       <div class="row" style="margin-top:16px">
         <button class="btn small" onclick="loadHealth()">Re-check</button>
+        <button class="btn small" onclick="getFonts()">Install the font library</button>
         <button class="btn small" onclick="updateCode()">Update to the latest code</button>
         <span id="update-msg" class="mono"></span>
       </div>
+      <p class="hint" id="fonts-msg" style="margin-top:6px"></p>
     </div>
 
     <div class="card">
       <h3>Where the thinking happens</h3>
-      <p class="hint">Run a model on your own machine, or sign in to Claude and let it do the reading.
-        Your own model costs nothing to run. Claude needs no setup but is a paid API billed to your
-        Anthropic account &mdash; signing in instead of pasting a key saves the key handling, not the bill.</p>
+      <p class="hint">Your own model, free to run. Or sign in to Claude &mdash; no setup, but billed to your account.</p>
       <div class="grid">
         <div><label for="SF_VISION_BACKEND">Model backend</label>
           <select id="SF_VISION_BACKEND" onchange="backendChanged()"></select></div>
         <div><label for="SF_WORKERS">Designs at once</label>
-          <select id="SF_WORKERS">
+          <select id="SF_WORKERS" onchange="laneNote()">
             <option value="1">1 &mdash; one at a time (default)</option>
             <option value="2">2 &mdash; needs a second vision model</option>
             <option value="3">3</option>
             <option value="4">4</option>
           </select>
-          <p class="hint" style="margin:4px 0 0">Each lane takes a different vision model from
-            the list below. Two lanes on one model just queue behind each other and nothing
-            gets faster, so add the second model first.</p></div>
+          <p class="hint" style="margin:4px 0 0" id="lane-note">One live reading model per lane.</p></div>
         <div id="claude-effort-wrap" hidden><label for="SF_VISION_EFFORT">How hard Claude thinks</label>
           <select id="SF_VISION_EFFORT">
             <option value="low">Low &mdash; cheapest, fine for most designs</option>
@@ -231,24 +229,20 @@
         <summary>Use a different model service, or add your own backend</summary>
         <div id="preset-list" style="margin-top:10px"></div>
         <p class="hint" style="margin-top:10px">
-          Anything speaking OpenAI&rsquo;s chat shape works with the backend above &mdash; that
-          covers GPT, and Hermes, Qwen, Llama or Mistral run on Ollama, vLLM or OpenRouter.
-          Those are models, not backends: pick the service here and set the model on a
-          connection below.
+          GPT, Hermes, Qwen, Llama and Mistral all speak OpenAI&rsquo;s shape. Pick the service
+          here, the model on a connection below.
         </p>
         <p class="hint">
-          For something that speaks a different shape altogether, write a module with a
-          <code>BACKEND</code> in it and type its import path into the box above &mdash;
-          <code>my_package.my_backend</code>. Nothing in stockforge needs changing.
-          <code>docs/backends.md</code> has a working example to copy.
+          For anything else, write a module with a <code>BACKEND</code> in it and type its
+          import path above. See <code>docs/backends.md</code>.
         </p>
       </details>
     </div>
 
     <div class="card">
       <h3>Models</h3>
-      <p class="hint">Any OpenAI-compatible server — NVIDIA NIM, vLLM, Ollama, LM&nbsp;Studio.
-        Add a connection, test it, then make it live. Nothing is used until you do.</p>
+      <p class="hint">Add, test, make live. <b>Reading models can be live together</b>, one per lane.
+        Writing and drawing use one at a time.</p>
 
       <div id="conns"><div class="empty">no connections yet</div></div>
 
@@ -297,9 +291,7 @@
         <option value="1">Recover original — keep text, colors and layout</option>
         <option value="0">Create a new variation</option>
       </select>
-      <p class="hint">Recovery creates an editable master from the image without rewriting or mixing it.
-        Font matches and missing artwork may still need editing. The variation controls below apply
-        only when you choose “Create a new variation”. Save settings before starting the queue.</p>
+      <p class="hint">Recovery rebuilds the design as it is. The sliders below apply only to a new variation.</p>
 
       <div class="presets">
         <button class="btn small" onclick="preset('close')">Close to the original — 70/30</button>
@@ -311,9 +303,8 @@
       <div class="lever">
         <div class="top"><b>Borrow from your other designs</b>
           <span class="now" id="mix-v">0.50</span></div>
-        <p>Each ingredient — the palette, the grid, the type pairing, the decoration — is either
-          kept from this listing or taken from another of yours. At 0.40, roughly six in ten stay.
-          At 0 nothing is borrowed and you get this design back.</p>
+        <p>How much of the palette, grid, type and decoration comes from your other
+          designs instead of this one.</p>
         <input type="range" id="SF_MIX" min="0" max="1" step="0.05" value="0.5"
                oninput="showV('mix-v', (+this.value).toFixed(2))">
         <div class="ends"><span>0 — keep everything from this listing</span>
@@ -322,9 +313,7 @@
 
       <div class="lever">
         <div class="top"><b>How hard to push it</b><span class="now" id="str-v">0.50</span></div>
-        <p>What happens after the borrowing: colours rotate, type sizes spread apart, margins open
-          or close, the page becomes airier or tighter. Low keeps the piece recognisable; high
-          makes it a different layout in the same family.</p>
+        <p>How far the result then moves on its own — colours, sizes, margins.</p>
         <input type="range" id="SF_DERIVE_STRENGTH" min="0" max="1" step="0.05" value="0.5"
                oninput="showV('str-v', (+this.value).toFixed(2))">
         <div class="ends"><span>0 — leave it alone</span><span>1 — move everything</span></div>
@@ -333,10 +322,8 @@
       <div class="lever">
         <div class="top"><b>How different it must end up</b>
           <span class="now" id="dist-v">0.70</span></div>
-        <p>A gate, not a dial. The result is compared against your listing and must score at least
-          this to be accepted; below it, another round runs. <b>Set this high while asking to keep
-          most of the original and the two fight each other</b> — it will keep pushing the design
-          away and then send it to Review. Lower it whenever you lower the two above.</p>
+        <p>A gate: below this it runs another round. <b>Lower it whenever you lower the two
+          above</b>, or they fight each other.</p>
         <input type="range" id="SF_DISTINCT_THRESHOLD" min="0" max="1" step="0.05" value="0.7"
                oninput="showV('dist-v', (+this.value).toFixed(2))">
         <div class="ends"><span>0 — accept anything</span>
@@ -346,9 +333,8 @@
       <div class="lever">
         <div class="top"><b>How close a motif has to match</b>
           <span class="now" id="motif-v">0.45</span></div>
-        <p>How near a drawing in your library must be before it is placed. Raise it and more
-          designs go to Review telling you what to draw; lower it and you start shipping
-          approximate decoration. A wrong pumpkin ships — a hole you can see does not.</p>
+        <p>How near a library drawing must be before it is used. Raise it and more designs
+          go to Review instead.</p>
         <input type="range" id="SF_MOTIF_THRESHOLD" min="0" max="1" step="0.05" value="0.45"
                oninput="showV('motif-v', (+this.value).toFixed(2))">
         <div class="ends"><span>0 — place the nearest thing</span>
@@ -357,8 +343,7 @@
 
       <div class="lever">
         <div class="top"><b>Rounds before giving up</b></div>
-        <p>Each round borrows and pushes harder than the last. If it still hasn't cleared the gate
-          after this many, the design goes to Review rather than being pushed further.</p>
+        <p>Each round pushes harder. After this many it goes to Review instead.</p>
         <div style="max-width:200px">
           <input id="SF_DERIVE_ROUNDS" type="number" min="1" max="6" value="2"></div>
       </div>
@@ -366,8 +351,7 @@
 
     <div class="card">
       <h3>Etsy &amp; delivery</h3>
-      <p class="hint">Only needed for the shop door and for sending files. Everything else works
-        without them.</p>
+      <p class="hint">Needed only for the shop crawl and for uploading.</p>
       <details class="more">
         <summary>Etsy API key — makes the shop crawl reliable and the count exact</summary>
         <div class="grid" style="margin-top:10px">
@@ -394,8 +378,7 @@
 
   <!-- ── SOURCES ───────────────────────────────────────────── -->
   <section id="sources" hidden>
-    <p class="lede">Three ways in. Whichever you use, a listing's images are grouped as one
-      design and read together.</p>
+    <p class="lede">A listing's images are read together as one design.</p>
 
     <div class="card">
       <h3>Bring designs in</h3>
@@ -426,9 +409,7 @@
 
       <!-- folder -->
       <div id="door-folder" class="door" hidden style="margin-top:16px">
-        <p class="hint">For a folder already on this machine. Images are grouped by filename or
-          parent folder — <code>haunted-invite-1.jpg</code> through <code>-5.jpg</code> becomes one
-          design.</p>
+        <p class="hint">Grouped by filename: <code>invite-1.jpg</code> to <code>-5.jpg</code> is one design.</p>
         <div class="grid">
           <div><label>Full path to the folder</label>
             <input id="folder-path" placeholder="C:\Users\you\Desktop\exports"></div>
@@ -444,9 +425,7 @@
 
       <!-- links -->
       <div id="door-links" class="door" hidden style="margin-top:16px">
-        <p class="hint">One listing URL per line. Direct links to image files work anywhere; a
-          link to a listing <em>page</em> is read by the Etsy scraper, so pages on other sites come
-          back empty.</p>
+        <p class="hint">One link per line. Image links work anywhere; listing pages, Etsy only.</p>
         <div>
           <label>Paste the links</label>
           <textarea id="links-text" rows="7" spellcheck="false"
@@ -471,9 +450,7 @@
 
       <!-- shop -->
       <div id="door-shop" class="door" hidden style="margin-top:16px">
-        <p class="hint">Walks every listing with its images, title and tags. Set an Etsy API key on
-          Setup first — without one this parses public pages, which is slower and breaks whenever
-          Etsy changes their markup.</p>
+        <p class="hint">Walks the whole shop. An Etsy API key on Setup makes it reliable.</p>
         <div class="grid">
           <div><label>Shop name or URL</label>
             <input id="shop-target" placeholder="YourShopName"></div>
@@ -496,7 +473,7 @@
 
   <!-- ── QUEUE ─────────────────────────────────────────────── -->
   <section id="queue" hidden>
-    <p class="lede">Follow each design from image analysis to editable files. Model requests can take several minutes; the current stage and elapsed time update here.</p>
+    <p class="lede">Each design, stage by stage. A model call can take a few minutes.</p>
     <div class="card">
       <h3>Worker</h3>
       <p id="worker-line" role="status">Checking worker…</p>
@@ -521,7 +498,7 @@
                  oninput="showV('pace-v',this.value)" onchange="setPace(this.value)">
         </span>
       </div>
-      <p class="hint">Pause and Stop take effect after the current design finishes.</p>
+      <p class="hint">Both take effect after the current design finishes.</p>
       <div id="lanes" hidden></div>
       <div class="log" id="w-log" aria-label="Recent processing activity"></div>
     </div>
@@ -533,32 +510,15 @@
 
   <!-- ── REVIEW ────────────────────────────────────────────── -->
   <section id="review" hidden>
-    <p class="lede">Everything the program was confident about has already finished. This page is only the designs it stopped on, and for each one it says what stopped it.</p>
+    <p class="lede">Only the designs it stopped on, and what stopped each.</p>
 
     <div class="card" id="gaps-card" hidden>
       <h3>Artwork it needs and hasn&rsquo;t got</h3>
       <div class="explain">
-        <p><b>What this list is.</b> Each row is a piece of decoration the program found in
-        your designs &mdash; a bat, a pumpkin, a calendar icon &mdash; that it has no drawing
-        for in <span class="mono">assets/motifs/</span>.</p>
-        <p><b>Why it stopped instead of guessing.</b> It will not trace your original or
-        invent a shape. Tracing produces the jagged, muddy vectors both agencies reject on
-        sight, and a made-up pumpkin is not the one that sold. So it leaves the gap and
-        tells you, which is the only honest answer it has.</p>
-        <p><b>Try the free way first.</b> Most of these are already drawn &mdash; in your
-        own cards. The analyser recorded where each one sits, so it can cut them straight
-        out as transparent pictures. No model, no cost, and it is your artwork rather than
-        something invented that merely resembles it. They come out as pictures, not vectors,
-        so you still trace the good ones &mdash; but tracing beats drawing from nothing.</p>
-        <p><b>What happens next, and it does need you.</b> Nothing on this list clears
-        itself. Someone has to draw each one once, as a plain SVG on a 0&ndash;100 square,
-        and drop it in <span class="mono">assets/motifs/</span>. Press the button below and
-        the program writes a named, tagged, empty file for each row so you are opening a
-        file rather than working out what to make. Draw into it, press
-        <b>Run again</b> on the designs below, and they carry on from where they stopped.</p>
-        <p><b>Why it is worth doing once.</b> The number on the left is how many designs are
-        stuck on that one drawing. Draw the bat once and every design using a bat is
-        unblocked, for good, across the whole catalogue.</p>
+        <p>Decoration the program found in your designs but has no drawing for. It will not
+        trace or invent one, so these stop here.</p>
+        <p><b>Most are already drawn — in your own cards.</b> Cut them out below, free.
+        Anything left needs drawing once; the number is how many designs it unblocks.</p>
       </div>
       <div class="row" style="margin-top:12px">
         <button class="btn primary" onclick="doHarvest()">Cut these out of my own designs</button>
@@ -575,10 +535,10 @@
 
   <!-- ── DELIVER ───────────────────────────────────────────── -->
   <section id="deliver" hidden>
-    <p class="lede">Metadata is generated from each design's spec, so the keywords describe what's actually in the file.</p>
+    <p class="lede">Keywords come from each design's own spec.</p>
     <div class="card">
       <h3>Send to the agencies</h3>
-      <p class="hint">Run a dry run first — it writes both CSVs and tells you the file count without uploading anything.</p>
+      <p class="hint">A dry run writes the CSVs and counts the files. It uploads nothing.</p>
       <div class="row">
         <button class="btn" onclick="doPublish(true)">Dry run</button>
         <button class="btn primary" onclick="doPublish(false)">Upload now</button>
@@ -600,7 +560,10 @@ const $ = id => document.getElementById(id);
 function showV(id, value){ $(id).textContent = value; }
 // Routes that take no arguments still have to be POSTed, so an explicit
 // empty object means "post nothing" rather than "fetch it".
-const POST_ONLY = new Set(['/api/update']);
+// Routes with nothing to send that are still POSTs, because they do
+// something rather than report something. Left out, they go as a GET and
+// come back "not found", which reads as a missing feature.
+const POST_ONLY = new Set(['/api/update', '/api/fonts/download']);
 const api = async (path, body) => {
   const opts = (body || POST_ONLY.has(path))
     ? {method:'POST', headers:{'Content-Type':'application/json'},
@@ -739,6 +702,7 @@ async function loadConfig(){
                            ['dist-v','SF_DISTINCT_THRESHOLD'], ['motif-v','SF_MOTIF_THRESHOLD']])
     showV(id, (+$(key).value).toFixed(2));
   CFG_MIX = parseFloat(c.values.SF_MIX) || 0.5;
+  laneNote();
   await loadBackends();
 }
 
@@ -749,8 +713,10 @@ async function saveConfig(){
     if (el && el.value && el.value !== '••••••••') payload[k] = el.value;
   }
   const r = await api('/api/config', payload);
-  $('save-msg').textContent = `saved ${r.saved} setting${r.saved === 1 ? '' : 's'}`;
-  setTimeout(() => $('save-msg').textContent = '', 3000);
+  $('save-msg').textContent = r.file
+    ? `saved ${r.saved} to ${r.file}`
+    : `saved ${r.saved} setting${r.saved === 1 ? '' : 's'}`;
+  setTimeout(() => $('save-msg').textContent = '', 6000);
   loadHealth();
 }
 
@@ -772,6 +738,16 @@ function preset(name){
   saveConfig();
 }
 
+async function getFonts(){
+  const msg = $('fonts-msg');
+  msg.textContent = 'Downloading — about a minute. Leave this open.';
+  const r = await api('/api/fonts/download');
+  msg.textContent = r.error
+    ? 'Could not install the fonts: ' + r.error
+    : `${r.faces} faces across ${r.families} families, in ${r.where}.`;
+  loadHealth();
+}
+
 async function updateCode(){
   $('update-msg').textContent = 'pulling…';
   const r = await api('/api/update');
@@ -781,12 +757,31 @@ async function updateCode(){
 /* ── model connections ────────────────────────────── */
 let CONNS = [], EDITING = null;
 
+function laneNote(){
+  // Two models live and one lane is the commonest half-finished setup: the
+  // second model was added, tested and made live, and nothing is any faster
+  // because nothing asked for a second lane. Say so where the dropdown is.
+  const note = $('lane-note');
+  if (!note) return;
+  const live = CONNS.filter(c => c.role === 'vision' && c.active).length;
+  const lanes = parseInt($('SF_WORKERS').value || '1', 10);
+  if (live > lanes)
+    note.innerHTML = `<b>${live} reading models are live.</b> Set this to ${live} `
+      + `and save, or they take turns on ${lanes === 1 ? 'one lane' : `${lanes} lanes`}.`;
+  else if (lanes > live)
+    note.innerHTML = `<b>Only ${live} reading model${live === 1 ? ' is' : 's are'} live.</b> `
+      + `The spare lanes queue behind ${live === 1 ? 'it' : 'them'}. Add another below.`;
+  else
+    note.textContent = 'One live reading model per lane.';
+}
+
 async function loadConns(){
   const r = await api('/api/models');
   CONNS = r.models || [];
   if (r.extensions) $('drop-types').textContent =
     r.extensions.join(', ') + ', or a .zip of them';
   paintConns();
+  laneNote();
 }
 
 function paintConns(){
@@ -807,9 +802,12 @@ function paintConns(){
              id="said-${c.id}">${esc(c.last_result || '')}</div>
       </div>
       <div class="row">
-        <button class="btn small" onclick="testSaved('${c.id}')">${c.role === 'vision' ? 'Test image reading' : 'Test text connection'}</button>
-        ${c.active ? '' :
-          `<button class="btn small primary" onclick="makeLive('${c.id}')">Make live</button>`}
+        <button class="btn small" onclick="testSaved('${c.id}')">${
+          {vision:'Test image reading', image:'Test drawing', text:'Test text connection'}[c.role] || 'Test it'}</button>
+        ${c.active
+          ? (c.role === 'vision'
+              ? `<button class="btn small" onclick="standDown('${c.id}')">Stand down</button>` : '')
+          : `<button class="btn small primary" onclick="makeLive('${c.id}')">Make live</button>`}
         <button class="btn small" onclick="editConn('${c.id}')">Edit</button>
         <button class="btn small" onclick="deleteConn('${c.id}')">Delete</button>
       </div>
@@ -829,11 +827,11 @@ function resetConnForm(){
   $('conn-role').value = 'vision';
   $('conn-model-list').innerHTML = '';
   $('conn-form-title').textContent = 'Add a connection';
-  $('conn-msg').textContent = '';
+  $('conn-key').placeholder = 'leave blank for local';
   $('fetch-msg').textContent = '';
 }
 
-function editConn(id){
+function editConn(id, scroll = true){
   const c = CONNS.find(x => x.id === id);
   if (!c) return;
   EDITING = id;
@@ -844,7 +842,7 @@ function editConn(id){
                                         : 'leave blank for local';
   $('conn-form-title').textContent = 'Editing ' + (c.label || 'connection');
   $('conn-form-wrap').open = true;
-  $('conn-form-wrap').scrollIntoView({behavior:'smooth', block:'nearest'});
+  if (scroll) $('conn-form-wrap').scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 
 async function fetchModels(){
@@ -894,11 +892,25 @@ async function saveConn(){
   const needsServer = (d.backend || 'openai') === 'openai';
   if (needsServer && (!d.base_url || !d.model))
     return $('conn-msg').textContent = 'a server address and a model are both needed';
+  const wasEditing = EDITING;
   const r = await api('/api/models/save', d);
   if (r.error) return $('conn-msg').textContent = r.error;
-  resetConnForm();
-  $('conn-form-wrap').open = false;
   await loadConns();
+  // The form used to close itself here. Saving one connection then looked
+  // identical to the panel falling over, and there was nowhere left for it to
+  // say the save had worked. It stays open and says so.
+  if (wasEditing){
+    editConn(r.model.id, false);   // repaint from what was actually stored
+  } else {
+    resetConnForm();
+    $('conn-form-title').textContent = 'Add another connection';
+  }
+  $('conn-form-wrap').open = true;
+  $('conn-msg').className = 'said ok';
+  $('conn-msg').textContent = `Saved "${d.label || r.model.label || 'connection'}". `
+    + (wasEditing ? 'Test it again if you changed the model.'
+                  : 'Test it, then make it live.');
+  setTimeout(() => { $('conn-msg').textContent = ''; $('conn-msg').className = ''; }, 8000);
 }
 
 async function deleteConn(id){
@@ -907,6 +919,11 @@ async function deleteConn(id){
   await api('/api/models/delete', {id});
   if (EDITING === id) resetConnForm();
   await loadConns();
+}
+
+async function standDown(id){
+  await api('/api/models/deactivate', {id});
+  await loadConns(); loadHealth();
 }
 
 async function makeLive(id){

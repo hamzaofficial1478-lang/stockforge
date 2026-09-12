@@ -344,3 +344,34 @@ def test_a_limit_counts_the_run_not_each_lane(tmp_path, monkeypatch):
 
     assert not w.alive
     assert len(built) <= 3, f"the limit was per lane, not per run: built {len(built)}"
+
+
+def test_lanes_take_the_models_that_were_made_live(tmp_path):
+    """Somebody who saved four and made two live meant those two. Handing a
+    lane a model that was deliberately stood down does the opposite of what
+    they said."""
+    from stockforge.ui import models as connections
+
+    cfg = Settings(root=tmp_path / "work")
+    cfg.ensure_dirs()
+    live_a = connections.upsert(cfg.root, {"model": "live-a", "role": "vision",
+                                           "base_url": "http://a/v1"})
+    live_b = connections.upsert(cfg.root, {"model": "live-b", "role": "vision",
+                                           "base_url": "http://b/v1"})
+    connections.upsert(cfg.root, {"model": "stood-down", "role": "vision",
+                                  "base_url": "http://c/v1"})
+    connections.activate(cfg.root, live_a.id)
+    connections.activate(cfg.root, live_b.id)
+
+    assert {p.model for p in lane_providers(cfg, 2)} == {"live-a", "live-b"}
+
+
+def test_with_nothing_made_live_the_saved_models_are_used_anyway(tmp_path):
+    """Better than refusing to start because a box was never ticked."""
+    from stockforge.ui import models as connections
+
+    cfg = Settings(root=tmp_path / "work")
+    cfg.ensure_dirs()
+    connections.upsert(cfg.root, {"model": "never-activated", "role": "vision",
+                                  "base_url": "http://a/v1"})
+    assert {p.model for p in lane_providers(cfg, 2)} == {"never-activated"}

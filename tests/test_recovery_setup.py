@@ -77,23 +77,46 @@ def test_italic_selection_matches_the_rendered_style(tmp_path):
     assert 'font-style="italic"' in render(spec, tmp_path, tmp_path).svg
 
 
+def _catalogue(tmp_path, monkeypatch, resources):
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(resources))
+    monkeypatch.setattr(font_download, "CATALOG", path)
+    return path
+
+
 def test_starter_download_checks_hashes_and_can_resume(tmp_path, monkeypatch):
     data = build_font(tmp_path / "source.ttf").read_bytes()
-    catalog = tmp_path / "catalog.json"
-    catalog.write_text(json.dumps([{
+    _catalogue(tmp_path, monkeypatch, [{
         "path": "starter/font.ttf", "url": "https://example.invalid/font",
         "sha256": hashlib.sha256(data).hexdigest(), "font": {"category": "serif"}
-    }]))
-    monkeypatch.setattr(font_download, "CATALOG", catalog)
-    monkeypatch.setattr(font_download, "get", lambda *a, **k: json.dumps({"content": base64.b64encode(data).decode()}).encode())
+    }])
+    monkeypatch.setattr(font_download, "get", lambda *a, **k: data)
     library = tmp_path / "library"
     assert font_download.download_starter(library)[0].embeddable
     monkeypatch.setattr(font_download, "get", lambda *a, **k: pytest.fail("should use the verified local file"))
     assert font_download.download_starter(library)[0].licence == "OFL-1.1"
     (library / "starter/font.ttf").write_bytes(b"damaged")
-    monkeypatch.setattr(font_download, "get", lambda *a, **k: b'{"content":"YmFk"}')
+    monkeypatch.setattr(font_download, "get", lambda *a, **k: b"bad")
     with pytest.raises(ValueError, match="Checksum mismatch"):
         font_download.download_starter(library)
+
+
+def test_a_catalogue_written_before_the_move_still_installs(tmp_path, monkeypatch):
+    """The files moved from the GitHub API to raw, because sixty
+    unauthenticated requests an hour does not cover forty-two families. A
+    catalogue pinned to the old URLs has to keep working, or updating the code
+    without updating the data leaves you with no fonts at all."""
+    data = build_font(tmp_path / "source.ttf").read_bytes()
+    _catalogue(tmp_path, monkeypatch, [{
+        "path": "starter/font.ttf",
+        "url": "https://api.github.com/repos/google/fonts/contents/ofl/x/y.ttf?ref=abc",
+        "sha256": hashlib.sha256(data).hexdigest(), "font": {"category": "serif"},
+    }])
+    monkeypatch.setattr(font_download, "get", lambda *a, **k: json.dumps(
+        {"content": base64.b64encode(data).decode()}).encode())
+
+    entries = font_download.download_starter(tmp_path / "library")
+    assert entries and entries[0].embeddable
 
 
 @pytest.mark.parametrize("name", ["models.json", "stockforge.db", ".env"])

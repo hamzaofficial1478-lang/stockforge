@@ -404,10 +404,19 @@ looked for in the usual install folders — you do not need to tick it. If you
 put Inkscape somewhere unusual, set `SF_INKSCAPE` to the full path of
 `inkscape.exe`.
 
-`.env` is read at startup, from the directory you run `stockforge` in, and it's
-the same file the Setup screen writes back to. Anything already exported in
-your shell wins over it, so you can override one setting for a single run.
-`SF_ENV_FILE` points at a different file if you'd rather keep it elsewhere.
+`.env` is read at startup and is the same file the Setup screen writes back to.
+It is looked for in the directory you run `stockforge` in and every directory
+above it, so starting from a sub-folder, a shortcut or an IDE finds the same
+settings as starting from the checkout. With no `.env` anywhere, a new one is
+written beside the code, or in your user config folder for an installed copy;
+`SF_ENV_FILE` points at a different file if you'd rather say outright.
+
+Anything the Setup screen can write is taken from that file even when the same
+variable is already exported in your shell — the panel is where you set it, and
+one forgotten `SF_MIX` in a system environment otherwise beats the saved value
+on every start, silently. Everything else keeps the usual rule, and
+`SF_ENV_OVERRIDE=1` restores it across the board if you want to override a
+saved setting for a single run.
 
 Install the starter library with:
 
@@ -415,12 +424,24 @@ Install the starter library with:
 stockforge fonts download
 ```
 
-This downloads 17 static faces from eight Google Fonts families: Lato,
-Crimson Text, Great Vibes, Allura, Bebas Neue, Arvo, Cutive Mono and
-UnifrakturMaguntia. The catalog pins a Google Fonts revision and SHA-256
-checksums; OFL license files are stored beside the fonts. Downloads can be
-resumed and intact files are reused. The verified starter faces are marked
-usable automatically, and Windows registers them for the current user.
+There is a button for it on Setup too, under **What's working**.
+
+This installs 77 faces across 42 OFL families — roughly a dozen scripts and
+calligraphic faces, a dozen serifs, seven sans, and the display, slab and mono
+families a card needs for a heading. The catalog pins a Google Fonts revision
+and a SHA-256 for every file, and the OFL licence text is stored beside each
+family. Downloads resume, and intact files are reused.
+
+Most of those families are now published by Google as a single variable font
+rather than a file per weight. Each one is verified against its checksum and
+then cut locally into the static weights the catalog asks for, usually Regular
+and Bold, with the name records rewritten so they scan as the weights they are.
+The variable originals stay in `_variable/` — folders starting with an
+underscore are skipped by the scan, so nothing is listed twice. Without this
+step a library of forty-two families would contain no bold at all.
+
+The verified starter faces are marked usable automatically, and Windows
+registers them for the current user.
 
 For additional families, put your files in `assets/fonts/` and run:
 

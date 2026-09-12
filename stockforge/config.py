@@ -8,6 +8,16 @@ and every slider into it and set them on the running process, so they worked
 until you restarted and then went quietly back to defaults, with the Setup
 screen red and nothing to explain why.
 
+It came back twice after that, both silent, both looking exactly like "the
+panel does not save". Finding the file is one: a bare `.env` is relative to
+wherever you happened to be standing, so launching from a shortcut instead of
+the folder read a different file and showed you defaults. Being allowed to keep
+it is the other: the usual dotenv rule is that an exported variable wins, and a
+single stray `SF_MIX` in a system environment then beat the saved file on every
+start, for good, with nothing on screen to say so. Here the saved file wins for
+anything the panel can write, because the panel is where you set it. Everything
+else keeps the usual rule, and `SF_ENV_OVERRIDE=1` puts it back.
+
 And every setting is read when a Settings is built, not when this module is
 first imported. They used to be plain dataclass defaults, which Python
 evaluates once at class-definition time, so a value put into the environment
@@ -51,24 +61,104 @@ def _b(env: str, default: bool = False) -> bool:
 # .env
 # --------------------------------------------------------------------------
 
-def env_file() -> Path:
+_ENV_FILE: Path | None = None
+
+# What the control panel is allowed to write, and therefore what it is trusted
+# to own. Kept here rather than imported from the panel so that loading
+# settings never drags the server module in.
+PANEL_OWNED = ("SF_VISION_", "SF_REASON_", "SF_IMAGE_", "SF_ETSY_", "SF_FTP_",
+               "SF_MIX", "SF_DERIVE_", "SF_DISTINCT_", "SF_MOTIF_",
+               "SF_CRITIQUE_", "SF_PRESERVE_", "SF_PUBLISH", "SF_WORKERS",
+               "SF_ROOT", "SF_FONTS", "SF_MOTIFS")
+
+
+def _panel_owned(key: str) -> bool:
+    return key.startswith(PANEL_OWNED)
+
+
+def _home() -> Path:
+    """Somewhere stable to keep settings when there is no project folder.
+
+    Only reached for an installed copy with no `.env` anywhere above it.
+    """
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData/Roaming")
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return base / "stockforge"
+
+
+def _project() -> Path | None:
+    """The folder holding the stockforge package, when that is a checkout.
+
+    Site-packages is not a place to keep your Etsy key, so an installed copy
+    gets None and falls back to the per-user folder.
+    """
+    here = Path(__file__).resolve().parent.parent
+    if any(part in {"site-packages", "dist-packages"} for part in here.parts):
+        return None
+    return here
+
+
+def find_env_file() -> Path:
     """Where settings are read from and written back to.
 
     One path for both, so the panel cannot save to a file nothing loads —
-    which is exactly what it did.
+    which is exactly what it did. In order:
+
+    1. `SF_ENV_FILE`, if you want to say outright.
+    2. An existing `.env` in this folder or any folder above it. This is what
+       makes running from a sub-folder, a shortcut or an IDE find the same
+       settings as running from the checkout.
+    3. The checkout itself, or a per-user config folder for an installed copy.
+
+    Only step 2 looks for an existing file; the rest name where a new one goes.
     """
-    return Path(os.environ.get("SF_ENV_FILE", ".env")).expanduser()
+    named = os.environ.get("SF_ENV_FILE")
+    if named:
+        return Path(named).expanduser().resolve()
+
+    here = Path.cwd().resolve()
+    for folder in (here, *here.parents):
+        candidate = folder / ".env"
+        if candidate.is_file():
+            return candidate
+
+    project = _project()
+    if project is not None:
+        return project / ".env"
+    return _home() / ".env"
+
+
+def env_file() -> Path:
+    """`find_env_file`, resolved once and remembered.
+
+    Pinned because anything that changes directory later — a launcher, a
+    packaged build, the panel serving files — would otherwise start reading and
+    writing somewhere else mid-run. Being told outright is read every time and
+    never pinned, so a caller that sets it gets what it asked for.
+    """
+    named = os.environ.get("SF_ENV_FILE")
+    if named:
+        return Path(named).expanduser().resolve()
+    global _ENV_FILE
+    if _ENV_FILE is None:
+        _ENV_FILE = find_env_file()
+    return _ENV_FILE
 
 
 def load_env(path: Path | None = None) -> dict[str, str]:
     """Read `.env` into the environment. Returns what it set.
 
-    A variable already exported wins over the file. That is the usual contract
-    and it is what lets you override one setting for a single run without
-    editing anything.
+    A variable already exported wins over the file, as usual — except for
+    settings the control panel writes, where the file wins instead. Saving a
+    slider and having a forgotten system variable quietly beat it on the next
+    start is indistinguishable from the panel not saving at all, and it is not
+    a thing anyone would guess. `SF_ENV_OVERRIDE=1` restores the usual rule.
     """
     path = path or env_file()
     loaded: dict[str, str] = {}
+    shadowed = os.environ.get("SF_ENV_OVERRIDE", "").strip().lower() in {"1", "true", "yes", "on"}
     try:
         text = path.read_text(encoding="utf-8-sig")
     except OSError:
@@ -81,9 +171,16 @@ def load_env(path: Path | None = None) -> dict[str, str]:
         key, _, value = line.partition("=")
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-            loaded[key] = value
+        if not key:
+            continue
+        if key in os.environ:
+            if shadowed or not _panel_owned(key):
+                continue
+            if os.environ[key] != value:
+                log.info("%s: using the saved %r, not the exported %r",
+                         key, value, os.environ[key])
+        os.environ[key] = value
+        loaded[key] = value
     return loaded
 
 

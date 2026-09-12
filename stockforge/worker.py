@@ -107,8 +107,13 @@ def lane_providers(cfg: Settings, lanes: int) -> list:
     except Exception:                                       # pragma: no cover
         return [None] * lanes
 
-    saved = [c for c in connections.load(cfg.root)
-             if c.role == "vision" and c.model and c.base_url]
+    # The ones made live, not every one ever saved. Somebody who added four and
+    # made two live meant those two — handing a lane a model that was tested
+    # and deliberately stood down would be doing the opposite of what they said.
+    saved = [c for c in connections.live(cfg.root, "vision") if c.model and c.base_url]
+    if not saved:                                   # nothing live: fall back
+        saved = [c for c in connections.load(cfg.root)
+                 if c.role == "vision" and c.model and c.base_url]
     if not saved:
         return [None] * lanes
 

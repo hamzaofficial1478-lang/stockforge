@@ -126,11 +126,14 @@ def _check_vision() -> Check:
 
 def _check_fonts(cfg: Settings) -> Check:
     manifest = cfg.fonts_dir / "manifest.json"
-    files = [p for p in cfg.fonts_dir.rglob("*") if p.suffix.lower() in {".ttf", ".otf"}]
+    from .stages.fonts import font_files
+
+    files = font_files(cfg.fonts_dir)
     if not files:
         return Check("Font library", "fail", f"no font files in {cfg.fonts_dir}",
-                     "Drop font families you can use into that folder, then run "
-                     "`stockforge fonts scan`. Google Fonts is the easy source.")
+                     "Run `stockforge fonts download` — it installs a starter "
+                     "library of OFL families with their licences. Or drop your "
+                     "own in there and run `stockforge fonts scan`.")
     if not manifest.exists():
         return Check("Font library", "fail", f"{len(files)} fonts, no manifest yet",
                      "Run `stockforge fonts scan`")

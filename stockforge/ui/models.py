@@ -117,17 +117,54 @@ def remove(root: Path, connection_id: str) -> bool:
     return True
 
 
-def activate(root: Path, connection_id: str) -> Connection | None:
-    """Make one connection the live one for its role."""
+#: Roles where more than one model can be live at once. Reading designs is the
+#: one that benefits: the lanes hand a different model to each, so two live
+#: readers is two designs at a time. Writing and drawing stay exclusive —
+#: nothing splits that work, so a second one would only be ambiguous.
+MULTIPLE_ALLOWED = {"vision"}
+
+
+def activate(root: Path, connection_id: str, exclusive: bool | None = None) -> Connection | None:
+    """Make a connection live.
+
+    A reading model joins the others rather than replacing them, because that
+    is what lets a second lane exist — one live model meant the second lane had
+    nothing of its own to use and the whole thing bought nothing. Writing and
+    drawing keep the old behaviour, where making one live stands the others
+    down.
+    """
     connections = load(root)
     chosen = next((c for c in connections if c.id == connection_id), None)
     if chosen is None:
         return None
-    for c in connections:
-        if c.role == chosen.role:
-            c.active = c.id == chosen.id
+    if exclusive is None:
+        exclusive = chosen.role not in MULTIPLE_ALLOWED
+
+    chosen.active = True
+    if exclusive:
+        for c in connections:
+            if c.role == chosen.role and c.id != chosen.id:
+                c.active = False
     save(root, connections)
     return chosen
+
+
+def deactivate(root: Path, connection_id: str) -> Connection | None:
+    """Stand a connection down without deleting it. Only reachable for roles
+    that allow several, since standing down the only writing model would leave
+    the panel with no way to say which one to use."""
+    connections = load(root)
+    chosen = next((c for c in connections if c.id == connection_id), None)
+    if chosen is None:
+        return None
+    chosen.active = False
+    save(root, connections)
+    return chosen
+
+
+def live(root: Path, role: str) -> list[Connection]:
+    """Every model currently live for a role, in the order they were added."""
+    return [c for c in load(root) if c.role == role and c.active]
 
 
 def env_for(connection: Connection) -> dict[str, str]:

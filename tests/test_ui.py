@@ -6,6 +6,7 @@ it writes were going to a file nothing read.
 """
 
 import json
+import os
 import threading
 import time
 from http.server import ThreadingHTTPServer
@@ -62,12 +63,116 @@ def test_env_is_read_on_startup_without_being_asked(tmp_path):
     assert proc.stdout.strip() == "0.9 True", proc.stdout
 
 
-def test_something_exported_beats_the_file(tmp_path, monkeypatch):
+def test_the_suite_is_not_reading_the_developers_own_settings():
+    """Tests that save settings go through the real endpoint, which writes to
+    whatever `env_file()` returns. Point that at the checkout and the suite
+    edits your `.env`; point it at one fixed temp path and it accumulates the
+    panel tests' values and feeds them back on the next run. Both happened, and
+    both looked like a broken motif matcher rather than a broken fixture."""
+    from stockforge.config import env_file
+
+    checkout = Path(__file__).resolve().parent.parent
+    live = env_file()
+    assert not live.is_relative_to(checkout), f"the suite would write to {live}"
+    assert read_env(live) == {} or "SF_MOTIF_THRESHOLD" not in read_env(live), (
+        f"{live} came into this run already carrying settings: {read_env(live)}")
+
+
+def test_a_saved_setting_beats_a_stray_system_variable(tmp_path, monkeypatch):
+    """The reported bug, exactly: set the sliders, save, restart, and they are
+    back to something else with nothing on screen to explain it.
+
+    One `SF_MIX` left in a Windows environment did it, permanently, because the
+    usual dotenv rule is that an exported variable wins. For anything the panel
+    writes it does not: the panel is where the user set it, so the file is the
+    answer."""
     monkeypatch.setenv("SF_MIX", "0.25")
     env = tmp_path / ".env"
     env.write_text("SF_MIX=0.9\n")
+
+    assert load_env(env) == {"SF_MIX": "0.9"}
+    assert Settings().mix == 0.9
+
+
+def test_the_usual_rule_still_holds_for_everything_else(tmp_path, monkeypatch):
+    """Only settings the panel can write are taken over. A variable the panel
+    knows nothing about keeps the ordinary contract, so exporting one for a
+    single run still works."""
+    monkeypatch.setenv("SF_SOMETHING_ELSE", "exported")
+    env = tmp_path / ".env"
+    env.write_text("SF_SOMETHING_ELSE=from-the-file\n")
+
+    assert load_env(env) == {}
+    assert os.environ["SF_SOMETHING_ELSE"] == "exported"
+
+
+def test_the_old_rule_can_be_asked_for_back(tmp_path, monkeypatch):
+    """Overriding one setting from the command line for a single run is a real
+    thing to want, and taking it away entirely would be worse than the bug."""
+    monkeypatch.setenv("SF_ENV_OVERRIDE", "1")
+    monkeypatch.setenv("SF_MIX", "0.25")
+    env = tmp_path / ".env"
+    env.write_text("SF_MIX=0.9\n")
+
     assert load_env(env) == {}
     assert Settings().mix == 0.25
+
+
+def test_every_editable_setting_is_one_the_file_wins_for(monkeypatch, tmp_path):
+    """The two lists are in different modules and nothing joins them up. A key
+    added to the panel but not to PANEL_OWNED would revert on restart for that
+    one setting only — the original bug back again, narrower and harder to
+    spot."""
+    from stockforge.config import _panel_owned
+
+    for key in sorted(EDITABLE):
+        assert _panel_owned(key), (
+            f"the panel writes {key} but the file does not win for it, so a "
+            f"stray {key} in the environment would beat it on every restart")
+
+
+# --- finding the file at all ----------------------------------------------
+
+def test_the_file_is_found_from_a_sub_folder(tmp_path, monkeypatch):
+    """The other half of "my settings keep resetting". A bare `.env` is
+    relative to wherever the process is standing, so a shortcut or an IDE
+    starting one folder over read a different file and showed defaults."""
+    from stockforge.config import find_env_file
+
+    monkeypatch.delenv("SF_ENV_FILE", raising=False)
+    (tmp_path / ".env").write_text("SF_MIX=0.9\n")
+    deep = tmp_path / "workspace" / "designs"
+    deep.mkdir(parents=True)
+    monkeypatch.chdir(deep)
+
+    assert find_env_file() == tmp_path / ".env"
+
+
+def test_with_no_file_anywhere_it_picks_somewhere_that_stays_put(tmp_path, monkeypatch):
+    """Not the current folder. Saving to wherever you happened to launch from
+    is how you end up with four .env files and no idea which one is live."""
+    from stockforge.config import find_env_file
+
+    monkeypatch.delenv("SF_ENV_FILE", raising=False)
+    empty = tmp_path / "nothing" / "here"
+    empty.mkdir(parents=True)
+    monkeypatch.chdir(empty)
+
+    chosen = find_env_file()
+    assert chosen.name == ".env"
+    assert not chosen.is_relative_to(empty), (
+        f"settings would be saved to {chosen}, which moves when you do")
+
+
+def test_being_told_outright_wins_over_all_of_it(tmp_path, monkeypatch):
+    from stockforge.config import find_env_file
+
+    named = tmp_path / "somewhere" / "custom.env"
+    monkeypatch.setenv("SF_ENV_FILE", str(named))
+    (tmp_path / ".env").write_text("SF_MIX=0.9\n")
+    monkeypatch.chdir(tmp_path)
+
+    assert find_env_file() == named
 
 
 def test_a_setting_takes_effect_without_a_restart(tmp_path, monkeypatch):
@@ -129,6 +234,39 @@ def post(base, path, body):
                   headers={"Content-Type": "application/json"})
     with urlopen(req, timeout=30) as r:
         return r.status, json.loads(r.read())
+
+
+def test_every_button_that_sends_nothing_still_reaches_its_route():
+    """The panel sends a GET unless there is a body or the path is in
+    POST_ONLY. A route that only answers POSTs and is not in that set comes
+    back "not found" — which looks exactly like a feature nobody built, and did
+    for the Install-the-fonts button until a browser was pointed at it.
+
+    Read rather than called, because calling them would do the work: the one
+    that prompted this downloads thirteen megabytes of fonts."""
+    import re
+
+    root = Path(__file__).resolve().parent.parent
+    page = (root / "stockforge" / "ui" / "app.html").read_text(encoding="utf-8")
+    server = (root / "stockforge" / "ui" / "server.py").read_text(encoding="utf-8")
+
+    declared = {p for p in re.search(r"POST_ONLY = new Set\(\[(.*?)\]\)", page, re.S)
+                .group(1).replace("'", "").replace(" ", "").replace("\n", "").split(",") if p}
+    assert declared, "POST_ONLY could not be read out of the page"
+
+    get_body, post_body = server.split("def do_POST")
+    get_body = get_body.split("def do_GET")[1]
+    routes = lambda text: set(re.findall(r'route == "(/api/[^"]+)"', text))
+    gets, posts = routes(get_body), routes(post_body)
+
+    for called in sorted(re.findall(r"api\('(/api/[^']+)'\)", page)):
+        path = called.split("?")[0]          # query strings are not the route
+        if path in declared:
+            assert path in posts, f"{path} is in POST_ONLY but the server has no POST for it"
+        else:
+            assert path in gets, (
+                f"the page sends GET {path}, which the server only answers as a POST — "
+                f"add it to POST_ONLY")
 
 
 @pytest.mark.parametrize("route", [

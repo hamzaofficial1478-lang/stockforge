@@ -315,9 +315,11 @@ def test_every_setting_the_code_reads_is_written_down():
     for py in (root / "stockforge").rglob("*.py"):
         read |= set(re.findall(r'"(SF_[A-Z_]+)"', py.read_text()))
 
-    # These two are prefixes handed to from_env(), not variables in their own
-    # right; the settings they build are documented under their full names.
-    read -= {"SF_VISION", "SF_REASON", "SF_IMAGE", "SF_FTP_"}
+    # Prefixes, not variables in their own right — handed to from_env(), or
+    # used to ask whether a key belongs to the panel. The settings they build
+    # are documented under their full names.
+    read -= {"SF_VISION", "SF_REASON", "SF_IMAGE"}
+    read = {name for name in read if not name.endswith("_")}
 
     assert read <= named, (
         f"{sorted(read - named)} can be set but appear nowhere in .env.example")

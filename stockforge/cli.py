@@ -421,9 +421,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "fonts":
         if args.action == "download":
             from .stages.font_download import download_starter
+            def say(done: int, total: int, name: str) -> None:
+                print(f"\r  {done}/{total}  {name[:56]:<56}", end="", flush=True)
+
             try:
-                entries = download_starter(settings.fonts_dir)
-                print(f"Font library ready: {len(entries)} faces; upstream licenses included.")
+                entries = download_starter(settings.fonts_dir, on_progress=say)
+                families = len({e.family for e in entries})
+                print(f"\rFont library ready: {len(entries)} faces across "
+                      f"{families} families; upstream licenses included."
+                      f"{' ' * 20}")
                 if fonts_stage.ON_WINDOWS:
                     for name, what in fonts_stage.install_for_windows(settings.fonts_dir):
                         print(f"  {name}: {what}")

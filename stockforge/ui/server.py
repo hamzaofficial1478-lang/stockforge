@@ -353,6 +353,22 @@ class Handler(BaseHTTPRequestHandler):
                 warnings = ["No usable images were imported. Check the source or upload image files from this computer."]
             return self._json({"pulled": pulled, "warnings": warnings})
 
+        if route == "/api/fonts/download":
+            # The type is only as varied as the library, and a library nobody
+            # installed is the commonest reason every design comes back set in
+            # the same face. It was a terminal command; now it is a button,
+            # because the terminal is not where this program is used.
+            from ..stages.font_download import download_starter
+
+            try:
+                entries = download_starter(self.cfg.fonts_dir)
+            except (OSError, RuntimeError, ValueError) as exc:
+                return self._json({"error": str(exc)}, 400)
+            families = sorted({e.family for e in entries})
+            return self._json({"faces": len(entries), "families": len(families),
+                               "where": str(self.cfg.fonts_dir),
+                               "names": families})
+
         if route == "/api/update":
             # The last thing the launcher menu could do that the panel could
             # not, which meant closing the browser and going back to a terminal
@@ -404,6 +420,16 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/models/delete":
             ok = models_store.remove(self.cfg.root, str(body.get("id") or ""))
             return self._json({"deleted": ok}, 200 if ok else 404)
+
+        if route == "/api/models/deactivate":
+            chosen = models_store.deactivate(self.cfg.root, str(body.get("id") or ""))
+            if chosen is None:
+                return self._json({"error": "no such connection"}, 404)
+            still = models_store.live(self.cfg.root, chosen.role)
+            if still:
+                write_env(env_file(), models_store.env_for(still[0]))
+                self.cfg.reload()
+            return self._json({"id": chosen.id, "live": len(still)})
 
         if route == "/api/models/activate":
             chosen = models_store.activate(self.cfg.root, str(body.get("id") or ""))

@@ -88,6 +88,25 @@ def _guess(family: str, style: str) -> tuple[str, int, str]:
     return category, weight, width
 
 
+def font_files(fonts_dir: Path) -> list[Path]:
+    """Every face in the library, in a stable order.
+
+    A folder starting with an underscore is somewhere to keep originals: the
+    variable fonts the starter library cuts its weights from live in
+    `_variable`. Counting those would list every family twice — once as the
+    real weights and once as a single 400 that shadows them — so both the scan
+    and the health check ask here rather than walking the folder themselves.
+    """
+    out = []
+    for path in sorted(fonts_dir.rglob("*")):
+        if path.suffix.lower() not in {".ttf", ".otf"}:
+            continue
+        if any(part.startswith("_") for part in path.relative_to(fonts_dir).parts[:-1]):
+            continue
+        out.append(path)
+    return out
+
+
 def scan(fonts_dir: Path) -> list[FontEntry]:
     """Bootstrap a manifest from whatever is in the fonts folder.
 
@@ -99,9 +118,7 @@ def scan(fonts_dir: Path) -> list[FontEntry]:
 
     previous = {e.path.replace("\\", "/"): e for e in load_manifest(fonts_dir)}
     entries: list[FontEntry] = []
-    for path in sorted(fonts_dir.rglob("*")):
-        if path.suffix.lower() not in {".ttf", ".otf"}:
-            continue
+    for path in font_files(fonts_dir):
         try:
             with TTFont(str(path), lazy=True, fontNumber=0) as tt:
                 names = {r.nameID: r.toUnicode() for r in tt["name"].names if r.nameID in (1, 2)}
