@@ -317,7 +317,7 @@ def test_every_setting_the_code_reads_is_written_down():
 
     # These two are prefixes handed to from_env(), not variables in their own
     # right; the settings they build are documented under their full names.
-    read -= {"SF_VISION", "SF_REASON", "SF_FTP_"}
+    read -= {"SF_VISION", "SF_REASON", "SF_IMAGE", "SF_FTP_"}
 
     assert read <= named, (
         f"{sorted(read - named)} can be set but appear nowhere in .env.example")

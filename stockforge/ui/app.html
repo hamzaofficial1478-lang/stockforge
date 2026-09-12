@@ -247,9 +247,10 @@
           <div><label>Name it</label>
             <input id="conn-label" placeholder="Ollama on this machine"></div>
           <div><label>Used for</label>
-            <select id="conn-role">
+            <select id="conn-role" onchange="connRoleChanged()">
               <option value="vision">Reading designs (needs to see images)</option>
               <option value="text">Titles and keywords (text only)</option>
+              <option value="image">Drawing artwork (makes pictures)</option>
             </select></div>
           <div><label>How it connects</label>
             <select id="conn-backend" onchange="connBackendChanged()"></select></div>
@@ -258,6 +259,7 @@
           <div id="conn-key-wrap"><label>API key (hosted servers only)</label>
             <input id="conn-key" type="password" placeholder="leave blank for local"></div>
         </div>
+        <p class="hint" id="conn-role-note" hidden></p>
         <p class="hint" id="conn-signin" hidden></p>
         <div class="row" style="margin-top:10px" id="conn-fetch-wrap">
           <button class="btn small" onclick="fetchModels()">Fetch models from that server</button>
@@ -637,33 +639,39 @@ const CFG_KEYS = ['SF_PRESERVE_ORIGINAL','SF_VISION_BACKEND','SF_VISION_EFFORT',
 let BACKENDS = {};
 let CFG_MIX = 0.5;
 
-async function loadBackends(){
-  const r = await api('/api/backends');
-  BACKENDS = Object.fromEntries(r.backends.map(b => [b.name, b]));
-  const sel = $('SF_VISION_BACKEND');
-  // The setting can be an import path while the backend registers under its
-  // own name. Show the name, keep the path as the value that gets saved.
-  const v = r.selected.vision;
-  const chosen = sel.value || v.name || v.setting;
-  if (v.name && v.setting && v.name !== v.setting) BACKENDS[v.setting] = BACKENDS[v.name];
+function fillBackends(sel, backends, selected){
+  if (!sel) return;
+  const keep = sel.value;
   sel.innerHTML = '';
-  for (const b of r.backends){
+  for (const b of backends){
     const o = document.createElement('option');
-    // Keep the import path as the saved value where that is how it was reached.
-    o.value = (v.name === b.name && v.setting) ? v.setting : b.name;
+    // A backend reached by import path registers under its own name. Show the
+    // name, keep the path as the value that gets saved.
+    o.value = (selected.name === b.name && selected.setting) ? selected.setting : b.name;
     o.textContent = b.label + (b.ready ? '' : '  (not ready)');
     sel.appendChild(o);
   }
-  // A backend set by hand that is not registered yet — a module path — still
-  // has to show, or saving the form would silently reset it to the first entry.
-  if (chosen && !BACKENDS[chosen] && ![...sel.options].some(o => o.value === chosen)){
+  const want = keep || selected.name || selected.setting || 'openai';
+  if (want && ![...sel.options].some(o => o.value === want)){
     const o = document.createElement('option');
-    o.value = chosen; o.textContent = chosen + '  (your own)';
+    o.value = want; o.textContent = want + '  (your own)';
     sel.appendChild(o);
   }
-  sel.value = chosen;
-  CFG_MIX = parseFloat(c.values.SF_MIX) || 0.5;
-  await loadBackends();
+  sel.value = want;
+}
+
+async function loadBackends(){
+  const r = await api('/api/backends');
+  BACKENDS = Object.fromEntries(r.backends.map(b => [b.name, b]));
+  const v = r.selected.vision;
+  if (v.name && v.setting && v.name !== v.setting) BACKENDS[v.setting] = BACKENDS[v.name];
+
+  fillBackends($('SF_VISION_BACKEND'), r.backends, v);
+  fillBackends($('conn-backend'), r.backends, v);
+
+  backendChanged();
+  connBackendChanged();
+  connRoleChanged();
 }
 
 function backendChanged(){
@@ -710,7 +718,8 @@ async function loadConfig(){
   for (const [id, key] of [['mix-v','SF_MIX'], ['str-v','SF_DERIVE_STRENGTH'],
                            ['dist-v','SF_DISTINCT_THRESHOLD'], ['motif-v','SF_MOTIF_THRESHOLD']])
     showV(id, (+$(key).value).toFixed(2));
-  backendChanged();
+  CFG_MIX = parseFloat(c.values.SF_MIX) || 0.5;
+  await loadBackends();
 }
 
 async function saveConfig(){
@@ -1112,6 +1121,19 @@ async function loadGaps(){
     + `<p class="hint" style="margin-top:12px"><b>${gaps.length} drawing${gaps.length === 1 ? '' : 's'} to make.</b> `
     + `Between them they are holding up ${blocked} design${blocked === 1 ? '' : 's'}. `
     + `Until they exist, those designs stay on this page.</p>`;
+}
+
+function connRoleChanged(){
+  // An image model is tested by asking it for a picture, not for words. Saying
+  // so here stops the next person wondering why the vision probe complained
+  // about "an odd reply" from a model that answered perfectly well.
+  const role = $('conn-role').value;
+  const note = $('conn-role-note');
+  if (!note) return;
+  note.hidden = role !== 'image';
+  note.textContent = role === 'image'
+    ? 'Tested by asking for one small picture. Used for drawing missing artwork, not for reading your designs.'
+    : '';
 }
 
 function connBackendChanged(){

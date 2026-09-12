@@ -218,3 +218,86 @@ def test_going_live_on_a_signed_in_backend_clears_an_old_key(tmp_path):
 def test_a_corrupt_file_does_not_take_the_panel_down_with_it(tmp_path):
     (tmp_path / store.FILE).write_text("{ not json")
     assert store.load(tmp_path) == []
+
+
+# --- the image role --------------------------------------------------------
+#
+# The owner pointed a connection at qwen-image-3.0 and got back:
+#
+#   Test failed: an odd reply: {'choices': [{'message': {'role': 'assistant'},
+#   'finish_reason': 'stop', ...}], 'model': 'qwen-image-3.0', ...}
+#
+# That was a 200. The call worked, the model answered, and the probe rejected
+# it — because an image model's message carries no text, and the probe only
+# knew how to look for words.
+
+def _image_reply(url="https://example.test/out.png"):
+    return {"choices": [{"message": {"role": "assistant", "images": [{"url": url}]},
+                         "finish_reason": "stop", "index": 0}],
+            "model": "qwen-image-3.0"}
+
+
+def test_an_image_model_is_tested_by_asking_for_a_picture(monkeypatch):
+    seen = {}
+
+    def fake(url, key, payload, timeout):
+        seen.update(payload=payload, url=url)
+        return _image_reply()
+
+    monkeypatch.setattr(store, "_request", fake)
+    result = store.test("http://x/v1", "qwen-image-3.0", role="image")
+
+    assert result["ok"], result
+    assert "picture" in result["scope"].lower() or "image" in result["scope"].lower()
+    # it asked for something to draw, not for the word "ready"
+    assert "ready" not in str(seen["payload"]["messages"]).lower()
+
+
+def test_the_reply_that_used_to_be_called_odd_now_passes(monkeypatch):
+    """The owner's exact envelope, with an image where the text would be."""
+    monkeypatch.setattr(store, "_request", lambda *a: _image_reply())
+    assert store.test("http://x/v1", "qwen-image-3.0", role="image")["ok"]
+
+
+def test_an_image_model_that_returns_no_image_is_a_failure(monkeypatch):
+    """Not everything that answers has drawn something. A reply with no image
+    anywhere in it is the one case that should still fail — and the message
+    has to show what did come back, or it is the old error again."""
+    monkeypatch.setattr(store, "_request",
+                        lambda *a: {"choices": [{"message": {"role": "assistant"}}]})
+    result = store.test("http://x/v1", "qwen-image-3.0", role="image")
+    assert not result["ok"]
+    assert "no image" in result["error"]
+    assert "assistant" in result["error"], "it does not show what came back"
+
+
+def test_the_image_is_found_wherever_the_server_puts_it(monkeypatch):
+    """Servers disagree about where the image goes. Looking beats assuming."""
+    shapes = [
+        {"choices": [{"message": {"images": [{"url": "https://a.test/1.png"}]}}]},
+        {"data": [{"url": "https://b.test/2.png"}]},
+        {"output": {"results": [{"url": "https://c.test/3.png"}]}},
+        {"choices": [{"message": {"content": [{"image_url": "data:image/png;base64,AAA"}]}}]},
+    ]
+    for body in shapes:
+        assert store._find_image(body), f"missed the image in {body}"
+
+
+def test_an_image_connection_gets_its_own_settings(tmp_path):
+    """Three roles, three prefixes. An image model written into SF_VISION_*
+    would replace the model that reads the designs."""
+    c = store.upsert(tmp_path, {"model": "qwen-image-3.0", "role": "image",
+                                "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                                "api_key": "sk-x"})
+    env = store.env_for(c)
+    assert env["SF_IMAGE_MODEL"] == "qwen-image-3.0"
+    assert env["SF_IMAGE_BASE_URL"].endswith("/compatible-mode/v1")
+    assert not any(k.startswith("SF_VISION") for k in env), "it overwrote the reading model"
+
+
+def test_the_three_roles_do_not_tread_on_each_other(tmp_path):
+    prefixes = set()
+    for role in ("vision", "text", "image"):
+        c = store.upsert(tmp_path, {"model": f"m-{role}", "role": role})
+        prefixes.add(next(k.rsplit("_", 1)[0] for k in store.env_for(c) if k.endswith("_MODEL")))
+    assert prefixes == {"SF_VISION", "SF_REASON", "SF_IMAGE"}

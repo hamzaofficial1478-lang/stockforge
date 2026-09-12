@@ -40,7 +40,13 @@ class Connection:
     # "claude" wants neither, because it uses the account you signed in with.
     # Anything else is an import path to someone's own backend.
     backend: str = "openai"
-    role: str = "vision"           # vision | text
+    # vision  reads designs and returns words
+    # text    writes titles and keywords
+    # image   draws pictures — a different job with a different reply shape,
+    #         which is why testing one as though it were a chat model reports
+    #         "an odd reply": an image model answers with an image, and the
+    #         message it comes back in has no text content at all.
+    role: str = "vision"           # vision | text | image
     active: bool = False
     last_tested: float = 0.0
     last_result: str = ""
@@ -125,7 +131,7 @@ def activate(root: Path, connection_id: str) -> Connection | None:
 
 def env_for(connection: Connection) -> dict[str, str]:
     """The settings that make this connection the one the pipeline uses."""
-    prefix = "SF_VISION" if connection.role == "vision" else "SF_REASON"
+    prefix = {"vision": "SF_VISION", "image": "SF_IMAGE"}.get(connection.role, "SF_REASON")
     backend = connection.backend or "openai"
     if backend != "openai":
         # A signed-in backend has no server to point at, and writing a stale
@@ -178,6 +184,68 @@ def fetch(base_url: str, api_key: str = "", timeout: int = 20) -> dict:
     return {"models": names}
 
 
+def _test_image(base: str, model: str, api_key: str, timeout: int) -> dict:
+    """Ask an image model for one small picture and check a picture came back.
+
+    An image model answers on the same endpoint as a chat model and in almost
+    the same envelope, but the message carries no text — which is why testing
+    one as a chat model reports "an odd reply" while the call itself was a
+    perfectly good 200. The image arrives as a url or as base64, depending on
+    the server, so both are accepted.
+    """
+    payload = {"model": model, "size": "512x512", "n": 1,
+               "messages": [{"role": "user", "content":
+                             "a single plain black circle centred on a white background"}]}
+    started = time.time()
+    try:
+        body = _request(f"{base}/chat/completions", api_key, payload, timeout)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")[:300]
+        return {"ok": False, "error": f"HTTP {exc.code} — {detail or exc.reason}"}
+    except urllib.error.URLError as exc:
+        return {"ok": False, "error": f"nothing answered at {base} — {exc.reason}"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:300]}
+
+    found = _find_image(body)
+    took = round(time.time() - started, 1)
+    if not found:
+        return {"ok": False, "took": took,
+                "error": f"it answered in {took}s but there was no image in the reply: "
+                         f"{str(body)[:200]}"}
+    return {"ok": True, "took": took, "model": model,
+            "scope": f"Draws pictures. Returned an image in {took}s.",
+            "reply": found[:80]}
+
+
+def _find_image(body) -> str:
+    """The url or base64 of the first image anywhere in a reply.
+
+    Servers disagree about where to put it — choices[].message.images[],
+    a top-level data[], output.results[] — so this looks rather than assumes,
+    which is cheaper than one branch per vendor and does not rot.
+    """
+    seen: list[str] = []
+
+    def walk(node):
+        if len(seen) > 0:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ("url", "b64_json", "image_url", "image", "base64") and isinstance(value, str) and value:
+                    seen.append(value)
+                    return
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif isinstance(node, str) and (node.startswith("http") or node.startswith("data:image")):
+            seen.append(node)
+
+    walk(body)
+    return seen[0] if seen else ""
+
+
 def test(base_url: str, model: str, api_key: str = "", timeout: int = 90,
          role: str = "text") -> dict:
     """Send one real request and report what came back.
@@ -189,6 +257,8 @@ def test(base_url: str, model: str, api_key: str = "", timeout: int = 90,
     if not model:
         return {"ok": False, "error": "no model named"}
     base = base_url.rstrip("/")
+    if role == "image":
+        return _test_image(base, model, api_key, timeout)
     payload = {"model": model, "max_tokens": 512, "temperature": 0,
                "messages": [{"role": "user",
                              "content": "Reply with the single word: ready"}]}
