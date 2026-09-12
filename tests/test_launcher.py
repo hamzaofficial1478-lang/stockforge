@@ -120,6 +120,34 @@ def test_check_says_so_when_everything_is_ready(workspace, capsys, monkeypatch):
 
 # --- the launcher ---------------------------------------------------------
 
+def test_python_dash_m_stockforge_runs_the_program():
+    """The `stockforge` command only exists after a pip install, so on a plain
+    checkout `python -m stockforge` is the obvious thing to reach for. Without
+    a __main__.py it fails with "'stockforge' is a package and cannot be
+    directly executed", which says nothing about what to type instead — and
+    that is exactly the wall someone hits following the README on Windows."""
+    root = Path(__file__).resolve().parent.parent
+    proc = subprocess.run(
+        [sys.executable, "-m", "stockforge", "--help"],
+        cwd=root, capture_output=True, text=True, timeout=120,
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(root),
+             "SF_ENV_FILE": "/nonexistent/.env"})
+    assert proc.returncode == 0, proc.stderr
+    assert "fonts" in proc.stdout and "motifs" in proc.stdout
+
+
+def test_python_dash_m_passes_the_exit_code_back():
+    """A launcher that always exits 0 makes every script that calls it think
+    the run succeeded."""
+    root = Path(__file__).resolve().parent.parent
+    proc = subprocess.run(
+        [sys.executable, "-m", "stockforge", "not-a-command"],
+        cwd=root, capture_output=True, text=True, timeout=120,
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(root),
+             "SF_ENV_FILE": "/nonexistent/.env"})
+    assert proc.returncode != 0
+
+
 def test_the_launcher_is_valid_and_needs_nothing_installed():
     """It runs before the package exists, on a machine with a bare Python, so
     it may import nothing but the standard library."""

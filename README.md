@@ -16,6 +16,15 @@ stockforge ui
 That opens the control panel, which is where everything happens. The command
 line does the same jobs if you prefer it.
 
+The `stockforge` command comes from that `pip install -e .`. Without it, or on
+a machine where the scripts folder is not on PATH — which is the default on
+Windows — `python -m stockforge` does exactly the same thing:
+
+```powershell
+python -m stockforge fonts download
+python -m stockforge ui
+```
+
 The default **Recover original** mode keeps the analyser's text, colors and
 layout and exports an editable SVG and PDF. It does not rewrite names, mix
 other designs in, or require the result to differ from the source. Select
