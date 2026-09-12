@@ -136,6 +136,14 @@ class Settings:
     # only the obvious.
     duplicate_distance: int = field(default_factory=lambda: _i("SF_DUPLICATE_DISTANCE", 20), metadata={"env": "SF_DUPLICATE_DISTANCE"})
 
+    # --- how many designs at once -----------------------------------------
+    # Lanes. One is the original behaviour exactly: a design at a time with a
+    # breather between. More than one runs that same loop side by side, each on
+    # its own vision model from the Models list. Two lanes against one server
+    # just queue behind each other and buy nothing, so raise this only when you
+    # have a second model for them to use.
+    workers: int = field(default_factory=lambda: _i("SF_WORKERS", 1), metadata={"env": "SF_WORKERS"})
+
     # --- did we actually rebuild it ---------------------------------------
     # How much of a surface may be placed photograph before we stop calling it
     # a rebuild. A design the model reads as one big photographic area comes

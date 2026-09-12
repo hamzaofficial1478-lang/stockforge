@@ -13,6 +13,7 @@ Point them at the same server if you only run one.
 from __future__ import annotations
 
 import os
+import threading
 
 from .base import ProviderError, VisionProvider, extract_json
 from .registry import Backend, Preset, all_backends, get, names, register, watched
@@ -38,6 +39,22 @@ _WATCHED = watched()
 # Roles a caller installed by hand. set_provider is how tests and embedders
 # supply their own, and re-reading the environment must never throw those away.
 _pinned: set[str] = set()
+
+# A provider chosen for one thread only. Lanes running in parallel each want
+# their own model — otherwise adding a second vision model buys nothing, since
+# every lane would queue behind the same server. Thread-local rather than an
+# argument threaded through analyse, derive and critique: the stages should not
+# have to know that more than one of them is running.
+_lane = threading.local()
+
+
+def use_in_this_thread(role: str, provider: VisionProvider | None) -> None:
+    """Point one role at one provider, for the calling thread only. None clears."""
+    setattr(_lane, role, provider)
+
+
+def _for_this_thread(role: str) -> VisionProvider | None:
+    return getattr(_lane, role, None)
 
 
 # A model id that names its own backend. Someone who typed "claude-opus-5" into
@@ -90,11 +107,15 @@ def _cached(role: str, prefix: str) -> VisionProvider:
 
 
 def vision() -> VisionProvider:
-    return _cached("vision", "SF_VISION")
+    mine = _for_this_thread("vision")
+    return mine if mine is not None else _cached("vision", "SF_VISION")
 
 
 def reason() -> VisionProvider:
     """Falls back to the vision model if no separate text model is configured."""
+    mine = _for_this_thread("reason")
+    if mine is not None:
+        return mine
     if not os.environ.get("SF_REASON_MODEL"):
         # No separate text model: follow the vision one, including its changes.
         return vision() if "reason" not in _pinned else _cache["reason"]
@@ -112,11 +133,13 @@ def reset() -> None:
     _cache.clear()
     _built_from.clear()
     _pinned.clear()
+    for role in ("vision", "reason"):
+        setattr(_lane, role, None)
 
 
 __all__ = [
     "ProviderError", "VisionProvider", "OpenAICompatProvider",
     "Backend", "Preset", "register", "get", "names", "all_backends",
     "backend", "resolve", "extract_json", "from_env", "vision", "reason",
-    "set_provider", "reset",
+    "set_provider", "use_in_this_thread", "reset",
 ]

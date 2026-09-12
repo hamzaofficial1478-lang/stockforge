@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS designs (
     state         TEXT NOT NULL DEFAULT 'pending',
     mix           REAL,                  -- NULL = use the global setting
     derive        REAL,                  -- NULL = use the global setting
+    claimed_by    TEXT,                  -- which lane is building it, if any
+    claimed_at    REAL,
     created_at    REAL NOT NULL
 );
 
@@ -145,6 +147,13 @@ class Store:
             for column in ("mix", "derive"):
                 if column not in design_columns:
                     c.execute(f"ALTER TABLE designs ADD COLUMN {column} REAL")
+            # Who is building what. Without this two lanes reading "the first
+            # pending design" both read the same one, both build it, and the
+            # second overwrites the first — twice the cost for one result.
+            if "claimed_by" not in design_columns:
+                c.execute("ALTER TABLE designs ADD COLUMN claimed_by TEXT")
+            if "claimed_at" not in design_columns:
+                c.execute("ALTER TABLE designs ADD COLUMN claimed_at REAL")
 
         # Whether we found the artwork inside a listing photo. A doubt here has
         # to reach a person: reading a square photo of a 5x7 card as though it
@@ -353,6 +362,58 @@ class Store:
                 "decision=NULL, decided_at=NULL",
                 (did, reason, score),
             )
+
+    def claim_design(self, lane: str, attempts: int = 25) -> sqlite3.Row | None:
+        """Take the next pending design, or None when there are none left.
+
+        The whole point is that two lanes never get the same one. A SELECT
+        followed by an UPDATE is not enough on its own — both lanes can read
+        the same row before either writes — so the UPDATE carries the state it
+        expects to find. SQLite applies a single UPDATE atomically, so exactly
+        one lane sees rowcount 1 and the loser simply asks for the next.
+        """
+        for _ in range(attempts):
+            row = self.conn.execute(
+                "SELECT id FROM designs WHERE state='pending' "
+                "ORDER BY created_at LIMIT 1").fetchone()
+            if row is None:
+                return None
+            with self.tx() as c:
+                taken = c.execute(
+                    "UPDATE designs SET state='building', claimed_by=?, claimed_at=? "
+                    "WHERE id=? AND state='pending'",
+                    (lane, time.time(), row["id"]),
+                )
+            if taken.rowcount == 1:
+                return self.conn.execute(
+                    "SELECT * FROM designs WHERE id=?", (row["id"],)).fetchone()
+        return None
+
+    def release_design(self, did: str, state: str = "pending") -> None:
+        """Put a design back. Used when a lane is stopped mid-build, so work
+        that never finished is picked up again rather than stranded in
+        'building' where nothing looks for it."""
+        with self.tx() as c:
+            c.execute("UPDATE designs SET state=?, claimed_by=NULL, claimed_at=NULL "
+                      "WHERE id=?", (state, did))
+
+    def reclaim_abandoned(self, older_than: float = 3600.0) -> int:
+        """Free designs left 'building' by a process that died.
+
+        Without this a crash quietly removes designs from the queue for good:
+        they are not pending, so nothing picks them up, and not finished, so
+        nothing reports them.
+        """
+        cutoff = time.time() - older_than
+        with self.tx() as c:
+            freed = c.execute(
+                "UPDATE designs SET state='pending', claimed_by=NULL, claimed_at=NULL "
+                "WHERE state='building' AND (claimed_at IS NULL OR claimed_at < ?)",
+                (cutoff,),
+            )
+        if freed.rowcount:
+            log.info("put %d abandoned design(s) back in the queue", freed.rowcount)
+        return freed.rowcount
 
     def set_design_mix(self, did: str, mix: float | None, derive: float | None) -> None:
         """Per-design borrowing. None on either means follow the global setting."""

@@ -529,3 +529,53 @@ is not is worse than no line, so it went, and the test now documents which
 mechanism actually provides the guarantee.
 
 430 tests pass.
+
+---
+
+## 9. Lanes
+
+The owner had three more vision models and adding them changed nothing, which
+was the correct observation: the queue was worked by a single thread, so a
+second model sat idle however many you configured.
+
+A lane is the existing loop, run side by side. One lane is the old behaviour
+exactly — a design at a time with a breather between — and that is still the
+default, because two lanes pointed at one server just queue behind each other
+and the wall clock barely moves.
+
+Three things had to be true before it was safe.
+
+**Claim, don't browse.** `designs(state='pending')[0]` hands both lanes the same
+design: both build it, the second overwrites the first, and you have paid twice
+for one result. `claim_design` moves the row to `building` in the same UPDATE
+that checks it is still `pending`, so exactly one lane gets rowcount 1 and the
+loser asks for the next. Hammered from four threads over forty designs: each
+claimed exactly once.
+
+**A model per lane, and only for that lane.** Providers were a module-level
+cache keyed by role, so every lane would have used whichever was built last.
+They are thread-local now, which also means the analysis stages did not have to
+learn that more than one of them is running — `providers.vision()` still reads
+the same in `analyse.py`.
+
+**The totals have to keep adding up.** Counters moved onto the lanes, and for a
+while `worker.progress.done` read zero while work was plainly happening. That
+is the kind of quiet lie that costs an hour, so the lanes are summed back into
+the run's own progress in one place, called wherever a number moves.
+
+Also: designs left `building` by a process that died are put back at the start
+of the next run, and a lane stopped mid-build releases what it was holding. A
+design that is neither pending nor finished is invisible to everything.
+
+Measured rather than assumed. Eight designs, each a fixed sleepy interval — a
+model call is mostly waiting — and two lanes finish in under 80% of one lane's
+time while building the same set, each exactly once. Forcing lanes back to one
+fails that test.
+
+One test taught me something. The mutation that breaks claiming made the suite
+**hang** rather than fail: a claim that does not take the design hands back the
+same row for ever, and the test's `while True` spun. A test that hangs is worse
+than no test, because it looks like an infrastructure problem. The loop is
+bounded now and the same mutation fails in two seconds.
+
+475 tests pass.

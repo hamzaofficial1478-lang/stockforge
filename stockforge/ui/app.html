@@ -50,6 +50,7 @@
   .explain p{margin:0 0 9px;font-size:13px;line-height:1.55;color:var(--ink)}
   .explain p:last-child{margin-bottom:0}
   .explain b{font-weight:600}
+  .lane{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0}
   .why{margin:2px 0 8px;font-size:13px;line-height:1.5}
   .btn.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 35%,transparent)}
   .btn.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
@@ -207,6 +208,16 @@
       <div class="grid">
         <div><label for="SF_VISION_BACKEND">Model backend</label>
           <select id="SF_VISION_BACKEND" onchange="backendChanged()"></select></div>
+        <div><label for="SF_WORKERS">Designs at once</label>
+          <select id="SF_WORKERS">
+            <option value="1">1 &mdash; one at a time (default)</option>
+            <option value="2">2 &mdash; needs a second vision model</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+          <p class="hint" style="margin:4px 0 0">Each lane takes a different vision model from
+            the list below. Two lanes on one model just queue behind each other and nothing
+            gets faster, so add the second model first.</p></div>
         <div id="claude-effort-wrap" hidden><label for="SF_VISION_EFFORT">How hard Claude thinks</label>
           <select id="SF_VISION_EFFORT">
             <option value="low">Low &mdash; cheapest, fine for most designs</option>
@@ -511,6 +522,7 @@
         </span>
       </div>
       <p class="hint">Pause and Stop take effect after the current design finishes.</p>
+      <div id="lanes" hidden></div>
       <div class="log" id="w-log" aria-label="Recent processing activity"></div>
     </div>
     <div class="card">
@@ -630,7 +642,7 @@ async function loadHealth(){
   $('tagline').textContent = h.workable ? 'ready' : 'setup needed';
 }
 
-const CFG_KEYS = ['SF_PRESERVE_ORIGINAL','SF_VISION_BACKEND','SF_VISION_EFFORT',
+const CFG_KEYS = ['SF_PRESERVE_ORIGINAL','SF_VISION_BACKEND','SF_VISION_EFFORT','SF_WORKERS',
   'SF_ETSY_API_KEY','SF_MIX','SF_DERIVE_STRENGTH','SF_DISTINCT_THRESHOLD',
   'SF_DERIVE_ROUNDS','SF_MOTIF_THRESHOLD',
   'SF_FTP_ADOBE_HOST','SF_FTP_ADOBE_USER','SF_FTP_ADOBE_PASS',
@@ -1059,6 +1071,21 @@ function paintWorker(w){
     + (w.state === 'pausing' || w.state === 'stopping' ? ' · Finishing the current design before ' + (w.state === 'pausing' ? 'pausing.' : 'stopping.') : '');
   $('worker-counts').textContent = `${w.done + w.review + w.failed} of ${total} designs finished · ${w.remaining} remaining`
     + (busy && w.current_design_id ? ' · Processing current design (stage duration varies)' : ` · ${pct}% of queue finished`);
+  const lanes = w.lanes || [];
+  $('lanes').hidden = lanes.length < 2;
+  if (lanes.length > 1){
+    $('lanes').innerHTML = lanes.map(l => `
+      <div class="lane">
+        <div class="row" style="justify-content:space-between">
+          <b>Lane ${l.lane}</b>
+          <span class="mono" style="opacity:.6">${esc(l.model || 'the model from Setup')}</span>
+        </div>
+        <p class="hint" style="margin:2px 0">${
+          l.current_design ? `<b>${esc(l.current_design)}</b> &mdash; ${esc(l.current_step || '')}`
+                           : esc(l.current_step || 'idle')}</p>
+        <p class="hint" style="margin:0">${l.done} done &middot; ${l.review} to review &middot; ${l.failed} failed</p>
+      </div>`).join('');
+  }
   $('w-done').textContent = w.done;
   $('w-review').textContent = w.review;
   $('w-failed').textContent = w.failed;
