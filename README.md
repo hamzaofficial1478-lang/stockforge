@@ -201,6 +201,27 @@ didn't. Three things are done about it, in order:
 Only then does the design fail, and the message says whose fault it was and
 that Review is where you pick it back up.
 
+### The motifs you are missing are mostly already drawn
+
+When Review says it has no drawing for a bat, a pumpkin or a calendar icon,
+the first answer is not to draw one and not to generate one. It is already
+drawn — in your own card, which is where the description came from. The
+analyser recorded the box it sits in, so it can be cut straight out:
+
+```bash
+stockforge motifs harvest
+```
+
+or the **Cut these out of my own designs** button on Review. Each one comes
+back as a transparent PNG in `assets/motifs/_harvested/`, background removed,
+in its own colours. Costs nothing, calls nothing, and it is your artwork
+rather than something invented that merely resembles it.
+
+They are pictures, not vectors, so the library still wants a traced SVG — but
+tracing something that exists beats drawing from a sentence. Anything with no
+usable sighting still needs drawing, and `motifs todo --scaffold` writes a
+tagged empty file for those.
+
 ### Any model, and any way of reaching one
 
 The backend is a registry, not a hardcoded choice. Two ship with the program:

@@ -403,3 +403,89 @@ def test_a_400_that_is_not_about_shape_is_reported_as_it_came(monkeypatch):
     result = store.test("http://x/v1", "qwen3.8-flash", role="text")
     assert not result["ok"]
     assert "model not found" in result["error"], "the body was eaten by the retry"
+
+
+# --- the size format -------------------------------------------------------
+#
+# With content fixed, the next layer:
+#
+#   HTTP 400 — {"error":{"message":"Expected format: '<width>*<height>'", ...}}
+#
+# Qwen wants 512*512, OpenAI's images API wants 512x512. Rather than keeping a
+# list of which vendor uses which — wrong the moment somebody adds a third —
+# the server names the separator in its complaint and that is what gets used.
+
+QWEN_SIZE_ERROR = ('{"error":{"message":"Expected format: \'<width>*<height>\'",'
+                   '"type":"invalid_request_error","code":"invalid_parameter_error"}}')
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("Expected format: '<width>*<height>'", "*"),
+    ("Expected format: '<width>x<height>'", "x"),
+    ("Expected format: <width> X <height>", "X"),
+    ("model not found", ""),
+    ("", ""),
+])
+def test_the_separator_is_read_from_the_servers_own_words(message, expected):
+    assert store.size_separator(message) == expected
+
+
+def test_a_server_that_wants_an_asterisk_gets_one(monkeypatch):
+    """The owner's second 400, end to end."""
+    import io
+    import urllib.error
+
+    sizes = []
+
+    def fake(url, key, payload, timeout):
+        sizes.append(payload["size"])
+        if "*" not in payload["size"]:
+            raise urllib.error.HTTPError(url, 400, "Bad Request", {},
+                                         io.BytesIO(QWEN_SIZE_ERROR.encode()))
+        return _image_reply()
+
+    monkeypatch.setattr(store, "_request", fake)
+    result = store.test("http://x/v1", "qwen-image-3.0", role="image")
+
+    assert result["ok"], result
+    assert sizes == ["512x512", "512*512"], sizes
+
+
+def test_the_dimensions_survive_the_swap(monkeypatch):
+    """Only the separator changes. Swapping the numbers too would be a very
+    quiet way to start generating the wrong shape."""
+    import io
+    import urllib.error
+
+    seen = []
+
+    def fake(url, key, payload, timeout):
+        seen.append(payload["size"])
+        if "*" not in payload["size"]:
+            raise urllib.error.HTTPError(url, 400, "Bad Request", {},
+                                         io.BytesIO(QWEN_SIZE_ERROR.encode()))
+        return _image_reply()
+
+    monkeypatch.setattr(store, "_request", fake)
+    store.test("http://x/v1", "qwen-image-3.0", role="image")
+    assert seen[-1] == "512*512"
+    assert seen[-1].split("*") == ["512", "512"]
+
+
+def test_a_size_error_that_names_nothing_is_reported_not_retried(monkeypatch):
+    import io
+    import urllib.error
+
+    calls = []
+
+    def fake(url, key, payload, timeout):
+        calls.append(payload)
+        raise urllib.error.HTTPError(
+            url, 400, "Bad Request", {},
+            io.BytesIO(b'{"error":{"message":"size 512x512 is not supported"}}'))
+
+    monkeypatch.setattr(store, "_request", fake)
+    result = store.test("http://x/v1", "qwen-image-3.0", role="image")
+    assert not result["ok"]
+    assert len(calls) == 1, "it retried on an error that named no format"
+    assert "not supported" in result["error"]

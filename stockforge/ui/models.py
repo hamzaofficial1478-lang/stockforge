@@ -11,6 +11,7 @@ real request to the one you picked, and only then make it the live one.
 from __future__ import annotations
 
 import json
+import re
 import base64
 import io
 import secrets
@@ -247,13 +248,13 @@ def _test_image(base: str, model: str, api_key: str, timeout: int) -> dict:
     # Content as a list of parts, not a bare string. Qwen's image models reject
     # a string outright — "Input should be a valid list: input.messages.0.content"
     # — and this probe had the same fault it exists to catch.
-    payload = {"model": model, "size": "512x512", "n": 1,
+    payload = {"model": model, "size": "512x512", "n": 1,   # separator learned below
                "messages": [{"role": "user", "content": [
                    {"type": "text",
                     "text": "a single plain black circle centred on a white background"}]}]}
     started = time.time()
     try:
-        body = _request(f"{base}/chat/completions", api_key, payload, timeout)
+        body = _post_image(base, api_key, payload, timeout)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")[:300]
         return {"ok": False, "error": f"HTTP {exc.code} — {detail or exc.reason}"}
@@ -271,6 +272,40 @@ def _test_image(base: str, model: str, api_key: str, timeout: int) -> dict:
     return {"ok": True, "took": took, "model": model,
             "scope": f"Draws pictures. Returned an image in {took}s.",
             "reply": found[:80]}
+
+
+_EXPECTED_SIZE = re.compile(r"<\s*width\s*>\s*(.)\s*<\s*height\s*>", re.I)
+
+
+def size_separator(detail: str) -> str:
+    """The character a server wants between width and height, read from its own
+    complaint.
+
+    Qwen answers 512x512 with `Expected format: '<width>*<height>'`, OpenAI's
+    images API wants the x. Rather than keeping a list of which vendor uses
+    which — a list that is wrong the moment somebody adds a third — the message
+    names the separator and this takes it from there.
+    """
+    found = _EXPECTED_SIZE.search(detail or "")
+    return found.group(1) if found else ""
+
+
+def _post_image(base: str, api_key: str, payload: dict, timeout: int):
+    """One generation request, retried once with the separator the server asked
+    for. Costs nothing when the first guess was right."""
+    try:
+        return _request(f"{base}/chat/completions", api_key, payload, timeout)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 400:
+            raise
+        detail = exc.read().decode(errors="replace")
+        wanted = size_separator(detail)
+        size = str(payload.get("size") or "")
+        if not wanted or not size or wanted in size:
+            raise _replay(exc, detail)
+        retried = json.loads(json.dumps(payload))
+        retried["size"] = re.sub(r"[^0-9]", wanted, size, count=1)
+        return _request(f"{base}/chat/completions", api_key, retried, timeout)
 
 
 def _find_image(body) -> str:

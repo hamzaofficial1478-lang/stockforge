@@ -545,6 +545,11 @@
         invent a shape. Tracing produces the jagged, muddy vectors both agencies reject on
         sight, and a made-up pumpkin is not the one that sold. So it leaves the gap and
         tells you, which is the only honest answer it has.</p>
+        <p><b>Try the free way first.</b> Most of these are already drawn &mdash; in your
+        own cards. The analyser recorded where each one sits, so it can cut them straight
+        out as transparent pictures. No model, no cost, and it is your artwork rather than
+        something invented that merely resembles it. They come out as pictures, not vectors,
+        so you still trace the good ones &mdash; but tracing beats drawing from nothing.</p>
         <p><b>What happens next, and it does need you.</b> Nothing on this list clears
         itself. Someone has to draw each one once, as a plain SVG on a 0&ndash;100 square,
         and drop it in <span class="mono">assets/motifs/</span>. Press the button below and
@@ -556,9 +561,12 @@
         unblocked, for good, across the whole catalogue.</p>
       </div>
       <div class="row" style="margin-top:12px">
-        <button class="btn" onclick="doScaffold()">Write me a starter file for each</button>
-        <span id="scaffold-msg" class="mono"></span>
+        <button class="btn primary" onclick="doHarvest()">Cut these out of my own designs</button>
+        <button class="btn" onclick="doScaffold()">Write me an empty starter file for each</button>
       </div>
+      <p class="hint" id="harvest-msg" style="margin-top:8px"></p>
+      <div id="harvest-out"></div>
+      <span id="scaffold-msg" class="mono"></span>
       <div id="gaps-list" style="margin-top:14px"></div>
     </div>
 
@@ -1178,6 +1186,36 @@ function connBackendChanged(){
   note.innerHTML = b && b.ready
     ? `Signed in &mdash; no key needed. Just name the model, or leave it blank for the default.`
     : `${esc((b && b.fix) || 'Not signed in yet.')}`;
+}
+
+async function doHarvest(){
+  const msg = $('harvest-msg');
+  msg.textContent = 'cutting…';
+  $('harvest-out').innerHTML = '';
+  try {
+    const r = await api('/api/harvest', {});
+    if (r.error) return msg.textContent = r.error;
+    if (!r.cut){
+      msg.textContent = `None of the ${r.of} could be cut out — the flattened images they `
+        + `were read from are gone. Run those designs again, or draw them.`;
+      return;
+    }
+    msg.innerHTML = `Cut <b>${r.cut}</b> of ${r.of} into <span class="mono">${esc(r.folder)}</span>. `
+      + `These are pictures, not vectors — keep the good ones and trace them.`;
+    $('harvest-out').innerHTML = r.items.map(i => `
+      <div class="gap">
+        <div class="row" style="gap:10px">
+          <img src="${fileURL(i.file)}" alt="" style="width:72px;height:72px;object-fit:contain;
+               background:repeating-conic-gradient(#0001 0 25%,transparent 0 50%) 0 0/16px 16px">
+          <span>
+            <b>${esc(i.description)}</b>
+            <br><span class="hint">${i.designs} design${i.designs === 1 ? '' : 's'} waiting
+              &middot; ${Math.round(i.coverage * 100)}% of the cut is the subject
+              ${i.note ? '<br>' + esc(i.note) : ''}</span>
+          </span>
+        </div>
+      </div>`).join('');
+  } catch (e){ msg.textContent = String(e); }
 }
 
 async function doScaffold(){

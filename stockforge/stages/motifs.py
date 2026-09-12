@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-from ..schema import DesignSpec, MotifElement, MotifKind
+from ..schema import DesignSpec, MotifElement, MotifKind, Box
 
 log = logging.getLogger("stockforge.motifs")
 
@@ -286,6 +286,27 @@ SAME_GAP = 0.4
 
 
 @dataclass
+class Sighting:
+    """One place a missing motif is actually drawn, in a design of the owner's.
+
+    The analyser already recorded where every motif sits, and since flattening
+    was fixed those coordinates land on the card rather than on a photograph of
+    it. So the first answer to "we have no drawing for this" is not to invent
+    one — it is to cut out the one that is already there and sold.
+    """
+
+    design_id: str
+    page: int
+    box: "Box"
+    source_image: str
+    description: str
+
+    @property
+    def area(self) -> float:
+        return self.box.w * self.box.h
+
+
+@dataclass
 class Gap:
     """One thing the library has not got, and what it is costing.
 
@@ -302,6 +323,10 @@ class Gap:
     variants: list[str] = field(default_factory=list)
     nearest_id: str | None = None    # the closest thing already in the library
     nearest_score: float = 0.0
+    # Where this thing actually appears, so it can be cut out of the owner's
+    # own artwork rather than drawn or generated. Best first — biggest on the
+    # page, because a motif rendered large is the one worth tracing.
+    sightings: list["Sighting"] = field(default_factory=list)
 
     @property
     def slug(self) -> str:
@@ -369,12 +394,20 @@ def gaps(specs: Iterable[DesignSpec], motifs_dir: Path,
                           and _overlap(tokens, c["tokens"]) >= SAME_GAP), None)
             if found is None:
                 found = {"kind": el.motif.value, "tokens": set(), "wordings": [],
-                         "designs": set(), "nearest_id": None, "nearest_score": 0.0}
+                         "designs": set(), "nearest_id": None, "nearest_score": 0.0,
+                         "sightings": []}
                 clusters.append(found)
 
             found["tokens"] |= tokens
             found["wordings"].append(el.description)
             found["designs"].add(design)
+            page_index, page = next(
+                ((i, p) for i, p in enumerate(spec.pages) if el in p.elements),
+                (0, spec.pages[0] if spec.pages else None))
+            if page is not None and page.source_image:
+                found["sightings"].append(Sighting(
+                    design_id=design, page=page_index, box=el.box,
+                    source_image=page.source_image, description=el.description))
             if best_score > found["nearest_score"]:
                 found["nearest_score"] = best_score
                 found["nearest_id"] = best.library_id if best else None
@@ -390,6 +423,7 @@ def gaps(specs: Iterable[DesignSpec], motifs_dir: Path,
             seen=len(c["wordings"]),
             variants=[w for w in counted if w != top][:6],
             nearest_id=c["nearest_id"], nearest_score=round(c["nearest_score"], 3),
+            sightings=sorted(c["sightings"], key=lambda s: -s.area)[:8],
         ))
     return sorted(out, key=lambda g: (-g.designs, -g.seen, g.description))
 
@@ -467,3 +501,133 @@ def resolve(spec: DesignSpec, motifs_dir: Path,
         el.match_score = round(best, 3)
 
     return unmatched
+
+
+# --------------------------------------------------------------------------
+# cutting a motif out of the owner's own artwork
+# --------------------------------------------------------------------------
+
+HARVEST_DIR = "_harvested"
+
+
+@dataclass
+class Harvested:
+    """One motif cut out of a design, ready to look at and trace."""
+
+    gap: "Gap"
+    path: Path
+    width: int
+    height: int
+    coverage: float          # how much of the crop is actually the subject
+    note: str = ""
+
+
+def _alpha_from_paper(crop):
+    """Make the paper transparent and leave the drawing.
+
+    A motif on a card sits on the card's own background, which is near enough
+    uniform and near enough the colour of the crop's corners. So the corners
+    say what the paper is, and everything close to it becomes transparent.
+
+    Deliberately not a model and not a threshold on brightness: a white ghost
+    on a cream card would vanish under "remove the light pixels", and an
+    orange pumpkin on white would keep a grey halo under a global threshold.
+    """
+    import cv2
+    import numpy as np
+
+    h, w = crop.shape[:2]
+    patch = max(2, min(h, w) // 12)
+    corners = np.concatenate([
+        crop[:patch, :patch].reshape(-1, 3), crop[:patch, -patch:].reshape(-1, 3),
+        crop[-patch:, :patch].reshape(-1, 3), crop[-patch:, -patch:].reshape(-1, 3),
+    ])
+    paper = np.median(corners, axis=0)
+
+    distance = np.linalg.norm(crop.astype(np.float32) - paper, axis=2)
+    # Otsu on the distance, so the cut sits between paper and ink wherever they
+    # happen to be, rather than at a number chosen here.
+    scaled = np.clip(distance / max(distance.max(), 1e-6) * 255, 0, 255).astype(np.uint8)
+    _, mask = cv2.threshold(scaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Close pinholes inside the drawing, then drop specks of dust outside it.
+    k = max(3, (min(h, w) // 60) | 1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+
+    # Keep only what is connected to the middle: the analyser's box is generous
+    # and usually catches a corner of something else.
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    if count > 1:
+        middle = labels[h // 2, w // 2]
+        keep = middle if middle != 0 else max(
+            range(1, count), key=lambda i: stats[i, cv2.CC_STAT_AREA])
+        mask = np.where(labels == keep, 255, 0).astype(np.uint8)
+
+    # A one-pixel feather, or every traced edge inherits the paper's colour.
+    mask = cv2.GaussianBlur(mask, (3, 3), 0)
+    return np.dstack([crop, mask])
+
+
+def harvest(gap: "Gap", motifs_dir: Path, pad: float = 0.06) -> Harvested | None:
+    """Cut the best sighting of this gap out of the design it appears in.
+
+    Free, exact, and it is the owner's own artwork rather than something
+    invented that merely resembles it. Returns None when there is nothing to
+    cut — no sighting, or the design's flattened image has gone.
+    """
+    import cv2
+    import numpy as np
+
+    for sighting in gap.sightings:
+        source = Path(sighting.source_image)
+        if not source.is_file():
+            continue
+        image = cv2.imread(str(source), cv2.IMREAD_COLOR)
+        if image is None:
+            continue
+
+        ih, iw = image.shape[:2]
+        box = sighting.box
+        # A little margin: the analyser's boxes are tight and a trace wants the
+        # whole stroke, including the bit that falls just outside.
+        x0 = max(0, int((box.x - box.w * pad) * iw))
+        y0 = max(0, int((box.y - box.h * pad) * ih))
+        x1 = min(iw, int((box.x + box.w * (1 + pad)) * iw))
+        y1 = min(ih, int((box.y + box.h * (1 + pad)) * ih))
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            continue
+
+        crop = image[y0:y1, x0:x1]
+        cut = _alpha_from_paper(crop)
+        coverage = float((cut[:, :, 3] > 128).mean())
+
+        folder = motifs_dir / HARVEST_DIR
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{gap.slug or gap.kind}-{sighting.design_id[:8]}.png"
+        cv2.imwrite(str(path), cut)
+
+        note = ""
+        if coverage < 0.04:
+            note = ("almost nothing was left after the background came off — "
+                    "the box may be mostly paper, or the drawing may be very pale")
+        elif coverage > 0.92:
+            note = ("almost nothing came off — this may be a photographic area "
+                    "rather than a drawing on a background")
+        return Harvested(gap=gap, path=path, width=x1 - x0, height=y1 - y0,
+                         coverage=round(coverage, 3), note=note)
+    return None
+
+
+def harvest_all(gaps_found: list["Gap"], motifs_dir: Path) -> list[Harvested]:
+    """Cut out every gap that can be cut out, best-known sighting first."""
+    out: list[Harvested] = []
+    for gap in gaps_found:
+        try:
+            got = harvest(gap, motifs_dir)
+        except Exception as exc:                            # pragma: no cover
+            log.warning("could not harvest %r: %s", gap.description[:50], exc)
+            continue
+        if got is not None:
+            out.append(got)
+    return out

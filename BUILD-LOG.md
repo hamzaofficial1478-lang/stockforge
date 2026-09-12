@@ -579,3 +579,51 @@ than no test, because it looks like an infrastructure problem. The loop is
 bounded now and the same mutation fails in two seconds.
 
 475 tests pass.
+
+---
+
+## 10. Two more layers of the Qwen onion, and harvesting
+
+The connection test failed again, with a different error — which was progress.
+The content-as-parts fix had worked and exposed the next thing:
+
+    HTTP 400 — {"error":{"message":"Expected format: '<width>*<height>'"}}
+
+Qwen wants 512*512, OpenAI's images API wants 512x512. Rather than keeping a
+table of which vendor uses which — wrong the moment a third appears — the
+server names the separator in its own complaint, so that is where it is read
+from. Only that error earns a retry; anything else is a real answer.
+
+### Harvest
+
+Then the thing that should have come first. Seven motifs were "missing" and
+every one of them was already drawn — in the owner's own cards, which is where
+the descriptions came from in the first place. The analyser had recorded the
+box each sits in and nothing had ever used it.
+
+`stockforge motifs harvest` cuts them out. Free, exact, the owner's own
+artwork. Three decisions in the cutting are worth writing down:
+
+**The corners say what the paper is.** Not a brightness threshold — a white
+ghost on a cream card vanishes under "remove the light pixels". The median of
+the four corner patches is the background, and distance from it is what gets
+thresholded, with Otsu choosing where rather than a number chosen here.
+
+**Only what touches the middle is kept.** The analyser's boxes are generous and
+usually catch a corner of something else. Measured on the fixture: with that
+step the band above the motif is 0.0, without it 12.7 — the heading's thin
+strokes surviving. My first assertion was `< 40` and passed either way, which
+is a test that looks like a test. It is `< 3` now, sitting between two measured
+numbers rather than at a round one.
+
+**Colour is kept, not a silhouette.** Somebody has to look at these and decide
+whether they are worth tracing, and a black blob tells them nothing.
+
+What it will not do is invent. No sighting, or a missing flattened image, means
+None — and a crop that lost nothing to the background removal says so, because
+that is a photographic area rather than a drawing on paper.
+
+The cuts land in `_harvested/`, which the vector matcher does not read. A PNG
+in the motif folder would be found by nothing and confuse everything.
+
+509 tests pass.

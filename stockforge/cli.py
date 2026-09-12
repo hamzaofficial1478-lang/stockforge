@@ -108,6 +108,8 @@ def cmd_motifs(args, pipe: Pipeline) -> int:
 
     if args.action == "todo":
         return cmd_motifs_todo(args, pipe)
+    if args.action == "harvest":
+        return cmd_motifs_harvest(args, pipe)
 
     library = motifs_stage.load(settings.motifs_dir)
     if not library:
@@ -282,6 +284,48 @@ def cmd_spec(args, pipe: Pipeline) -> int:
     return 0
 
 
+def cmd_motifs_harvest(args, pipe: Pipeline) -> int:
+    """Cut every missing motif out of the design it already appears in.
+
+    The first answer to "the library has no drawing for this" is not to draw
+    one and not to generate one — it is that the drawing already exists, in the
+    card that sold, and the analyser wrote down exactly where. This costs
+    nothing, calls nothing, and gives back the owner's own artwork rather than
+    something that merely resembles it.
+    """
+    from .stages import motifs as motifs_stage
+
+    found = pipe.motif_gaps()
+    if not found:
+        total = len(pipe.store.designs())
+        print("nothing missing." if total else
+              "no designs have been read yet, so there is nothing to cut out. "
+              "`stockforge pull` and `stockforge run` first.")
+        return 0
+
+    cut = motifs_stage.harvest_all(found[:args.limit], settings.motifs_dir)
+    if not cut:
+        print(f"{len(found)} motifs are missing, but none could be cut out — "
+              f"the flattened images they were read from are gone, so there is "
+              f"nothing to crop. Re-run those designs, or draw them.")
+        return 0
+
+    folder = settings.motifs_dir / motifs_stage.HARVEST_DIR
+    print(f"cut {len(cut)} of {len(found)} into {folder}\n")
+    for got in cut:
+        print(f"  {got.path.name:<46} {got.width:>4}x{got.height:<4} "
+              f"subject {got.coverage:>4.0%}  {got.gap.designs} design(s) waiting")
+        if got.note:
+            print(f"  {'':<46} {got.note}")
+
+    missed = len(found[:args.limit]) - len(cut)
+    if missed:
+        print(f"\n{missed} had no usable sighting and still need drawing.")
+    print("\nThese are pictures, not vectors. Look at them, keep the good ones, "
+          "\nand trace them to SVG on a 0..100 square to go in the library.")
+    return 0
+
+
 def cmd_motifs_todo(args, pipe: Pipeline) -> int:
     """The work list. Every decorative element nothing in the library could
     answer, gathered across the whole catalogue and ranked by how many designs
@@ -358,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("action", choices=["scan", "list", "install", "download"])
 
     m = sub.add_parser("motifs", help="inspect the motif library and grow it")
-    m.add_argument("action", choices=["list", "match", "todo"])
+    m.add_argument("action", choices=["list", "match", "todo", "harvest"])
     m.add_argument("description", nargs="?", help="for `match` — what the analyser saw")
     m.add_argument("--kind", default="icon",
                    help="for `match` — botanical, seasonal, frame, ...")

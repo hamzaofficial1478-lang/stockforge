@@ -493,6 +493,25 @@ class Handler(BaseHTTPRequestHandler):
             pipe.store.set_design_mix(did, mix, derive)
             return self._json({"design_id": did, "mix": mix, "derive": derive})
 
+        if route == "/api/harvest":
+            """Cut the missing motifs out of the designs they appear in."""
+            from ..stages import motifs as motifs_stage
+
+            pipe = Pipeline(self.cfg)
+            try:
+                gaps = pipe.motif_gaps(limit=int(body.get("limit") or 50))
+                cut = motifs_stage.harvest_all(gaps, self.cfg.motifs_dir)
+            except Exception as exc:
+                return self._json({"error": str(exc)}, 400)
+            return self._json({
+                "cut": len(cut), "of": len(gaps),
+                "folder": str(self.cfg.motifs_dir / motifs_stage.HARVEST_DIR),
+                "items": [{"name": g.path.name, "file": str(g.path),
+                           "coverage": g.coverage, "note": g.note,
+                           "description": g.gap.description,
+                           "designs": g.gap.designs} for g in cut[:24]],
+            })
+
         if route == "/api/scaffold":
             """Write a tagged stub for every gap, so drawing them is opening a
             file rather than working out what to make and where to put it."""
