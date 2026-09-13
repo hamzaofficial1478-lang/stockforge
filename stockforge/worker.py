@@ -84,25 +84,32 @@ class Progress:
 
 
 def lane_providers(cfg: Settings, lanes: int) -> list:
-    """One provider per lane, each a different model where you have one.
+    """What each lane talks to: its own model first, the others behind it.
 
-    A second vision model only buys speed if something actually uses it. Run
-    two lanes against one server and they queue behind each other; the machine
-    is no busier and the wall clock barely moves. So lanes are handed the saved
-    vision connections in turn, and only fall back to sharing when there are
-    fewer models than lanes.
+    Two jobs, and they were confused for one. Lanes spread *different* designs
+    across models, which buys throughput across a catalogue. Failover hands
+    *one* design to another model when the first stops answering, which is what
+    saves a design instead of losing it — and with a single lane, which is how
+    most runs go, lanes bought nothing at all while a perfectly good second
+    model sat idle and the design failed:
+
+        failed — meta/muse-glimmer-30b@... could not read a response:
+                 The read operation timed out
+
+    So every lane gets the whole list, rotated so it starts on a different
+    model. One lane and two models is now a chain rather than a single point of
+    failure; four lanes and two models still spread the work.
 
     Returns a list of providers, or None entries meaning "use whatever the
-    environment says", which is what a single-lane run has always done.
+    environment says", which is what a run with one model has always done.
     """
-    if lanes <= 1:
-        return [None]
-
-    # The connection store lives under ui/ because that is where it is edited,
-    # but it is the record of which models exist, so this is the right place to
-    # read it from.
+    lanes = max(1, lanes)
     try:
+        # The connection store lives under ui/ because that is where it is
+        # edited, but it is the record of which models exist, so this is the
+        # right place to read it from.
         from .ui import models as connections
+        from .providers.failover import chain
         from .providers.openai_compat import OpenAICompatProvider
     except Exception:                                       # pragma: no cover
         return [None] * lanes
@@ -114,23 +121,26 @@ def lane_providers(cfg: Settings, lanes: int) -> list:
     if not saved:                                   # nothing live: fall back
         saved = [c for c in connections.load(cfg.root)
                  if c.role == "vision" and c.model and c.base_url]
-    if not saved:
-        return [None] * lanes
 
     built = []
     for c in saved:
         try:
             built.append(OpenAICompatProvider(
-                base_url=c.base_url, model=c.model, api_key=c.api_key or None))
+                base_url=c.base_url, model=c.model, api_key=c.api_key or None,
+                silence=cfg.silence))
         except Exception as exc:                            # pragma: no cover
             log.warning("lane provider %s unusable: %s", c.model, exc)
-    if not built:
+
+    # One model, or none: nothing to fall back to, so leave the environment
+    # alone. It is already pointed at the live connection.
+    if len(built) < 2:
         return [None] * lanes
 
     if len(built) < lanes:
-        log.info("%d lanes across %d vision model(s) — some will share",
+        log.info("%d lanes across %d vision models — some will share",
                  lanes, len(built))
-    return [built[i % len(built)] for i in range(lanes)]
+    return [chain(built[i % len(built):] + built[:i % len(built)])
+            for i in range(lanes)]
 
 
 class Worker:
@@ -335,7 +345,17 @@ class Worker:
             from . import providers as provider_registry
             provider_registry.use_in_this_thread("vision", provider)
             provider_registry.use_in_this_thread("reason", provider)
-            lane.model = getattr(provider, "name", "")
+            # A switch has to be visible. A model going quiet and another
+            # picking the design up looks, from the queue, exactly like one
+            # design taking an unexplained age — so it is said out loud, and
+            # the lane's model label follows the one actually doing the work.
+            def switched(taking_over, why, lane=lane):
+                lane.model = getattr(taking_over, "name", "")
+                self._report(f"{why} — handed to {lane.model}", lane)
+
+            if hasattr(provider, "on_switch"):
+                provider.on_switch = switched
+            lane.model = getattr(getattr(provider, "first", provider), "name", "")
         try:
             pipe = Pipeline(self.cfg, on_progress=lambda step: self._report(step, lane))
             self._run(pipe, limit, lane, index)

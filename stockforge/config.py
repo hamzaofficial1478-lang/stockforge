@@ -241,6 +241,14 @@ class Settings:
     # have a second model for them to use.
     workers: int = field(default_factory=lambda: _i("SF_WORKERS", 1), metadata={"env": "SF_WORKERS"})
 
+    # --- when to give up on a model and use another -----------------------
+    # How long a model may send nothing at all before the design is handed to
+    # the next live one. Not a cap on how long it may think: requests are
+    # streamed, so this measures silence on the wire rather than the total,
+    # and a model that keeps answering may take as long as the card needs.
+    # Two minutes of nothing is a model that has stopped, not one that is busy.
+    silence: int = field(default_factory=lambda: _i("SF_VISION_SILENCE", 120), metadata={"env": "SF_VISION_SILENCE"})
+
     # --- did we actually rebuild it ---------------------------------------
     # How much of a surface may be placed photograph before we stop calling it
     # a rebuild. A design the model reads as one big photographic area comes

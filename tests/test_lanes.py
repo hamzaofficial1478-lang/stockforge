@@ -119,6 +119,18 @@ def test_one_lane_uses_whatever_the_environment_says(tmp_path):
     assert lane_providers(cfg, 1) == [None]
 
 
+def _models(provider):
+    """The models a lane will actually try, in order.
+
+    A lane is handed a chain now rather than a single provider, so a test that
+    asks "which model" has to say which one it means: the first is the one the
+    lane starts on, the rest are what it falls back to.
+    """
+    if provider is None:
+        return []
+    return [p.model for p in getattr(provider, "providers", [provider])]
+
+
 def test_lanes_are_handed_the_saved_vision_models(tmp_path):
     from stockforge.ui import models as connections
 
@@ -130,8 +142,11 @@ def test_lanes_are_handed_the_saved_vision_models(tmp_path):
                                   "base_url": "http://b/v1"})
 
     built = lane_providers(cfg, 2)
-    assert [p.model for p in built] == ["model-a", "model-b"], (
-        "two lanes were not given two different models")
+    assert [_models(p)[0] for p in built] == ["model-a", "model-b"], (
+        "two lanes were not started on two different models")
+    assert [_models(p) for p in built] == [["model-a", "model-b"],
+                                           ["model-b", "model-a"]], (
+        "a lane has nothing to fall back to when its own model goes quiet")
 
 
 def test_more_lanes_than_models_share_rather_than_fail(tmp_path):
@@ -143,7 +158,10 @@ def test_more_lanes_than_models_share_rather_than_fail(tmp_path):
                                   "base_url": "http://a/v1"})
     built = lane_providers(cfg, 3)
     assert len(built) == 3
-    assert {p.model for p in built} == {"only-one"}
+    # One model is no chain — the environment is already pointed at it, and
+    # wrapping a single provider in a fallback that falls back to nothing only
+    # adds a layer and a confusing name.
+    assert built == [None, None, None]
 
 
 def test_a_text_only_connection_is_not_handed_to_a_vision_lane(tmp_path):
@@ -155,7 +173,8 @@ def test_a_text_only_connection_is_not_handed_to_a_vision_lane(tmp_path):
                                   "base_url": "http://a/v1"})
     connections.upsert(cfg.root, {"model": "writer", "role": "text",
                                   "base_url": "http://b/v1"})
-    assert {p.model for p in lane_providers(cfg, 2)} == {"reader"}
+    assert lane_providers(cfg, 2) == [None, None], (
+        "the text model was counted as something a reading lane could use")
 
 
 def test_a_lane_model_only_applies_to_its_own_thread():
@@ -363,7 +382,8 @@ def test_lanes_take_the_models_that_were_made_live(tmp_path):
     connections.activate(cfg.root, live_a.id)
     connections.activate(cfg.root, live_b.id)
 
-    assert {p.model for p in lane_providers(cfg, 2)} == {"live-a", "live-b"}
+    assert {m for p in lane_providers(cfg, 2) for m in _models(p)} == {"live-a", "live-b"}, (
+        "a model that was deliberately stood down was handed to a lane")
 
 
 def test_with_nothing_made_live_the_saved_models_are_used_anyway(tmp_path):
@@ -374,4 +394,7 @@ def test_with_nothing_made_live_the_saved_models_are_used_anyway(tmp_path):
     cfg.ensure_dirs()
     connections.upsert(cfg.root, {"model": "never-activated", "role": "vision",
                                   "base_url": "http://a/v1"})
-    assert {p.model for p in lane_providers(cfg, 2)} == {"never-activated"}
+    connections.upsert(cfg.root, {"model": "also-never", "role": "vision",
+                                  "base_url": "http://b/v1"})
+    assert {m for p in lane_providers(cfg, 2) for m in _models(p)} == {
+        "never-activated", "also-never"}

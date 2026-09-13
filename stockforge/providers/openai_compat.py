@@ -44,6 +44,20 @@ def model_options(model: str) -> dict:
 _TRANSIENT = {408, 409, 425, 429, 500, 502, 503, 504}
 
 
+class Silent(ProviderError):
+    """The model stopped sending anything for longer than we agreed to wait.
+
+    Distinct from every other failure because it is the one that says nothing
+    about the design: the request was fine, the model simply went quiet. That
+    is precisely the case where handing the work to another model is right.
+    """
+
+    def __init__(self, name: str, seconds: float):
+        super().__init__(f"{name} sent nothing for {seconds:.0f}s")
+        self.provider = name
+        self.seconds = seconds
+
+
 class _HTTPFail(Exception):
     def __init__(self, code: int, detail: str, retry_after: float | None = None):
         super().__init__(f"HTTP {code}: {detail}")
@@ -65,6 +79,8 @@ class OpenAICompatProvider(VisionProvider):
         max_image_bytes: int = 180_000,
         retries: int = 2,
         backoff: float = 2.0,
+        silence: int = 120,
+        stream: bool = True,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -76,6 +92,10 @@ class OpenAICompatProvider(VisionProvider):
         self.max_image_bytes = max_image_bytes
         self.retries = retries
         self.backoff = backoff
+        # How long the model may say nothing at all before we give up on it and
+        # let another one have the design. Not a cap on how long it may think.
+        self.silence = silence
+        self.stream = stream
         self.name = f"{model}@{self.base_url}"
 
     # -- one request over the wire ------------------------------------
@@ -91,7 +111,7 @@ class OpenAICompatProvider(VisionProvider):
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return json.loads(resp.read())
+                return {"raw": json.loads(resp.read()), "first_token": None}
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")[:500]
             after = exc.headers.get("Retry-After") if exc.headers else None
@@ -103,7 +123,103 @@ class OpenAICompatProvider(VisionProvider):
         except urllib.error.URLError as exc:
             raise ProviderError(f"{self.name} unreachable: {exc.reason}") from exc
         except (TimeoutError, OSError, ValueError) as exc:
-            raise ProviderError(f"{self.name} could not read a response: {exc}") from exc
+            raise Silent(self.name, self.silence if self.stream else self.timeout) from exc
+
+    def _send(self, payload: dict) -> dict:
+        """Stream where we can, and fall back to a plain call where we cannot.
+
+        A server that refuses stream:true is answering a question about dialect,
+        not about this design, so it must not count as the model failing.
+        """
+        if not self.stream:
+            return self._post(payload)
+        try:
+            return self._stream(payload)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace")[:500]
+            if exc.code == 400 and "stream" in detail.lower():
+                log.info("[%s] will not stream; asking for the whole answer instead",
+                         self.model)
+                self.stream = False
+                return self._post(payload)
+            after = exc.headers.get("Retry-After") if exc.headers else None
+            try:
+                after = float(after) if after else None
+            except ValueError:
+                after = None
+            raise _HTTPFail(exc.code, detail, after) from exc
+        except urllib.error.URLError as exc:
+            raise ProviderError(f"{self.name} unreachable: {exc.reason}") from exc
+        except (TimeoutError, OSError) as exc:
+            raise Silent(self.name, self.silence) from exc
+
+    def _stream(self, payload: dict) -> dict:
+        """One request, read as it arrives, giving up on silence rather than
+        on the clock.
+
+        A plain chat-completions call sends nothing at all until the whole
+        answer is ready, so the only timeout you can set is on the total, and
+        the total is exactly the thing you must not cap: a vision model reading
+        a dense card legitimately takes minutes, and cutting it off at five
+        loses work that was going to succeed. What you actually want to catch
+        is a model that has stopped talking to you.
+
+        Streaming separates the two. The socket timeout then applies to the gap
+        between pieces rather than to the whole reply, so `silence` seconds with
+        nothing on the wire is what fails — and a model that keeps sending can
+        take as long as it likes.
+        """
+        body = {**payload, "stream": True}
+        req = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(body).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+                **({"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}),
+            },
+        )
+        pieces: list[str] = []
+        finish = None
+        usage = {}
+        started = time.monotonic()
+        first: float | None = None
+
+        with urllib.request.urlopen(req, timeout=self.silence) as resp:
+            kind = (resp.headers.get("Content-Type") or "").lower()
+            if "text/event-stream" not in kind:
+                # The server ignored stream:true and answered normally. Not a
+                # fault — take the answer it gave rather than failing over to
+                # another model for a difference in dialect.
+                return {"raw": json.loads(resp.read()), "first_token": None}
+
+            for line in resp:
+                line = line.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except ValueError:
+                    continue
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
+                for choice in chunk.get("choices") or []:
+                    if choice.get("finish_reason"):
+                        finish = choice["finish_reason"]
+                    text = (choice.get("delta") or {}).get("content")
+                    if text:
+                        if first is None:
+                            first = time.monotonic() - started
+                        pieces.append(text)
+
+        return {"raw": {
+            "choices": [{"message": {"content": "".join(pieces)},
+                         "finish_reason": finish or "stop"}],
+            "usage": usage,
+        }, "first_token": first}
 
     def _payload(self, system: str, user_text: str, images: list[Path],
                  json_mode: bool, extras: bool, edge: int, budget: int,
@@ -158,7 +274,7 @@ class OpenAICompatProvider(VisionProvider):
                                     temperature=temperature, max_tokens=max_tokens, **rung)
             for attempt in range(self.retries + 1):
                 try:
-                    body = self._post(payload)
+                    sent = self._send(payload)
                 except _HTTPFail as fail:
                     # A server that does not know response_format says so with a
                     # 400. That is not a fault, it is a dialect — drop it and
@@ -178,7 +294,7 @@ class OpenAICompatProvider(VisionProvider):
                 else:
                     if step:
                         log.info("[%s] succeeded after stepping the request down", self.model)
-                    return self._answer(body, payload, system, user_text, images, kw, started)
+                    return self._answer(sent, payload, system, user_text, images, kw, started)
             if last and last.code in _TRANSIENT and step + 1 < len(rungs):
                 log.warning("[%s] HTTP %d persisted — retrying with a smaller request",
                             self.model, last.code)
@@ -195,13 +311,17 @@ class OpenAICompatProvider(VisionProvider):
 
     # -- reading the reply ---------------------------------------------
 
-    def _answer(self, body: dict, payload: dict, system: str, user_text: str,
+    def _answer(self, sent: dict, payload: dict, system: str, user_text: str,
                 images: list[Path], kw: dict, started: float) -> str:
+        body = sent["raw"]
         try:
             choice = body["choices"][0]
             content = choice["message"]["content"]
-            log.info("[%s] response in %.1fs; finish=%s; output tokens=%s",
-                     self.model, time.monotonic() - started, choice.get("finish_reason", "unknown"),
+            first = sent.get("first_token")
+            log.info("[%s] %sfinished in %.1fs; finish=%s; output tokens=%s",
+                     self.model,
+                     f"answered in {first:.1f}s, " if first is not None else "",
+                     time.monotonic() - started, choice.get("finish_reason", "unknown"),
                      (body.get("usage") or {}).get("completion_tokens", "unknown"))
             if choice.get("finish_reason") == "length":
                 budget = payload["max_tokens"]
@@ -241,6 +361,9 @@ def from_env(prefix: str = "SF_VISION") -> OpenAICompatProvider:
         max_image_bytes=int(os.environ.get(f"{prefix}_MAX_IMAGE_BYTES", 180_000)),
         retries=int(os.environ.get(f"{prefix}_RETRIES", 2)),
         backoff=float(os.environ.get(f"{prefix}_BACKOFF", 2.0)),
+        silence=int(os.environ.get(f"{prefix}_SILENCE", 120)),
+        stream=os.environ.get(f"{prefix}_STREAM", "1").strip().lower()
+        not in {"0", "false", "no", "off"},
     )
 
 
@@ -278,7 +401,7 @@ BACKEND = register(Backend(
     name="openai",
     label="OpenAI-compatible server",
     build=from_env,
-    settings=("BASE_URL", "MAX_IMAGE_BYTES", "BACKOFF"),
+    settings=("BASE_URL", "MAX_IMAGE_BYTES", "BACKOFF", "SILENCE", "STREAM"),
     doc=("Anything speaking OpenAI's chat-completions shape — which is most "
          "things. Run a model yourself with Ollama, vLLM, NIM or LM Studio, or "
          "point it at a hosted service. This is the default and costs nothing "

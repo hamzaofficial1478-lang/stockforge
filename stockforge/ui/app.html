@@ -208,6 +208,15 @@
       <div class="grid">
         <div><label for="SF_VISION_BACKEND">Model backend</label>
           <select id="SF_VISION_BACKEND" onchange="backendChanged()"></select></div>
+        <div><label for="SF_VISION_SILENCE">Give up on a model after</label>
+          <select id="SF_VISION_SILENCE">
+            <option value="60">1 minute of silence</option>
+            <option value="120">2 minutes of silence (default)</option>
+            <option value="300">5 minutes of silence</option>
+            <option value="900">15 minutes &mdash; barely ever</option>
+          </select>
+          <p class="hint" style="margin:4px 0 0">Silence, not thinking time. A model still
+            answering is never cut off.</p></div>
         <div><label for="SF_WORKERS">Designs at once</label>
           <select id="SF_WORKERS" onchange="laneNote()">
             <option value="1">1 &mdash; one at a time (default)</option>
@@ -596,7 +605,7 @@ async function loadHealth(){
 }
 
 const CFG_KEYS = ['SF_PRESERVE_ORIGINAL','SF_VISION_BACKEND','SF_VISION_EFFORT','SF_WORKERS',
-  'SF_ETSY_API_KEY','SF_MIX','SF_DERIVE_STRENGTH','SF_DISTINCT_THRESHOLD',
+  'SF_ETSY_API_KEY','SF_VISION_SILENCE','SF_MIX','SF_DERIVE_STRENGTH','SF_DISTINCT_THRESHOLD',
   'SF_DERIVE_ROUNDS','SF_MOTIF_THRESHOLD',
   'SF_FTP_ADOBE_HOST','SF_FTP_ADOBE_USER','SF_FTP_ADOBE_PASS',
   'SF_FTP_SHUTTERSTOCK_HOST','SF_FTP_SHUTTERSTOCK_USER','SF_FTP_SHUTTERSTOCK_PASS'];
@@ -747,14 +756,15 @@ function laneNote(){
   if (!note) return;
   const live = CONNS.filter(c => c.role === 'vision' && c.active).length;
   const lanes = parseInt($('SF_WORKERS').value || '1', 10);
-  if (live > lanes)
-    note.innerHTML = `<b>${live} reading models are live.</b> Set this to ${live} `
-      + `and save, or they take turns on ${lanes === 1 ? 'one lane' : `${lanes} lanes`}.`;
-  else if (lanes > live)
-    note.innerHTML = `<b>Only ${live} reading model${live === 1 ? ' is' : 's are'} live.</b> `
-      + `The spare lanes queue behind ${live === 1 ? 'it' : 'them'}. Add another below.`;
+  if (live < 2)
+    note.innerHTML = `<b>One reading model.</b> Add a second below and a design `
+      + `moves to it instead of failing when this one goes quiet.`;
+  else if (live > lanes)
+    note.innerHTML = `<b>${live} models live</b>, each backing the others up. `
+      + `Raise this to ${live} to work ${live} designs at once as well.`;
   else
-    note.textContent = 'One live reading model per lane.';
+    note.innerHTML = `<b>${live} models live</b>, ${lanes} design${lanes === 1 ? '' : 's'} `
+      + `at once, each lane backed by the others.`;
 }
 
 async function loadConns(){
