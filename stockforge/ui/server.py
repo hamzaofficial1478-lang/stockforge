@@ -534,6 +534,31 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"removed": len(removed), "files": files,
                                "design_ids": removed})
 
+        if route == "/api/make":
+            """New designs from what has already been read.
+
+            The whole point of the route: no analysis, no model call per
+            design. One request for the wording of the entire run, then local
+            drawing.
+            """
+            try:
+                count = max(1, min(500, int(body.get("count") or 12)))
+            except (TypeError, ValueError):
+                return self._json({"error": "count must be a number"}, 400)
+            pipe = Pipeline(self.cfg)
+            if body.get("forget"):
+                pipe.store.forget_recipes()
+            mix = body.get("mix")
+            strength = body.get("strength")
+            started = time.monotonic()
+            result = pipe.make(
+                count,
+                mix=float(mix) if mix not in (None, "") else None,
+                strength=float(strength) if strength not in (None, "") else None,
+                seed=int(body.get("seed") or 0))
+            result["seconds"] = round(time.monotonic() - started, 1)
+            return self._json(result)
+
         if route == "/api/clear":
             """Empty the catalogue, or one state of it.
 

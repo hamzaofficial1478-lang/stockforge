@@ -102,12 +102,19 @@ def compose(
     mix: float = 0.5,
     seed: int | None = None,
     strict_family: bool = True,
+    used: dict[str, int] | None = None,
 ) -> tuple[DesignSpec, Recipe]:
     """Build a new design from several of your own.
 
     `mix` is how much comes from elsewhere. At 0 you get the base back. At 0.5
     roughly half the ingredients are borrowed from other designs. At 1.0 every
     ingredient that can be borrowed is.
+
+    `used` is how many times each design has already been borrowed from, across
+    everything ever made. Donors nobody has taken from yet come first. Without
+    it a run of forty-eight picks uniformly at random, which on a pool of fifty
+    means one or two favourites supply half the batch and the whole run comes
+    out looking like the same design with different words on it.
     """
     rng = random.Random(seed)
 
@@ -122,16 +129,27 @@ def compose(
     def borrow() -> bool:
         return rng.random() < mix
 
+    def pick() -> DesignSpec:
+        """A donor, leaning towards the ones least drawn on so far.
+
+        Weighted rather than strictly least-used: strictly least-used is a
+        rotation, and a rotation is its own kind of sameness.
+        """
+        if not used:
+            return rng.choice(donors)
+        weights = [1.0 / (1 + used.get(_identity(d), 0)) for d in donors]
+        return rng.choices(donors, weights=weights, k=1)[0]
+
     # --- palette -----------------------------------------------------
     if borrow():
-        donor = rng.choice(donors)
+        donor = pick()
         if donor.dna.palette.swatches:
             out.dna.palette = donor.dna.palette.model_copy(deep=True)
             recipe.palette_from = _identity(donor)
 
     # --- type --------------------------------------------------------
     if borrow():
-        donor = rng.choice(donors)
+        donor = pick()
         pairing = donor.dna.type_pairing or [t.font for t in donor.texts()[:2]]
         if pairing:
             out.dna.type_pairing = [f.model_copy(deep=True) for f in pairing]
@@ -143,13 +161,13 @@ def compose(
 
     # --- background --------------------------------------------------
     if borrow():
-        donor = rng.choice(donors)
+        donor = pick()
         out.dna.background = donor.dna.background.model_copy(deep=True)
         recipe.background_from = _identity(donor)
 
     # --- decoration --------------------------------------------------
     if borrow():
-        donor = rng.choice(donors)
+        donor = pick()
         donor_motifs = donor.motifs()
         if donor_motifs:
             _swap_motifs(out, donor_motifs)
@@ -160,7 +178,7 @@ def compose(
 
     # --- grid --------------------------------------------------------
     if borrow():
-        donor = rng.choice(donors)
+        donor = pick()
         out.dna.grid = donor.dna.grid.model_copy(deep=True)
         recipe.notes.append(f"grid from {_identity(donor)[:8]}")
 

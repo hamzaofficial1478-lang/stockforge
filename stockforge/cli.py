@@ -21,6 +21,7 @@ import json
 import os
 import logging
 import sys
+import time
 import textwrap
 from pathlib import Path
 
@@ -388,6 +389,17 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("build", help="run a single design end to end")
     s.add_argument("design_id")
 
+    s = sub.add_parser("make", help="new designs from what has already been read")
+    s.add_argument("count", type=int, help="how many to make")
+    s.add_argument("--mix", type=float, default=None,
+                   help="how much to borrow from your other designs, 0..1")
+    s.add_argument("--strength", type=float, default=None,
+                   help="how far to push each one after the borrowing, 0..1")
+    s.add_argument("--seed", type=int, default=0)
+    s.add_argument("--forget", action="store_true",
+                   help="clear the record of combinations already made, so old "
+                        "ones can be revisited")
+
     sub.add_parser("check", help="what is ready and what is not, with the fix for each")
     sub.add_parser("status", help="where everything is up to")
 
@@ -502,6 +514,32 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(pipe.run(limit=args.limit), indent=2))
     elif args.cmd == "build":
         print(pipe.build(args.design_id))
+    elif args.cmd == "make":
+        if args.forget:
+            gone = pipe.store.forget_recipes()
+            print(f"forgot {gone} combination{'' if gone == 1 else 's'}; "
+                  f"they can be made again")
+        started = time.monotonic()
+
+        def tick(done: int, total: int) -> None:
+            print(f"\r  {done}/{total}", end="", flush=True)
+
+        result = pipe.make(args.count, mix=args.mix, strength=args.strength,
+                           seed=args.seed, on_each=tick)
+        took = time.monotonic() - started
+        print(f"\r{result['made']} design(s) in {took:.0f}s"
+              + (f", {took / result['made']:.1f}s each" if result["made"] else "")
+              + " " * 12)
+        if result["discarded"]:
+            print(f"  {result['discarded']} thrown away as too close to something "
+                  f"you already have")
+        if result["note"]:
+            print(f"  {result['note']}")
+        for made in result["designs"][:10]:
+            print(f"    {made['design_id'][:12]}  {made['state']:<12} {made['recipe']}")
+        if len(result["designs"]) > 10:
+            print(f"    … and {len(result['designs']) - 10} more")
+        return 0 if result["made"] else 1
     elif args.cmd == "status":
         print(json.dumps(pipe.status(), indent=2))
     elif args.cmd == "review":

@@ -480,6 +480,28 @@
       </div>
       <p class="hint">Removing from the list leaves the files on disk.</p>
     </div>
+
+    <div class="card">
+      <h3>Make new designs from the ones you have</h3>
+      <p class="hint">No reading, no model call per design &mdash; one request for the whole
+        run. A combination already made is never made again.</p>
+      <div class="grid" style="max-width:520px">
+        <div><label for="make-count">How many</label>
+          <input id="make-count" type="number" min="1" max="500" value="24"></div>
+        <div><label for="make-mix">Borrowed from your others</label>
+          <select id="make-mix">
+            <option value="">use the Setup setting</option>
+            <option value="0.3">30% &mdash; close to the source</option>
+            <option value="0.5">50% &mdash; even mix</option>
+            <option value="0.8">80% &mdash; mostly borrowed</option>
+          </select></div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" onclick="doMake()">Make them</button>
+        <span id="make-msg" class="mono"></span>
+      </div>
+      <div id="make-out" class="log" style="border:0;margin-top:10px"></div>
+    </div>
   </section>
 
   <!-- ── QUEUE ─────────────────────────────────────────────── -->
@@ -1169,6 +1191,27 @@ async function dropDesign(id, fileCount){
   await api('/api/remove', {design_id: id, with_files: withFiles});
   await loadDesigns();
   loadTotals();
+}
+
+async function doMake(){
+  const count = parseInt($('make-count').value || '1', 10);
+  const msg = $('make-msg');
+  msg.textContent = `making ${count}… this is local work, give it a minute`;
+  $('make-out').innerHTML = '';
+  const r = await api('/api/make', {count, mix: $('make-mix').value || null});
+  if (r.error) return msg.textContent = r.error;
+  const each = r.made ? ` (${(r.seconds / r.made).toFixed(1)}s each)` : '';
+  msg.textContent = `${r.made} of ${r.asked} in ${r.seconds}s${each}`;
+  const lines = [];
+  if (r.discarded)
+    lines.push(`<div>${r.discarded} thrown away for looking like something you already have</div>`);
+  if (r.note) lines.push(`<div>${esc(r.note)}</div>`);
+  for (const d of (r.designs || []).slice(0, 12))
+    lines.push(`<div><span class="mono">${esc(d.design_id.slice(0,12))}</span> ${esc(d.state)} &mdash; ${esc(d.recipe)}</div>`);
+  if ((r.designs || []).length > 12)
+    lines.push(`<div>… and ${r.designs.length - 12} more</div>`);
+  $('make-out').innerHTML = lines.join('');
+  loadTotals(); loadDesigns();
 }
 
 async function doClear(withFiles){

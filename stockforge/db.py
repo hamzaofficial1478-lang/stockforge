@@ -103,6 +103,25 @@ CREATE TABLE IF NOT EXISTS metadata (
     PRIMARY KEY (design_id, filename)
 );
 
+-- Every combination this program has ever shipped, so it never ships it twice.
+--
+-- A mix is a handful of choices — whose layout, whose palette, whose type,
+-- whose decoration, whose grid — and with a pool of fifty designs there are
+-- only so many of them. Nothing recorded which ones had been used, so a run of
+-- forty-eight would quietly produce the same recipe five or six times over and
+-- the batch came out looking like one design with the words changed.
+--
+-- The fingerprint is the recipe. Unique, so a repeat cannot be written even by
+-- a caller that forgot to look.
+CREATE TABLE IF NOT EXISTS recipes (
+    fingerprint TEXT PRIMARY KEY,
+    design_id   TEXT,
+    base        TEXT NOT NULL,
+    ingredients TEXT NOT NULL,          -- json: which design gave what
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS recipes_base ON recipes(base);
+
 CREATE TABLE IF NOT EXISTS review (
     design_id     TEXT PRIMARY KEY,
     reason        TEXT,
@@ -436,6 +455,69 @@ class Store:
                 counts[table] = c.execute(
                     f"DELETE FROM {table} WHERE {column}=?", (did,)).rowcount
         return counts
+
+    def add_made_design(self, did: str, recipe: str, fingerprint: str) -> None:
+        """A design this program composed, rather than one pulled from a shop.
+
+        It has no listing and no source images, and saying so is the point: the
+        catalogue should be able to tell what came out of your shop from what
+        came out of the mixer.
+        """
+        with self.tx() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO designs(id, design_key, title, source,"
+                " image_count, state, created_at) VALUES (?,?,?,?,?,?,?)",
+                (did, fingerprint, recipe, "made", 0, "building", time.time()))
+            c.execute("UPDATE recipes SET design_id=? WHERE fingerprint=?",
+                      (did, fingerprint))
+
+    # --- what has already been made ------------------------------------
+
+    def recipe_seen(self, fingerprint: str) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM recipes WHERE fingerprint=?", (fingerprint,)).fetchone() is not None
+
+    def record_recipe(self, fingerprint: str, base: str, ingredients: dict,
+                      design_id: str | None = None) -> bool:
+        """Claim a combination. False means somebody already had it.
+
+        Written the moment a recipe is chosen rather than when the design
+        finishes, so two lanes planning at the same time cannot both take it.
+        """
+        try:
+            with self.tx() as c:
+                c.execute(
+                    "INSERT INTO recipes(fingerprint, design_id, base, ingredients, created_at)"
+                    " VALUES (?,?,?,?,?)",
+                    (fingerprint, design_id, base, json.dumps(ingredients, sort_keys=True),
+                     time.time()))
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def ingredient_use(self) -> dict[str, int]:
+        """How often each design has been borrowed from, across everything made.
+
+        What keeps a batch from leaning on one favourite: a donor that has
+        already given its palette to nine designs should not be first in line
+        for the tenth.
+        """
+        counts: dict[str, int] = {}
+        for row in self.conn.execute("SELECT base, ingredients FROM recipes"):
+            counts[row["base"]] = counts.get(row["base"], 0) + 1
+            try:
+                for who in json.loads(row["ingredients"]).values():
+                    if isinstance(who, str) and who:
+                        counts[who] = counts.get(who, 0) + 1
+            except (ValueError, AttributeError):
+                continue
+        return counts
+
+    def forget_recipes(self) -> int:
+        """Start the combinations again. For when the pool has changed enough
+        that old ones are worth revisiting."""
+        with self.tx() as c:
+            return c.execute("DELETE FROM recipes").rowcount
 
     def pending_review(self) -> list[sqlite3.Row]:
         return self.conn.execute(

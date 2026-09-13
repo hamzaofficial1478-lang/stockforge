@@ -128,6 +128,98 @@ Use obviously generic sample details. Never reuse a real name, address or phone 
 number from the original. Keep line lengths close so the layout still balances."""
 
 
+class CopySet(BaseModel):
+    designs: list[NewCopy] = Field(
+        description="one set of replacements per design, in the order given"
+    )
+
+
+BATCH_SYSTEM = COPY_SYSTEM + """
+
+You are writing for several designs at once. Give each one its own names, \
+dates, places and numbers — a set of forty invitations that all say the same \
+name is worse than no copy at all. Vary the register between them too: some \
+formal, some warm, some plain."""
+
+
+def _fit(element, text: str) -> bool:
+    """Would this replacement still balance the layout it is going into?
+
+    The prompt asks for similar lengths; a model will not always oblige, and a
+    name half again as long as the one it replaces does not balance the layout,
+    it breaks it. The renderer would then shrink the line to fit and the piece
+    comes out with a title set half the size the rest of the page was built
+    around.
+    """
+    text = text.strip()
+    if not text:
+        return False
+    return len(text) <= max(MIN_COPY_LENGTH, len(element.content) * MAX_COPY_GROWTH)
+
+
+def _apply(spec: DesignSpec, slots: list, replacements: list[str]) -> None:
+    if len(replacements) != len(slots):
+        log.warning("asked for %d replacements, got %d — the rest keep their "
+                    "original text", len(slots), len(replacements))
+    for el, text in zip(slots, replacements):
+        if _fit(el, text):
+            el.content = text.strip()
+        else:
+            log.info("keeping %r — the replacement %r is too long for its box",
+                     el.content, text)
+
+
+def rewrite_placeholders_batch(specs: list[DesignSpec],
+                               provider: VisionProvider | None = None) -> int:
+    """New wording for a whole run, in one request.
+
+    This is the call that makes a batch affordable. It sends no images — it
+    never did — so there is nothing per-design about it except the lines, and
+    forty-eight designs asking separately was forty-eight round trips to say
+    one thing. Returns how many designs got new copy.
+
+    A failure falls back to the originals for everything, rather than half a
+    batch rewritten and half not: a run where some designs say "Amelia" and the
+    rest say whatever the source said is worse than one that says the source
+    throughout, because you cannot see which is which.
+    """
+    if not specs:
+        return 0
+    provider = provider or reason()
+    slots = [[el for el in spec.texts() if el.placeholder] for spec in specs]
+    wanted = [(i, spec, s) for i, (spec, s) in enumerate(zip(specs, slots)) if s]
+    if not wanted:
+        return 0
+
+    listing = "\n\n".join(
+        f"Design {n + 1}:\n" + "\n".join(
+            f"{j}. [{el.role.value}] {el.content}" for j, el in enumerate(s))
+        for n, (_, _, s) in enumerate(wanted))
+    try:
+        got = provider.structured(
+            BATCH_SYSTEM,
+            f"{len(wanted)} designs:\n\n{listing}\n\n"
+            f"Return exactly {len(wanted)} sets of replacements, in the same order. "
+            f"Set {' and '.join(str(n + 1) for n in range(min(3, len(wanted))))}"
+            f" must each have "
+            + ", ".join(str(len(s)) for _, _, s in wanted[:3]) + " lines respectively.",
+            [],
+            CopySet,
+        )
+    except Exception as exc:
+        log.warning("batched copy failed, keeping the originals: %s", exc)
+        return 0
+
+    if len(got.designs) != len(wanted):
+        log.warning("asked for %d sets of copy and got %d — keeping the originals "
+                    "for the rest", len(wanted), len(got.designs))
+    done = 0
+    for (_, spec, s), answer in zip(wanted, got.designs):
+        _apply(spec, s, answer.replacements)
+        done += 1
+    return done
+
+
 def rewrite_placeholders(spec: DesignSpec, provider: VisionProvider | None = None) -> None:
     slots = [el for el in spec.texts() if el.placeholder]
     if not slots:
@@ -147,24 +239,7 @@ def rewrite_placeholders(spec: DesignSpec, provider: VisionProvider | None = Non
         log.warning("copy rewrite failed, keeping originals: %s", exc)
         return
 
-    if len(new.replacements) != len(slots):
-        log.warning("asked for %d replacements, got %d — the rest keep their "
-                    "original text", len(slots), len(new.replacements))
-
-    for el, text in zip(slots, new.replacements):
-        text = text.strip()
-        if not text:
-            continue
-        # The prompt asks for similar lengths; a local model will not always
-        # oblige, and a name half again as long as the one it replaces does not
-        # balance the layout, it breaks it. The renderer would then shrink the
-        # line to fit and the piece comes out with a title set half the size the
-        # rest of the page was built around.
-        if len(text) > max(MIN_COPY_LENGTH, len(el.content) * MAX_COPY_GROWTH):
-            log.info("keeping %r — the replacement %r is too long for its box",
-                     el.content, text)
-            continue
-        el.content = text
+    _apply(spec, slots, new.replacements)
 
 
 # --------------------------------------------------------------------------
@@ -337,7 +412,7 @@ def check(source: Path, derived: Path, provider: VisionProvider | None = None) -
 # --------------------------------------------------------------------------
 
 def derive(spec: DesignSpec, strength: float = 0.5, seed: int | None = None,
-           provider: VisionProvider | None = None) -> DesignSpec:
+           provider: VisionProvider | None = None, rewrite_copy: bool = True) -> DesignSpec:
     """Apply all four levers at a given strength. Returns a new spec.
 
     `seed` gets its own generator rather than reseeding the process. Reseeding
@@ -351,7 +426,10 @@ def derive(spec: DesignSpec, strength: float = 0.5, seed: int | None = None,
     out = spec.model_copy(deep=True)
     if strength <= 0:
         return out
-    rewrite_placeholders(out, provider)
+    # A batch does its own wording, once, for the whole run — so it turns this
+    # off rather than making the same request forty-eight times.
+    if rewrite_copy:
+        rewrite_placeholders(out, provider)
     shift_palette(
         out,
         hue_shift=rng.uniform(0.06, 0.18) * (1 if rng.random() > 0.5 else -1) * strength * 2,

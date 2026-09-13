@@ -32,6 +32,7 @@ from .db import Store
 from .schema import DesignSpec
 from .sources import Design, Source
 from .stages import critique as critique_stage
+from .stages import batch as batch_stage
 from .stages import compose as compose_stage
 from .stages import derive as derive_stage
 from .stages import export as export_stage
@@ -59,6 +60,16 @@ def _seed(*parts: object) -> int:
     """
     blob = ":".join(str(p) for p in parts).encode()
     return int.from_bytes(hashlib.sha256(blob).digest()[:4], "big")
+
+
+def _new_id(kind: str, fingerprint: str) -> str:
+    """An id for a design the program made rather than read.
+
+    Derived from the recipe, so the same combination would land on the same id
+    — which is a second line of defence: even if the ledger were lost, a repeat
+    would collide rather than quietly become a new row.
+    """
+    return hashlib.sha256(f"{kind}:{fingerprint}".encode()).hexdigest()[:24]
 
 
 class Pipeline:
@@ -287,7 +298,7 @@ class Pipeline:
         return self._export(derived, design_id, distinct)
 
     def _export(self, derived: DesignSpec, design_id: str, distinct: float,
-                master_only: bool = False) -> str:
+                master_only: bool = False, on_twin: str = "review") -> str:
         """Export every page, including imperfect recoveries that need editing."""
         out_dir = self.cfg.root / "out" / design_id[:16]
         holes: list[str] = []
@@ -427,6 +438,13 @@ class Pipeline:
         if unrendered:
             reasons.append("nothing here can draw " + "; ".join(unrendered[:3]))
         if twins:
+            # A batch throws a near-repeat away and tries another combination.
+            # Queueing it would hand back a pile of things that look the same
+            # and ask the owner to sort it out, which is the job.
+            if on_twin == "discard":
+                log.info("[%s] discarded as a near-repeat: %s",
+                         design_id[:8], twins[0].line())
+                return "twin"
             reasons.append("; ".join(t.line() for t in twins[:3]))
         if reasons:
             self.store.queue_review(design_id, " — ".join(reasons), distinct)
@@ -553,6 +571,116 @@ class Pipeline:
             log.warning("[%s] %s %s", design_id[:8], page_name, twin.line())
         self.store.save_fingerprint(design_id, page_name, phash, aspect)
         return twin
+
+    # ------------------------------------------------------------------
+    # making many at once
+    # ------------------------------------------------------------------
+
+    def make(self, count: int, mix: float | None = None, strength: float | None = None,
+             seed: int = 0, on_each=None) -> dict:
+        """New designs from what has already been read. No reading, no model
+        call per design.
+
+        This is the path the arithmetic needs. Reading a design costs five
+        model calls because a model has to look at it; making one from a
+        reading you already have costs a handful of choices and three seconds
+        of code. The old route paid the reading price for every output, so
+        forty-eight designs meant three hundred and eighty-four round trips.
+        Here a whole run costs one request — the copy, which never needed an
+        image — and the rest is local.
+
+        Asked for forty-eight, it delivers forty-eight or says why not. A
+        combination that comes out looking like something you already have is
+        thrown away and replaced, not queued for review: handing back a pile of
+        near-identical designs and asking which to keep is the work this is
+        supposed to remove.
+        """
+        pool = self._specs(exclude="", cap=200)
+        if len(pool) < 2:
+            return {"made": 0, "asked": count, "discarded": 0, "designs": [], "failed": [],
+                    "note": "there are not enough designs read in yet to mix from. Pull "
+                            "some in and run the queue once, then come back."}
+
+        mix = self.cfg.mix if mix is None else mix
+        strength = self.cfg.derive_strength if strength is None else strength
+
+        made, failed, repeats = [], [], 0
+        wave, exhausted, note = 0, False, ""
+        # Waves rather than one pass, because a design is only known to be a
+        # repeat after it has been drawn — so a run that discards a third of
+        # its batch has to go back for more combinations, not hand back a third
+        # fewer designs than asked for.
+        while len(made) < count and wave < 6 and not exhausted:
+            wave += 1
+            short = count - len(made)
+            self.on_progress(
+                f"Choosing {short} combination{'' if short == 1 else 's'} "
+                f"that have not been made before")
+            chosen = batch_stage.plan(
+                pool, short, mix=mix, strength=strength,
+                seen=self.store.recipe_seen, used=self.store.ingredient_use(),
+                seed=seed + wave)
+            exhausted = chosen.exhausted
+            note = chosen.note or note
+            if not chosen.made:
+                break
+
+            # Claim them before building. Two lanes planning at the same moment
+            # would otherwise both take the last free combination.
+            kept = [pl for pl in chosen.made
+                    if self.store.record_recipe(pl.fingerprint, pl.recipe.base,
+                                                pl.recipe.as_dict())]
+            if not kept:
+                break
+
+            self.on_progress(f"Deriving {len(kept)} design{'' if len(kept) == 1 else 's'}")
+            derived = [derive_stage.derive(pl.spec, strength=pl.strength,
+                                           seed=pl.seed, rewrite_copy=False)
+                       for pl in kept]
+
+            # One request for the whole wave, because the copy call sends no
+            # images and never needed to be per-design.
+            self.on_progress(f"Writing fresh wording for all {len(derived)} in one request")
+            try:
+                derive_stage.rewrite_placeholders_batch(derived)
+            except Exception as exc:
+                log.warning("batched copy failed, keeping the originals: %s", exc)
+
+            for planned, spec in zip(kept, derived):
+                design_id = _new_id("make", planned.fingerprint)
+                self.on_progress(f"Drawing and exporting {len(made) + 1} of {count}")
+                try:
+                    self.store.add_made_design(design_id, planned.recipe.summary(),
+                                               planned.fingerprint)
+                    self.store.save_spec(design_id, spec.model_dump(mode="json"))
+                    outcome = self._export(spec, design_id, distinct=1.0, on_twin="discard")
+                    if outcome == "twin":
+                        # Different ingredients, same picture. The recipe stays
+                        # claimed so nothing tries it again.
+                        repeats += 1
+                        self.store.remove_design(design_id)
+                        continue
+                    made.append({"design_id": design_id, "state": outcome,
+                                 "recipe": planned.recipe.summary()})
+                except Exception as exc:
+                    log.exception("could not build a made design")
+                    failed.append(str(exc)[:200])
+                if on_each:
+                    on_each(len(made), count)
+                if len(made) >= count:
+                    break
+
+        if len(made) < count:
+            note = (note + " " if note else "") + (
+                f"Made {len(made)} of the {count} asked for. "
+                + ("Everything else came out looking like a design you already have. "
+                   if repeats else "")
+                + "Read a wider spread of your catalogue in and there is more to mix.")
+        elif repeats:
+            note = (f"{repeats} came out looking like something you already have and "
+                    f"were replaced rather than sent to review.")
+        return {"made": len(made), "designs": made, "failed": failed,
+                "discarded": repeats, "asked": count, "note": note.strip()}
 
     def _spec_pool(self, exclude: str, cap: int = 60) -> list[DesignSpec]:
         """Other designs of yours available to mix from.
