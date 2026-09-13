@@ -607,13 +607,14 @@ def harvest(gap: "Gap", motifs_dir: Path, pad: float = 0.06) -> Harvested | None
         path = folder / f"{gap.slug or gap.kind}-{sighting.design_id[:8]}.png"
         cv2.imwrite(str(path), cut)
 
+        # One word, because this goes on the end of a table row. The sentence
+        # it stands for is printed once underneath rather than wrapped across
+        # three lines beside every entry that earns it.
         note = ""
         if coverage < 0.04:
-            note = ("almost nothing was left after the background came off — "
-                    "the box may be mostly paper, or the drawing may be very pale")
+            note = "thin"
         elif coverage > 0.92:
-            note = ("almost nothing came off — this may be a photographic area "
-                    "rather than a drawing on a background")
+            note = "solid"
         return Harvested(gap=gap, path=path, width=x1 - x0, height=y1 - y0,
                          coverage=round(coverage, 3), note=note)
     return None

@@ -228,21 +228,14 @@
       <details class="more">
         <summary>Use a different model service, or add your own backend</summary>
         <div id="preset-list" style="margin-top:10px"></div>
-        <p class="hint" style="margin-top:10px">
-          GPT, Hermes, Qwen, Llama and Mistral all speak OpenAI&rsquo;s shape. Pick the service
-          here, the model on a connection below.
-        </p>
-        <p class="hint">
-          For anything else, write a module with a <code>BACKEND</code> in it and type its
-          import path above. See <code>docs/backends.md</code>.
-        </p>
+        <p class="hint" style="margin-top:10px">GPT, Hermes, Qwen, Llama and Mistral all
+          speak OpenAI&rsquo;s shape. For anything else see <code>docs/backends.md</code>.</p>
       </details>
     </div>
 
     <div class="card">
       <h3>Models</h3>
-      <p class="hint">Add, test, make live. <b>Reading models can be live together</b>, one per lane.
-        Writing and drawing use one at a time.</p>
+      <p class="hint">Add, test, make live. <b>Reading models can be live together</b>, one per lane.</p>
 
       <div id="conns"><div class="empty">no connections yet</div></div>
 
@@ -291,7 +284,8 @@
         <option value="1">Recover original — keep text, colors and layout</option>
         <option value="0">Create a new variation</option>
       </select>
-      <p class="hint">Recovery rebuilds the design as it is. The sliders below apply only to a new variation.</p>
+      <p class="hint">Recovery rebuilds the design as it is. The sliders below apply only to a
+        new variation &mdash; the presets set all of them together.</p>
 
       <div class="presets">
         <button class="btn small" onclick="preset('close')">Close to the original — 70/30</button>
@@ -303,8 +297,6 @@
       <div class="lever">
         <div class="top"><b>Borrow from your other designs</b>
           <span class="now" id="mix-v">0.50</span></div>
-        <p>How much of the palette, grid, type and decoration comes from your other
-          designs instead of this one.</p>
         <input type="range" id="SF_MIX" min="0" max="1" step="0.05" value="0.5"
                oninput="showV('mix-v', (+this.value).toFixed(2))">
         <div class="ends"><span>0 — keep everything from this listing</span>
@@ -313,7 +305,6 @@
 
       <div class="lever">
         <div class="top"><b>How hard to push it</b><span class="now" id="str-v">0.50</span></div>
-        <p>How far the result then moves on its own — colours, sizes, margins.</p>
         <input type="range" id="SF_DERIVE_STRENGTH" min="0" max="1" step="0.05" value="0.5"
                oninput="showV('str-v', (+this.value).toFixed(2))">
         <div class="ends"><span>0 — leave it alone</span><span>1 — move everything</span></div>
@@ -322,8 +313,6 @@
       <div class="lever">
         <div class="top"><b>How different it must end up</b>
           <span class="now" id="dist-v">0.70</span></div>
-        <p>A gate: below this it runs another round. <b>Lower it whenever you lower the two
-          above</b>, or they fight each other.</p>
         <input type="range" id="SF_DISTINCT_THRESHOLD" min="0" max="1" step="0.05" value="0.7"
                oninput="showV('dist-v', (+this.value).toFixed(2))">
         <div class="ends"><span>0 — accept anything</span>
@@ -333,8 +322,6 @@
       <div class="lever">
         <div class="top"><b>How close a motif has to match</b>
           <span class="now" id="motif-v">0.45</span></div>
-        <p>How near a library drawing must be before it is used. Raise it and more designs
-          go to Review instead.</p>
         <input type="range" id="SF_MOTIF_THRESHOLD" min="0" max="1" step="0.05" value="0.45"
                oninput="showV('motif-v', (+this.value).toFixed(2))">
         <div class="ends"><span>0 — place the nearest thing</span>
@@ -343,7 +330,6 @@
 
       <div class="lever">
         <div class="top"><b>Rounds before giving up</b></div>
-        <p>Each round pushes harder. After this many it goes to Review instead.</p>
         <div style="max-width:200px">
           <input id="SF_DERIVE_ROUNDS" type="number" min="1" max="6" value="2"></div>
       </div>
@@ -514,12 +500,8 @@
 
     <div class="card" id="gaps-card" hidden>
       <h3>Artwork it needs and hasn&rsquo;t got</h3>
-      <div class="explain">
-        <p>Decoration the program found in your designs but has no drawing for. It will not
-        trace or invent one, so these stop here.</p>
-        <p><b>Most are already drawn — in your own cards.</b> Cut them out below, free.
-        Anything left needs drawing once; the number is how many designs it unblocks.</p>
-      </div>
+      <p class="hint">Decoration with no drawing in your library. Most are already in your
+        own cards — cut them out below.</p>
       <div class="row" style="margin-top:12px">
         <button class="btn primary" onclick="doHarvest()">Cut these out of my own designs</button>
         <button class="btn" onclick="doScaffold()">Write me an empty starter file for each</button>

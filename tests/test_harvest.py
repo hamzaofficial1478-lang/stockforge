@@ -11,6 +11,8 @@ sold. Free, exact, and the owner's own artwork rather than something invented
 that merely resembles it.
 """
 
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
@@ -149,6 +151,25 @@ def test_a_crop_that_is_all_subject_says_so(tmp_path):
     got = harvest(_gap(photo, box=Box(x=0.2, y=0.2, w=0.6, h=0.6)), tmp_path / "motifs")
     assert got is not None
     assert got.note, "a crop that lost nothing was reported as a clean motif"
+
+
+@pytest.mark.parametrize("note", ["thin", "solid"])
+def test_the_flag_is_one_word_the_listing_can_explain_once(note, tmp_path):
+    """It used to be a sentence printed beside every row that earned it, which
+    at 46 columns of indent wrapped across three lines and read as one comment
+    covering the entries above it. A word on the row, the sentence once at the
+    bottom — and the CLI matches on these exact words, so they are pinned."""
+    import re
+
+    cli = (Path(__file__).resolve().parent.parent / "stockforge" / "cli.py").read_text()
+    assert f'"{note}" in flags' in cli, f"the listing no longer explains {note!r}"
+
+    source = (Path(__file__).resolve().parent.parent / "stockforge" / "stages"
+              / "motifs.py").read_text()
+    assert f'note = "{note}"' in source
+
+    for word in re.findall(r'note = "([^"]*)"', source):
+        assert " " not in word, f"{word!r} is a sentence again, and will wrap"
 
 
 # --- the whole list --------------------------------------------------------

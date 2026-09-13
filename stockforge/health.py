@@ -89,8 +89,7 @@ def _check_openai_compatible() -> Check:
         return Check("Vision model", "ok", f"{model} at {base}")
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
         return Check("Vision model", "fail", f"cannot reach {base} — {exc}",
-                     "Start your model server. NIM, vLLM, Ollama and LM Studio all "
-                     "expose an OpenAI-compatible /v1 endpoint.")
+                     "Start your model server, or pick a hosted one on Setup.")
 
 
 # How to report on a backend beyond its own ready() check. A backend not listed
@@ -131,9 +130,8 @@ def _check_fonts(cfg: Settings) -> Check:
     files = font_files(cfg.fonts_dir)
     if not files:
         return Check("Font library", "fail", f"no font files in {cfg.fonts_dir}",
-                     "Run `stockforge fonts download` — it installs a starter "
-                     "library of OFL families with their licences. Or drop your "
-                     "own in there and run `stockforge fonts scan`.")
+                     "Run `stockforge fonts download`, or drop your own in "
+                     "there and run `stockforge fonts scan`.")
     if not manifest.exists():
         return Check("Font library", "fail", f"{len(files)} fonts, no manifest yet",
                      "Run `stockforge fonts scan`")
@@ -235,12 +233,8 @@ def _check_font_rendering(cfg: Settings) -> Check:
             "Font rendering", "fail",
             f"{entry.family} was asked for and something else was drawn "
             f"({measured:.0f}px against the file's {expected:.0f}px)",
-            "The renderer resolves a family by name, so the font has to be "
-            "visible to it. On Windows, install the font files — select them, "
-            "right-click, Install for all users — then run `stockforge fonts "
-            "scan` again. On Linux this is handled by the generated "
-            "fontconfig.conf; if it is failing, check SF_FONTS points at the "
-            "right folder.")
+            "On Windows, install the font files: select, right-click, Install "
+            "for all users, then `stockforge fonts scan` again.")
 
     return Check("Font rendering", "ok",
                  f"{entry.family} draws at the width its own file says")
@@ -274,18 +268,15 @@ def _check_motifs(cfg: Settings) -> Check:
     library = motifs_stage.load(cfg.motifs_dir)
     if len(library) < 10:
         return Check("Motif library", "warn", f"{len(library)} motifs",
-                     "Every decorative element with no library match sends its "
-                     "design to review. Build this up as you go — it is what "
-                     "decides whether output looks professional. "
-                     '`stockforge motifs match "..."` shows why something missed.',
+                     "Decoration with no match sends its design to Review. "
+                     "Build this up as you go.",
                      required=False)
     tagged = sum(1 for e in library if e.kind)
     if tagged * 2 < len(library):
         return Check("Motif library", "warn",
                      f"{len(library)} motifs, {tagged} tagged",
-                     "Untagged motifs are matched on their filename alone. Add "
-                     "data-kind and data-tags to the SVGs and the matching gets "
-                     "much sharper.", required=False)
+                     "Add data-kind and data-tags to the SVGs; filename-only "
+                     "matching is much weaker.", required=False)
     return Check("Motif library", "ok", f"{len(library)} motifs, {tagged} tagged",
                  required=False)
 
@@ -295,9 +286,8 @@ def _check_etsy() -> Check:
         return Check("Etsy API", "ok", "key set — shop counts and listings are reliable",
                      required=False)
     return Check("Etsy API", "warn", "no key",
-                 "Without a key the shop door falls back to parsing public pages, "
-                 "which is slower and breaks when Etsy changes their markup. A key "
-                 "from etsy.com/developers takes ten minutes.", required=False)
+                 "Without one the shop crawl parses public pages, which is "
+                 "slower and breaks. A key: etsy.com/developers.", required=False)
 
 
 def _check_ftp() -> Check:
@@ -305,8 +295,8 @@ def _check_ftp() -> Check:
              if all(os.environ.get(f"SF_FTP_{n}_{k}") for k in ("HOST", "USER", "PASS"))]
     if not ready:
         return Check("Delivery", "warn", "no FTP credentials set",
-                     "Only needed when you are ready to upload. Set "
-                     "SF_FTP_ADOBE_HOST/USER/PASS and the same for SHUTTERSTOCK.",
+                     "Only for uploading. Set SF_FTP_ADOBE_HOST/USER/PASS, "
+                     "and the same for SHUTTERSTOCK.",
                      required=False)
     return Check("Delivery", "ok", f"configured: {', '.join(t.lower() for t in ready)}",
                  required=False)
@@ -340,12 +330,8 @@ def report(cfg: Settings | None = None) -> Report:
         _check_font_rendering(cfg),
         _check_binary(
             "inkscape", "Vector export",
-            "Install Inkscape — on Windows `winget install Inkscape.Inkscape`, "
-            "otherwise inkscape.org/release. It is looked for on PATH and in the "
-            "usual Windows install folders, so ticking 'add to PATH' during setup "
-            "is not required; if you put it somewhere else, set SF_INKSCAPE to "
-            "the full path of inkscape.exe. Without it there is no editable-text "
-            "PDF and no EPS — only rasterised output.",
+            "Install Inkscape: `winget install Inkscape.Inkscape`. Installed "
+            "somewhere unusual? Set SF_INKSCAPE to inkscape.exe.",
             find=_find_inkscape),
         _check_binary("tesseract", "OCR", "Install Tesseract OCR or set SF_TESSERACT "
                       "to tesseract.exe. Without it the model transcribes text itself.",

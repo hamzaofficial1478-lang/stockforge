@@ -312,17 +312,25 @@ def cmd_motifs_harvest(args, pipe: Pipeline) -> int:
 
     folder = settings.motifs_dir / motifs_stage.HARVEST_DIR
     print(f"cut {len(cut)} of {len(found)} into {folder}\n")
+    width = max((len(g.path.name) for g in cut), default=20)
     for got in cut:
-        print(f"  {got.path.name:<46} {got.width:>4}x{got.height:<4} "
-              f"subject {got.coverage:>4.0%}  {got.gap.designs} design(s) waiting")
-        if got.note:
-            print(f"  {'':<46} {got.note}")
+        print(f"  {got.path.name:<{width}}  {got.width:>4}x{got.height:<4} "
+              f"{got.coverage:>4.0%}  {got.gap.designs:>2} design(s)"
+              f"{'  ' + got.note if got.note else ''}")
+
+    flags = {got.note for got in cut if got.note}
+    if flags:
+        print()
+    if "thin" in flags:
+        print("  thin   almost nothing left once the paper came off. Check these first.")
+    if "solid" in flags:
+        print("  solid  nothing came off — likely a photograph, not a drawing.")
 
     missed = len(found[:args.limit]) - len(cut)
     if missed:
         print(f"\n{missed} had no usable sighting and still need drawing.")
-    print("\nThese are pictures, not vectors. Look at them, keep the good ones, "
-          "\nand trace them to SVG on a 0..100 square to go in the library.")
+    print("\nPictures, not vectors. Keep the good ones and trace them to SVG "
+          "on a 0..100 square.")
     return 0
 
 
