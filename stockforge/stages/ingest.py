@@ -200,6 +200,82 @@ def _quads_in(mask: np.ndarray, min_area: float) -> list[np.ndarray]:
     return found
 
 
+def text_ink(bgr: np.ndarray) -> np.ndarray:
+    """Where the type is. Marks at the scale letters are drawn at.
+
+    Not OCR — nothing needs to know what it says, only where it is. Type is the
+    one thing certain to belong to the design rather than to the table it is
+    lying on, so between two rectangles that are both plausible sheets, the one
+    holding more of the wording is the design.
+
+    It is used to choose, never to reject. Scattered props — candy corn, paper
+    spiders, confetti — pass every cheap glyph test there is, so a rectangle
+    that fails to hold "the text" may only have failed to hold the confetti.
+    """
+    grey = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    h, w = grey.shape
+    k = cv2.getStructuringElement(cv2.MORPH_RECT,
+                                  (max(3, w // 60) | 1, max(3, h // 120) | 1))
+    hat = cv2.morphologyEx(grey, cv2.MORPH_BLACKHAT, k)
+    _, ink = cv2.threshold(hat, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(ink, 8)
+    keep = np.zeros_like(ink)
+    for i in range(1, n):
+        _, _, bw, bh, area = stats[i]
+        if area < 12 or bh < 4 or bh > h * 0.12:      # dust, or too tall for a letter
+            continue
+        if bw > w * 0.6:                              # a rule across the page
+            continue
+        if area / float(bw * bh) < 0.08:              # a hairline box, not a glyph
+            continue
+        keep[lab == i] = 255
+    return keep
+
+
+def text_held(ink: np.ndarray, quad: np.ndarray, total: int) -> float:
+    """How much of the type this rectangle keeps."""
+    if total <= 0:
+        return 1.0
+    mask = np.zeros(ink.shape[:2], np.uint8)
+    cv2.fillConvexPoly(mask, quad.astype(np.int32), 1)
+    return float(((ink > 0) & (mask > 0)).sum()) / total
+
+
+def flat_colours(bgr: np.ndarray, quad: np.ndarray,
+                 cover: float = 0.90, step: int = 24) -> int:
+    """How few flat colours this rectangle is made of.
+
+    The thing that actually separates a design from a piece of a photograph.
+    A card is a handful of chosen colours — paper, a heading, one illustration
+    — and nine tenths of it is covered by one or two of them. A rectangle that
+    has taken in the table, the cloth and a pumpkin is a continuum, and needs
+    many.
+
+    Asked of the rectangle itself, never of the photo around it, which is what
+    makes it proof against props: confetti scattered around the card cannot
+    change what is inside the card.
+    """
+    mask = np.zeros(bgr.shape[:2], np.uint8)
+    cv2.fillConvexPoly(mask, quad.astype(np.int32), 1)
+    inside = bgr[mask > 0]
+    if len(inside) < 50:
+        return 99
+    coarse = (inside // step).astype(np.int16)
+    _, counts = np.unique(coarse.reshape(-1, 3), axis=0, return_counts=True)
+    counts = np.sort(counts)[::-1]
+    return int(np.searchsorted(np.cumsum(counts) / counts.sum(), cover) + 1)
+
+
+# Measured across every fixture in the project and a Halloween invitation on
+# pale wood softened until the detector went wrong: the rectangle that really
+# was the card needed one or two colours to cover nine tenths of itself, every
+# time. The rectangles that were not needed three to fourteen — they had the
+# table in them. Four is well clear of anything a design produced and well
+# below what a piece of photograph needs, so it rejects without being clever.
+TOO_MANY_COLOURS = 4
+
+
 def _score_quad(grey: np.ndarray, quad: np.ndarray) -> float:
     """How much this rectangle looks like a card lying in a photo, 0..1.
 
@@ -263,10 +339,29 @@ def find_card(img: np.ndarray, min_score: float = 0.55) -> tuple[np.ndarray | No
     sh, sw = small.shape[:2]
     grey = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
+    # The type is the anchor. Where there is text there is design, and the
+    # paper it is printed on is the one surface we can be certain belongs to
+    # the card rather than to the table it is lying on.
+    ink = text_ink(small)
+    total_ink = int((ink > 0).sum())
+
     best, best_score = None, 0.0
     for mask in _masks(small):
         for quad in _quads_in(mask, 0.10 * sh * sw):
             score = _score_quad(grey, quad)
+            if score <= 0:
+                continue
+            # Is this a design, or a piece of a photograph? Nothing else here
+            # asked, which is how the table came back as part of the design.
+            needs = flat_colours(small, quad)
+            if needs >= TOO_MANY_COLOURS:
+                continue
+            # Between two plausible sheets, prefer the flatter one, and then
+            # the one holding more of the wording: where there is type, there
+            # is the design. Type only ever chooses, never rejects — scattered
+            # props pass every cheap glyph test there is.
+            flat = 1.0 / needs
+            score = 0.7 * score + 0.2 * flat + 0.1 * text_held(ink, quad, total_ink)
             if score > best_score:
                 best, best_score = quad, score
 

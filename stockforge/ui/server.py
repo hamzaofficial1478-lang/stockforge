@@ -53,6 +53,34 @@ EDITABLE = {
 SECRET = {k for k in EDITABLE if k.endswith(("_KEY", "_PASS"))}
 
 
+def outputs_for(root: Path, design_id: str) -> list[Path]:
+    """The editable files a design produced. One definition, because the panel
+    lists them and the delete button removes them, and a delete that looked
+    somewhere else from the list would leave files nobody can see."""
+    found = sorted((root / "out" / design_id[:16]).glob("*"))
+    found += sorted((root / "renders").glob(f"{design_id[:16]}-*.svg"))
+    return [p for p in found if p.is_file() and p.suffix.lower() in {".svg", ".pdf", ".eps"}]
+
+
+def delete_outputs(root: Path, design_id: str) -> int:
+    """Delete them, and say how many went.
+
+    Only reached when the caller asked for it, and only ever inside the
+    workspace — a resolve-and-check rather than trust, the same rule the file
+    server downstairs applies to reads.
+    """
+    gone = 0
+    root = root.resolve()
+    for path in outputs_for(root, design_id):
+        try:
+            if path.resolve().is_relative_to(root):
+                path.unlink()
+                gone += 1
+        except OSError:
+            continue
+    return gone
+
+
 def read_env(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
@@ -251,9 +279,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"error": "not found"}, 404)
 
     def _outputs(self, did: str) -> list[str]:
-        files = sorted((self.cfg.root / "out" / did[:16]).glob("*"))
-        files += sorted((self.cfg.root / "renders").glob(f"{did[:16]}-*.svg"))
-        return [str(p) for p in files if p.is_file() and p.suffix.lower() in {".svg", ".pdf", ".eps"}]
+        return [str(p) for p in outputs_for(self.cfg.root, did)]
 
     def _serve_file(self, raw: str) -> None:
         """Only ever from inside the workspace. A panel that will hand out any
@@ -488,16 +514,43 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"design_id": did, "decision": decision})
 
         if route == "/api/remove":
-            """Forget a design. Rows only — the files it produced stay put.
+            """Forget a design. Rows only, unless the files are asked for too.
 
             Someone clearing a list of five thousand is tidying, not asking to
-            lose the PDFs they came here for."""
+            lose the PDFs they came here for — so the files stay by default and
+            go only when `with_files` says so, which the panel asks about.
+            """
             ids = body.get("design_ids") or ([body["design_id"]] if body.get("design_id") else [])
             if not ids:
                 return self._json({"error": "design_id or design_ids is required"}, 400)
             pipe = Pipeline(self.cfg)
-            removed = [did for did in ids if pipe.store.remove_design(did)["designs"]]
-            return self._json({"removed": len(removed), "design_ids": removed})
+            with_files = bool(body.get("with_files"))
+            removed, files = [], 0
+            for did in ids:
+                if with_files:
+                    files += delete_outputs(self.cfg.root, did)
+                if pipe.store.remove_design(did)["designs"]:
+                    removed.append(did)
+            return self._json({"removed": len(removed), "files": files,
+                               "design_ids": removed})
+
+        if route == "/api/clear":
+            """Empty the catalogue, or one state of it.
+
+            The counts on Sources were a dead end: they told you five thousand
+            designs were in there and offered no way to put any of them back.
+            """
+            pipe = Pipeline(self.cfg)
+            state = body.get("state") or None
+            rows = pipe.store.designs(state=state)
+            with_files = bool(body.get("with_files"))
+            files = 0
+            for row in rows:
+                if with_files:
+                    files += delete_outputs(self.cfg.root, row["id"])
+                pipe.store.remove_design(row["id"])
+            return self._json({"removed": len(rows), "files": files,
+                               "state": state or "everything"})
 
         if route == "/api/mix":
             """How much one design borrows. Null on either means follow Setup."""

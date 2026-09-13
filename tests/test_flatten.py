@@ -252,3 +252,105 @@ def test_a_card_on_a_plain_studio_backdrop_is_still_cropped():
     assert ingest._sits_on_something(photo, quad)
     out = ingest._warp(photo, quad)
     assert abs(out.shape[1] / out.shape[0] - 320 / 440) < 0.05
+
+
+# --- a photograph is not a design -----------------------------------------
+#
+# The reported failure: a Halloween invitation lying on pale wood among
+# pumpkins, bats and candles came back cropped to the card's left edge and
+# everything to the right of it — most of the photograph, called a design. It
+# scored 0.75 and was used, because nothing asked what was inside the
+# rectangle it had chosen.
+
+def _invitation_on_a_table(blur=0, wood=(176, 186, 198), size=1200):
+    """A pale card on a pale surface with dark props around it."""
+    rng = np.random.default_rng(4)
+    photo = np.full((size, size, 3), wood, np.uint8)
+    photo = cv2.add(photo, rng.integers(0, 9, (size, size, 3)).astype(np.uint8))
+    # dark cloth across a corner, candles, pumpkins, bats
+    cv2.fillPoly(photo, [np.array([[int(size*.62), 0], [size, 0],
+                                   [size, int(size*.42)], [int(size*.78), int(size*.30)]])],
+                 (46, 44, 44))
+    cv2.ellipse(photo, (int(size*.90), int(size*.74)), (int(size*.085),)*2, 0, 0, 360, (40, 120, 225), -1)
+    cv2.ellipse(photo, (int(size*.07), int(size*.90)), (int(size*.080),)*2, 0, 0, 360, (220, 228, 236), -1)
+    for cx, cy in ((.05, .47), (.95, .88), (.62, .96)):
+        cv2.circle(photo, (int(size*cx), int(size*cy)), int(size*.030), (30, 30, 32), -1)
+
+    x0, y0 = int(size * .225), int(size * .055)
+    cw, ch = int(size * .555), int(size * .885)
+    cv2.rectangle(photo, (x0 + 8, y0 + 9), (x0 + cw + 11, y0 + ch + 12), (150, 158, 170), -1)
+    cv2.rectangle(photo, (x0, y0), (x0 + cw, y0 + ch), (247, 249, 250), -1)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    for text, ry, scale in (("HALLOWEEN", .18, 1.5), ("Party", .26, 1.3),
+                            ("NOVEMBER 1", .68, .55), ("RSVP BY OCT 24", .86, .45)):
+        (tw, _), _ = cv2.getTextSize(text, font, scale, 2)
+        cv2.putText(photo, text, (x0 + (cw - tw) // 2, y0 + int(ch * ry)),
+                    font, scale, (40, 40, 40), 2, cv2.LINE_AA)
+    cv2.ellipse(photo, (x0 + int(cw*.60), y0 + int(ch*.40)), (int(cw*.11),)*2, 0, 0, 360, (40, 130, 225), -1)
+
+    if blur:
+        photo = cv2.GaussianBlur(photo, (blur | 1, blur | 1), 0)
+    return photo, (x0, y0, cw, ch)
+
+
+def _iou(quad, truth, shape):
+    got = np.zeros(shape[:2], np.uint8)
+    cv2.fillConvexPoly(got, quad.astype(np.int32), 1)
+    x, y, w, h = truth
+    want = np.zeros(shape[:2], np.uint8)
+    want[y:y + h, x:x + w] = 1
+    return float((got & want).sum()) / max(1, (got | want).sum())
+
+
+def test_the_card_is_found_among_the_props():
+    photo, truth = _invitation_on_a_table()
+    quad, state, _, _ = ingest.read_trim(photo)
+    assert state == "cropped", "the card on the table was not found at all"
+    assert _iou(quad, truth, photo.shape) > 0.90
+
+
+@pytest.mark.parametrize("blur", [11, 21])
+def test_a_crop_with_the_table_in_it_is_refused(blur):
+    """The reported bug. With the edges softened the detector proposes a
+    rectangle starting at the card's left edge and running to the far corner of
+    the photo, and used to take it — it is rectangular, it is a plausible size,
+    and it contrasts with what is outside it, which was all anything asked.
+
+    What it is not is a design. Being told "I could not find it" and getting
+    the whole photo read is recoverable; being handed a crop of the tablecloth
+    and told it is your artwork is not.
+    """
+    photo, truth = _invitation_on_a_table(blur=blur)
+    quad, state, _, note = ingest.read_trim(photo)
+    if quad is not None:
+        assert _iou(quad, truth, photo.shape) > 0.85, (
+            "it cropped to something that is not the card")
+    else:
+        assert state == "unsure" and note, "it gave up without saying so"
+
+
+def test_a_design_is_a_few_flat_colours_and_a_table_is_not():
+    """The measure the refusal rests on. Named here because the numbers are the
+    argument: across every fixture in this file the real card needed one or two
+    colours to cover nine tenths of itself, and every rectangle that had the
+    table in it needed three or more."""
+    photo, (x, y, w, h) = _invitation_on_a_table()
+    card = np.array([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], np.float32)
+    whole = np.array([[0, 0], [photo.shape[1], 0],
+                      [photo.shape[1], photo.shape[0]], [0, photo.shape[0]]], np.float32)
+
+    assert ingest.flat_colours(photo, card) < ingest.TOO_MANY_COLOURS
+    assert ingest.flat_colours(photo, whole) >= ingest.TOO_MANY_COLOURS, (
+        "a whole photograph of a table counts as few enough colours to be a design")
+
+
+def test_scattered_props_are_not_mistaken_for_the_wording():
+    """Type chooses between candidates; it must never reject one. Candy corn
+    and paper spiders pass every cheap glyph test there is, so a rule that
+    demanded a crop hold "most of the text" would throw away the card in favour
+    of the confetti around it — which is how the first attempt at this went."""
+    photo = _listing_photo((244, 246, 247), props=True)
+    quad, state, _, _ = ingest.read_trim(photo)
+    assert state == "cropped"
+    aspect, _, _ = _cropped_aspect(photo)
+    assert abs(aspect - TRUE_ASPECT) / TRUE_ASPECT < 0.05

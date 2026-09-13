@@ -229,11 +229,104 @@ def get(base, path):
         return r.status, r.read(), r.headers.get("Content-Type", "")
 
 
+def get_json(base, path):
+    with urlopen(base + path, timeout=10) as r:
+        return r.status, json.loads(r.read())
+
+
 def post(base, path, body):
     req = Request(base + path, data=json.dumps(body).encode(),
                   headers={"Content-Type": "application/json"})
     with urlopen(req, timeout=30) as r:
         return r.status, json.loads(r.read())
+
+
+# --- getting rid of things ------------------------------------------------
+
+def _one_design(cfg, name="a-card"):
+    from stockforge.pipeline import Pipeline
+    from stockforge.sources import open_source
+    from test_pipeline import _listing
+
+    _listing(cfg.root.parent / "in", name)
+    pipe = Pipeline(cfg)
+    pipe.pull(open_source("folder", str(cfg.root.parent / "in")))
+    return pipe.store.designs()[0]["id"]
+
+
+def test_a_design_can_be_removed_from_the_list(panel):
+    """The counts on Sources were a dead end: they told you how many designs
+    were in there and offered no way to take any of them out again."""
+    base, cfg = panel
+    did = _one_design(cfg)
+
+    status, body = post(base, "/api/remove", {"design_id": did})
+    assert status == 200 and body["removed"] == 1
+
+    _, rows = get_json(base, "/api/designs")
+    assert did not in [r["id"] for r in rows]
+
+
+def test_removing_a_design_keeps_its_files_unless_asked(panel):
+    """Clearing a list of five thousand is tidying. Losing the PDFs somebody
+    came here for is not something to do as a side effect of tidying."""
+    base, cfg = panel
+    did = _one_design(cfg)
+    out = cfg.root / "out" / did[:16]
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "front.pdf").write_bytes(b"%PDF-1.4 pretend")
+
+    post(base, "/api/remove", {"design_id": did})
+    assert (out / "front.pdf").is_file(), "the file went without being asked for"
+
+
+def test_the_files_go_when_they_are_asked_for(panel):
+    base, cfg = panel
+    did = _one_design(cfg)
+    out = cfg.root / "out" / did[:16]
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "front.pdf").write_bytes(b"%PDF-1.4 pretend")
+    (out / "front.svg").write_text("<svg/>")
+
+    status, body = post(base, "/api/remove", {"design_id": did, "with_files": True})
+    assert status == 200 and body["files"] == 2
+    assert not (out / "front.pdf").exists() and not (out / "front.svg").exists()
+
+
+def test_the_whole_catalogue_can_be_emptied(panel):
+    base, cfg = panel
+    _one_design(cfg, "one")
+    _one_design(cfg, "two")
+
+    status, body = post(base, "/api/clear", {})
+    assert status == 200 and body["removed"] >= 2
+    _, rows = get_json(base, "/api/designs")
+    assert rows == []
+
+
+def test_clearing_can_be_narrowed_to_one_state(panel):
+    """Because "delete the failed ones and try again" is the actual thing
+    somebody wants after a model went down mid-run."""
+    base, cfg = panel
+    keep = _one_design(cfg, "keeper")
+
+    status, body = post(base, "/api/clear", {"state": "failed"})
+    assert status == 200 and body["removed"] == 0, "it removed something that was not failed"
+    _, rows = get_json(base, "/api/designs")
+    assert keep in [r["id"] for r in rows]
+
+
+def test_a_delete_cannot_reach_outside_the_workspace(panel, tmp_path):
+    """The paths come from a glob of the workspace rather than from the
+    browser, and the unlink checks again anyway. Worth a test either way: a
+    delete that trusts a path is a different class of bug from one that
+    doesn't."""
+    from stockforge.ui.server import delete_outputs
+
+    outsider = tmp_path / "not-mine.pdf"
+    outsider.write_bytes(b"someone else's file")
+    delete_outputs(cfg_root := (tmp_path / "work"), "deadbeefdeadbeef")
+    assert outsider.is_file()
 
 
 def test_every_button_that_sends_nothing_still_reaches_its_route():

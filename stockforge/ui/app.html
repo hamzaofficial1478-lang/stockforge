@@ -120,7 +120,10 @@
   .compare figure{margin:0}
   .compare figcaption{font-size:11px;text-transform:uppercase;letter-spacing:.06em;
     color:var(--ink-3);margin-bottom:6px}
-  .compare img{width:100%;border:1px solid var(--line);border-radius:7px;background:var(--bg);display:block}
+  /* Capped, because a portrait card at full width is most of a screen and you
+     are here to compare two of them, not to admire one. */
+  .compare img{width:100%;max-height:340px;object-fit:contain;border:1px solid var(--line);
+    border-radius:7px;background:var(--bg);display:block}
   .empty{color:var(--ink-3);font-size:14px;padding:26px 0;text-align:center}
   .log{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);max-height:170px;
     overflow:auto;border-top:1px solid var(--line-soft);margin-top:12px;padding-top:10px}
@@ -463,6 +466,19 @@
     <div class="card">
       <h3>Catalogue</h3>
       <div id="totals" class="grid"></div>
+      <div class="row" style="margin-top:14px">
+        <select id="clear-what" style="max-width:220px">
+          <option value="">Everything</option>
+          <option value="failed">Only the failed ones</option>
+          <option value="review">Only the ones to review</option>
+          <option value="pending">Only the ones not started</option>
+          <option value="ready">Only the cleared ones</option>
+        </select>
+        <button class="btn" onclick="doClear(false)">Remove from the list</button>
+        <button class="btn" onclick="doClear(true)">Remove, and delete the files</button>
+        <span id="clear-msg" class="mono"></span>
+      </div>
+      <p class="hint">Removing from the list leaves the files on disk.</p>
     </div>
   </section>
 
@@ -1120,7 +1136,8 @@ async function loadDesigns(){
   const rows = await api('/api/designs?limit=300');
   if (!rows.length){ $('design-table').innerHTML = '<div class="empty">nothing pulled in yet</div>'; return; }
   $('design-table').innerHTML = `<table><thead><tr>
-      <th>Design</th><th>Source</th><th>Images</th><th>Pages</th><th>State</th><th>Editable files</th></tr></thead><tbody>
+      <th>Design</th><th>Source</th><th>Images</th><th>Pages</th><th>State</th>
+      <th>Editable files</th><th></th></tr></thead><tbody>
     ${rows.map(r => `<tr>
       <td>${r.listing_url ? `<a href="${esc(r.listing_url)}" target="_blank" rel="noreferrer">${esc((r.title || r.design_key || r.id).slice(0,60))}</a>`
                           : esc((r.title || r.design_key || r.id).slice(0,60))}</td>
@@ -1129,8 +1146,43 @@ async function loadDesigns(){
       <td><span class="pill ${r.id === latestWorker.current_design_id ? 'processing' : esc(r.state)}">${r.id === latestWorker.current_design_id ? 'processing' : esc(r.state)}</span>
       ${r.id === latestWorker.current_design_id ? `<div>${esc(latestWorker.current_step)}</div>` : ''}
       ${r.issue ? `<div class="fail">${esc(r.issue)}</div>` : ''}</td>
-      <td>${outputLinks(r.files)}</td></tr>`).join('')}
+      <td>${outputLinks(r.files)}</td>
+      <td><button class="btn small" onclick="dropDesign('${esc(r.id)}', ${(r.files || []).length})"
+            title="Remove this design">Remove</button></td></tr>`).join('')}
     </tbody></table>`;
+}
+
+async function dropDesign(id, fileCount){
+  // Asked separately, because the rows and the files are different losses:
+  // clearing a list of five thousand is tidying, deleting the PDFs somebody
+  // came here for is not, and one click should not do both by accident.
+  let withFiles = false;
+  if (fileCount){
+    const answer = prompt(
+      `This design has ${fileCount} editable file${fileCount === 1 ? '' : 's'}.\n\n` +
+      `Type "files" to delete those too, or press OK to only remove it from the list.`, '');
+    if (answer === null) return;
+    withFiles = answer.trim().toLowerCase() === 'files';
+  } else if (!confirm('Remove this design from the list?')) {
+    return;
+  }
+  await api('/api/remove', {design_id: id, with_files: withFiles});
+  await loadDesigns();
+  loadTotals();
+}
+
+async function doClear(withFiles){
+  const what = $('clear-what').value;
+  const name = what ? $('clear-what').selectedOptions[0].textContent.toLowerCase() : 'every design';
+  const warn = withFiles ? '\n\nTheir editable files will be deleted from disk.' : '';
+  if (!confirm(`Remove ${name} from the catalogue?${warn}`)) return;
+  $('clear-msg').textContent = 'removing…';
+  const r = await api('/api/clear', {state: what || null, with_files: withFiles});
+  $('clear-msg').textContent = r.error ? r.error
+    : `removed ${r.removed}` + (r.files ? `, deleted ${r.files} file${r.files === 1 ? '' : 's'}` : '');
+  loadTotals();
+  loadDesigns();
+  setTimeout(() => $('clear-msg').textContent = '', 8000);
 }
 
 function outputLinks(files){
@@ -1143,29 +1195,24 @@ async function loadGaps(){
   $('gaps-card').hidden = gaps.length === 0;
   if (!gaps.length) return;
   const blocked = gaps.reduce((n, g) => n + g.designs, 0);
-  $('gaps-list').innerHTML = gaps.map(g => {
-    // A score is how close the nearest thing in the library is, 0 to 1. Below
-    // about 0.4 it is not the same object at all, and saying so in words beats
-    // a number the reader has to learn how to read.
-    const near = !g.nearest_id ? 'Nothing in your library is remotely like this.'
-      : g.nearest_score >= 0.55
-        ? `You may already have this: <span class="mono">${esc(g.nearest_id)}</span> is a fair match. Worth a look before drawing anything.`
-        : `The closest thing you have is <span class="mono">${esc(g.nearest_id)}</span>, and it is not close &mdash; a different object, so this one needs drawing.`;
-    return `
-    <div class="gap">
-      <div class="row">
-        <b>${g.designs}</b> design${g.designs === 1 ? '' : 's'} need${g.designs === 1 ? 's' : ''} this drawing
-        <span class="tag">${esc(g.kind)}</span>
-      </div>
-      <p class="what" style="margin:4px 0">${esc(g.description)}</p>
-      <p class="hint">${near}${
-        g.variants.length ? `<br>Also described as &ldquo;${esc(g.variants[0])}&rdquo; elsewhere &mdash; one drawing covers both.` : ''}</p>
-    </div>`;
-  }).join('')
-    + `<p class="hint" style="margin-top:12px"><b>${gaps.length} drawing${gaps.length === 1 ? '' : 's'} to make.</b> `
-    + `Between them they are holding up ${blocked} design${blocked === 1 ? '' : 's'}. `
-    + `Until they exist, those designs stay on this page.</p>`;
+  // A table, because this is a list of jobs. It was three sentences of prose
+  // per entry, repeated seven times, and the thing you actually want to know
+  // — what to draw and how much it unblocks — was buried in the middle of it.
+  $('gaps-list').innerHTML = `<table><thead><tr>
+      <th>What to draw</th><th>Kind</th><th>Unblocks</th><th>Nearest you have</th>
+    </tr></thead><tbody>${gaps.map(g => `<tr>
+      <td>${esc(g.description)}${g.variants.length
+            ? `<br><span class="hint">also &ldquo;${esc(g.variants[0])}&rdquo; &mdash; one drawing does both</span>` : ''}</td>
+      <td class="mono">${esc(g.kind)}</td>
+      <td>${g.designs}</td>
+      <td>${!g.nearest_id ? '<span class="hint">nothing like it</span>'
+            : g.nearest_score >= 0.55
+              ? `<span class="mono">${esc(g.nearest_id)}</span> <span class="hint">&mdash; close, look first</span>`
+              : `<span class="mono">${esc(g.nearest_id)}</span> <span class="hint">&mdash; not the same thing</span>`}</td>
+    </tr>`).join('')}</tbody></table>
+    <p class="hint" style="margin-top:10px"><b>${gaps.length} to draw</b>, holding up ${blocked} design${blocked === 1 ? '' : 's'}.</p>`;
 }
+
 
 function connRoleChanged(){
   // An image model is tested by asking it for a picture, not for words. Saying
@@ -1243,45 +1290,47 @@ async function loadReview(){
     $('review-list').innerHTML = '<div class="card"><div class="empty">Nothing waiting on you.</div></div>';
     return;
   }
+  // Title, why, the two pictures, what to do. The settings that used to sit
+  // between the pictures and the buttons are behind a summary now — they are
+  // for the run after this one, not for the decision in front of you.
   $('review-list').innerHTML = rows.map(r => {
     const mix = r.mix == null ? null : Math.round(r.mix * 100);
-    const balance = mix == null
-      ? `using the Setup default (${Math.round((CFG_MIX ?? 0.5) * 100)}% borrowed)`
-      : `${100 - mix}% this design, ${mix}% borrowed from your others`;
     return `
     <div class="card">
       <h3>${esc((r.title || r.design_id).slice(0,80))}</h3>
-      <p class="why"><b>Why it stopped:</b> ${esc(r.reason)}</p>
-      <p class="hint">Balance used: ${balance}</p>
+      <p class="why">${esc(r.reason)}</p>
       <div class="compare">
-        <figure><figcaption>your design</figcaption>
+        <figure><figcaption>yours</figcaption>
           ${r.source_image ? `<img loading="lazy" src="${fileURL(r.source_image)}" alt="">`
                            : '<div class="empty">no flat image</div>'}</figure>
         <figure><figcaption>what it made</figcaption>
           ${r.rebuilds?.length ? `<img loading="lazy" src="${fileURL(r.rebuilds[0])}" alt="">`
                                : '<div class="empty">nothing was drawn</div>'}</figure>
       </div>
-      <p class="hint">Files: ${outputLinks(r.files)}</p>
-      <div class="row" style="margin-top:8px;gap:8px;align-items:center">
-        <label class="mono" style="opacity:.7">balance for the next run</label>
-        <select class="small" onchange="setMix('${r.design_id}', this.value)">
-          ${[['default','use the Setup default'],['0','100% this design — copy it, borrow nothing'],
-             ['0.3','70 / 30 — mostly this design'],['0.5','50 / 50 — even mix'],
-             ['0.7','30 / 70 — mostly borrowed'],['1','0 / 100 — borrow everything it can']]
-            .map(([v,l]) => `<option value="${v}"${String(r.mix ?? 'default') === v ? ' selected' : ''}>${l}</option>`).join('')}
-        </select>
-        <span class="mono" id="mix-msg-${r.design_id}"></span>
-      </div>
-      <div class="row" style="margin-top:10px">
+      <div class="row" style="margin-top:12px">
         <button class="btn primary small" onclick="decide('${r.design_id}','approve')">Clear for delivery</button>
         <button class="btn small" onclick="decide('${r.design_id}','retry')">Run again</button>
-        <button class="btn small" onclick="decide('${r.design_id}','reject')">Keep as master only</button>
+        <button class="btn small" onclick="decide('${r.design_id}','reject')">Master only</button>
         <button class="btn small danger" onclick="removeDesign('${r.design_id}', this)">Remove</button>
-        ${r.listing_url ? `<a class="mono" href="${esc(r.listing_url)}" target="_blank" rel="noreferrer">listing ↗</a>` : ''}
+        ${r.listing_url ? `<a class="mono" href="${esc(r.listing_url)}" target="_blank" rel="noreferrer">listing &#8599;</a>` : ''}
       </div>
+      <details class="more" style="margin-top:10px">
+        <summary>Files, and the balance for the next run</summary>
+        <p class="hint" style="margin:8px 0 4px">${outputLinks(r.files)}</p>
+        <div class="row" style="gap:8px;align-items:center">
+          <select class="small" onchange="setMix('${r.design_id}', this.value)">
+            ${[['default', `Setup default (${Math.round((CFG_MIX ?? 0.5) * 100)}% borrowed)`],
+               ['0','copy it &mdash; borrow nothing'], ['0.3','70 / 30'], ['0.5','50 / 50'],
+               ['0.7','30 / 70'], ['1','borrow everything it can']]
+              .map(([v,l]) => `<option value="${v}"${String(r.mix ?? 'default') === v ? ' selected' : ''}>${l}</option>`).join('')}
+          </select>
+          <span class="mono" id="mix-msg-${r.design_id}">${mix == null ? '' : `now ${100 - mix} / ${mix}`}</span>
+        </div>
+      </details>
     </div>`;
   }).join('');
 }
+
 
 async function setMix(id, value){
   const msg = $('mix-msg-' + id);
