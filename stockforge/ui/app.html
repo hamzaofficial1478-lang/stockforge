@@ -259,6 +259,7 @@
           <div><label>Used for</label>
             <select id="conn-role" onchange="connRoleChanged()">
               <option value="vision">Reading designs (needs to see images)</option>
+              <option value="quick">The easy questions &mdash; colours, page count (small and fast)</option>
               <option value="text">Titles and keywords (text only)</option>
               <option value="image">Drawing artwork (makes pictures)</option>
             </select></div>
@@ -479,6 +480,29 @@
         <span id="clear-msg" class="mono"></span>
       </div>
       <p class="hint">Removing from the list leaves the files on disk.</p>
+    </div>
+
+    <div class="card">
+      <h3>Which niche are you working on</h3>
+      <p class="hint">Halloween cards and business cards never mix. Everything pulled in
+        or made is filed under the one chosen here, and it stays chosen after a restart.</p>
+      <div id="niche-now" class="row" style="margin-bottom:14px"></div>
+      <div class="grid" style="max-width:560px">
+        <div><label for="niche-name">Niche name</label>
+          <input id="niche-name" placeholder="Halloween cards"
+                 onkeydown="if(event.key==='Enter') chooseNiche()"></div>
+        <div><label for="niche-built">Have you built these before?</label>
+          <select id="niche-built">
+            <option value="yes">Yes &mdash; carry on with what is there</option>
+            <option value="no">No &mdash; start this one fresh</option>
+          </select></div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" onclick="chooseNiche()">Use this niche</button>
+        <span id="niche-msg" class="mono"></span>
+      </div>
+      <div id="niche-near"></div>
+      <div id="niche-list" style="margin-top:14px"></div>
     </div>
 
     <div class="card">
@@ -1193,6 +1217,82 @@ async function dropDesign(id, fileCount){
   loadTotals();
 }
 
+let NICHES = [], NICHE = '', NICHE_NEEDS = 24;
+
+async function loadNiches(){
+  const r = await api('/api/collections', {action: 'list'});
+  NICHES = r.collections || [];
+  NICHE = r.current || '';
+  NICHE_NEEDS = r.needs || 24;
+  paintNiches();
+}
+
+function paintNiches(){
+  const now = NICHES.find(c => c.id === NICHE);
+  $('niche-now').innerHTML = now
+    ? `<b>Working on ${esc(now.name)}</b>
+       <span class="hint">${now.read} read &middot; ${now.designs} pulled in &middot; ${now.made} made</span>`
+    : `<b style="color:var(--bad)">No niche chosen.</b>
+       <span class="hint">Nothing can be made until you pick one.</span>`;
+
+  $('niche-list').innerHTML = !NICHES.length ? '' :
+    `<table><thead><tr><th>Niche</th><th>Read</th><th>Made</th><th></th></tr></thead><tbody>`
+    + NICHES.map(c => `<tr>
+        <td>${c.id === NICHE ? '<b>' + esc(c.name) + '</b>' : esc(c.name)}
+          <br><span class="hint mono">${esc(c.id)}</span></td>
+        <td>${c.read}${c.read < NICHE_NEEDS ? ` <span class="hint">of ${NICHE_NEEDS}</span>` : ''}</td>
+        <td>${c.made}</td>
+        <td>${c.id === NICHE ? '<span class="hint">in use</span>'
+              : `<button class="btn small" onclick="useNiche('${esc(c.id)}')">Use</button>`}</td>
+      </tr>`).join('') + '</tbody></table>';
+
+  // The Make button is not available without a niche, because a batch mixed
+  // across niches is the one mistake that ruins a whole run.
+  const ready = now && now.read >= NICHE_NEEDS;
+  const make = document.querySelector("button[onclick='doMake()']");
+  if (make){
+    make.disabled = !ready;
+    make.title = ready ? '' : (now
+      ? `${now.name} has ${now.read} of the ${NICHE_NEEDS} designs needed to mix from`
+      : 'Choose a niche first');
+  }
+}
+
+async function useNiche(id){
+  const r = await api('/api/collections', {action: 'use', name: id});
+  if (r.error) return $('niche-msg').textContent = r.error;
+  NICHES = r.collections || NICHES; NICHE = r.chosen;
+  $('niche-msg').textContent = '';
+  $('niche-near').innerHTML = '';
+  paintNiches(); loadTotals(); loadDesigns();
+}
+
+async function chooseNiche(){
+  const name = $('niche-name').value.trim();
+  if (!name) return $('niche-msg').textContent = 'type the name first';
+  const built = $('niche-built').value === 'yes';
+  $('niche-msg').textContent = 'looking…';
+  $('niche-near').innerHTML = '';
+  const r = await api('/api/collections', {name, have_built: built});
+  if (r.error) return $('niche-msg').textContent = r.error;
+  if (r.near && !r.chosen){
+    $('niche-msg').textContent = r.note || '';
+    $('niche-near').innerHTML = '<p class="hint">'
+      + r.near.map(c => `<button class="btn small" style="margin:4px 6px 0 0"
+          onclick="useNiche('${esc(c.id)}')">${esc(c.name)}</button>`).join('')
+      + '</p>';
+    return;
+  }
+  NICHES = r.collections || NICHES; NICHE = r.chosen;
+  $('niche-name').value = '';
+  $('niche-msg').textContent = r.created ? `started ${r.name}` : `working on ${r.name || r.chosen}`;
+  if (r.near && r.near.length)
+    $('niche-near').innerHTML = '<p class="hint">These already exist and look similar: '
+      + r.near.map(c => esc(c.name)).join(', ') + '</p>';
+  paintNiches(); loadTotals(); loadDesigns();
+  setTimeout(() => $('niche-msg').textContent = '', 8000);
+}
+
 async function doMake(){
   const count = parseInt($('make-count').value || '1', 10);
   const msg = $('make-msg');
@@ -1201,7 +1301,8 @@ async function doMake(){
   const r = await api('/api/make', {count, mix: $('make-mix').value || null});
   if (r.error) return msg.textContent = r.error;
   const each = r.made ? ` (${(r.seconds / r.made).toFixed(1)}s each)` : '';
-  msg.textContent = `${r.made} of ${r.asked} in ${r.seconds}s${each}`;
+  msg.textContent = `${r.made} of ${r.asked} in ${r.seconds}s${each}`
+    + (r.collection_name ? ` — filed under ${r.collection_name}` : '');
   const lines = [];
   if (r.discarded)
     lines.push(`<div>${r.discarded} thrown away for looking like something you already have</div>`);
@@ -1211,7 +1312,7 @@ async function doMake(){
   if ((r.designs || []).length > 12)
     lines.push(`<div>… and ${r.designs.length - 12} more</div>`);
   $('make-out').innerHTML = lines.join('');
-  loadTotals(); loadDesigns();
+  loadTotals(); loadDesigns(); loadNiches();
 }
 
 async function doClear(withFiles){
@@ -1423,7 +1524,7 @@ async function loadReady(){
 /* ── loop ─────────────────────────────────────────── */
 function refresh(){
   if (active === 'setup')   { loadHealth(); loadConfig(); loadConns(); }
-  if (active === 'sources') { loadTotals(); }
+  if (active === 'sources') { loadTotals(); loadNiches(); }
   if (active === 'queue')   { loadDesigns(); }
   if (active === 'review')  { loadReview(); loadGaps(); }
   if (active === 'deliver') { loadReady(); loadTotals(); }

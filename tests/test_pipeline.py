@@ -15,7 +15,7 @@ import pytest
 
 from stockforge import providers
 from stockforge.config import Settings
-from stockforge.pipeline import Pipeline
+from stockforge.pipeline import Pipeline, out_dir_for
 from stockforge.providers.base import VisionProvider
 from stockforge.schema import (
     Background, Box, ColourRole, Critique, DesignSpec, FontClass, Grid,
@@ -221,7 +221,7 @@ def test_a_design_goes_all_the_way_through(workspace, tmp_path):
     assert spec.texts()[1].content == "Rosa & Elliot"   # the first design's copy
 
     # and there are files on disk to show for it
-    out = workspace.root / "out" / design_id[:16]
+    out = out_dir_for(workspace.root, design_id)
     assert (out / f"{design_id[:16]}-invitation-master.pdf").is_file()
     assert (out / f"{design_id[:16]}-invitation.eps").is_file()
     assert (out / f"{design_id[:16]}-invitation-preview.jpg").is_file()
@@ -355,7 +355,7 @@ def test_a_flagged_design_gets_its_master_and_goes_no_further(workspace, tmp_pat
 
     design = pipe.store.designs()[0]
     assert design["state"] == "master_only"
-    assert (workspace.root / "out" / design["id"][:16]).is_dir(), "the master is still made"
+    assert out_dir_for(workspace.root, design["id"]).is_dir(), "the master is still made"
     assert pipe.deliverable() == ([], [])
     assert pipe.held_back() == 1
 
@@ -462,7 +462,7 @@ def test_a_design_with_no_master_is_failed_not_ready(workspace, tmp_path, monkey
     assert pipe.status()["ready_to_publish"] == 0
     assert pipe.status()["failed"] == 1
 
-    out = workspace.root / "out" / design_id[:16]
+    out = out_dir_for(workspace.root, design_id)
     assert not list(out.glob("*.pdf")), "no master was written, so none may be claimed"
     assert not list(out.glob("*.eps"))
 
@@ -507,7 +507,7 @@ def test_no_eps_is_a_master_only_design_not_a_stock_one(workspace, tmp_path, mon
     state = pipe.build(design_id)
 
     assert state == "master_only", state
-    out = workspace.root / "out" / design_id[:16]
+    out = out_dir_for(workspace.root, design_id)
     assert list(out.glob("*-master.pdf")), "the master did export and should be kept"
     assert not list(out.glob("*.eps"))
     rows, files = pipe.deliverable()

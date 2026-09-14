@@ -47,7 +47,7 @@ class Connection:
     #         which is why testing one as though it were a chat model reports
     #         "an odd reply": an image model answers with an image, and the
     #         message it comes back in has no text content at all.
-    role: str = "vision"           # vision | text | image
+    role: str = "vision"           # vision | quick | text | image
     active: bool = False
     last_tested: float = 0.0
     last_result: str = ""
@@ -169,7 +169,8 @@ def live(root: Path, role: str) -> list[Connection]:
 
 def env_for(connection: Connection) -> dict[str, str]:
     """The settings that make this connection the one the pipeline uses."""
-    prefix = {"vision": "SF_VISION", "image": "SF_IMAGE"}.get(connection.role, "SF_REASON")
+    prefix = {"vision": "SF_VISION", "image": "SF_IMAGE",
+              "quick": "SF_QUICK"}.get(connection.role, "SF_REASON")
     backend = connection.backend or "openai"
     if backend != "openai":
         # A signed-in backend has no server to point at, and writing a stale

@@ -66,10 +66,11 @@ _ENV_FILE: Path | None = None
 # What the control panel is allowed to write, and therefore what it is trusted
 # to own. Kept here rather than imported from the panel so that loading
 # settings never drags the server module in.
-PANEL_OWNED = ("SF_VISION_", "SF_REASON_", "SF_IMAGE_", "SF_ETSY_", "SF_FTP_",
+PANEL_OWNED = ("SF_VISION_", "SF_REASON_", "SF_IMAGE_", "SF_QUICK_", "SF_ETSY_", "SF_FTP_",
                "SF_MIX", "SF_DERIVE_", "SF_DISTINCT_", "SF_MOTIF_",
                "SF_CRITIQUE_", "SF_PRESERVE_", "SF_PUBLISH", "SF_WORKERS",
-               "SF_ROOT", "SF_FONTS", "SF_MOTIFS")
+               "SF_ROOT", "SF_FONTS", "SF_MOTIFS",
+               "SF_COLLECTION", "SF_SEED_")
 
 
 def _panel_owned(key: str) -> bool:
@@ -248,6 +249,18 @@ class Settings:
     # and a model that keeps answering may take as long as the card needs.
     # Two minutes of nothing is a model that has stopped, not one that is busy.
     silence: int = field(default_factory=lambda: _i("SF_VISION_SILENCE", 120), metadata={"env": "SF_VISION_SILENCE"})
+
+    # --- which niche is being worked on -----------------------------------
+    # Halloween cards and business cards are not the same catalogue, and a
+    # palette borrowed across that line is a mistake everybody notices. Named
+    # by the owner, never inferred, and kept here so it survives a restart —
+    # coming back the next morning to find the program quietly filing into a
+    # different niche is the same mistake by another route.
+    collection: str = field(default_factory=lambda: os.environ.get("SF_COLLECTION", "").strip(), metadata={"env": "SF_COLLECTION"})
+    # How many designs a niche needs before it can be mixed from. Below this
+    # there are so few combinations that a run repeats itself whatever the
+    # ledger does: the mixer is drawing from too small a bag.
+    seed_designs: int = field(default_factory=lambda: _i("SF_SEED_DESIGNS", 24), metadata={"env": "SF_SEED_DESIGNS"})
 
     # --- did we actually rebuild it ---------------------------------------
     # How much of a surface may be placed photograph before we stop calling it

@@ -17,7 +17,7 @@ import pytest
 
 from stockforge import providers
 from stockforge.config import Settings
-from stockforge.pipeline import Pipeline
+from stockforge.pipeline import Pipeline, out_dir_for
 from stockforge.schema import (
     Background, Box, ColourRole, Critique, DesignSpec, FontClass, Grid,
     MotifElement, MotifKind, ShapeElement, TextElement, TypeRole,
@@ -177,7 +177,7 @@ def test_each_surface_is_judged_against_its_own_image(workspace, tmp_path):
 
 def test_both_surfaces_produce_their_own_files(workspace, tmp_path):
     pipe, design_id, _ = _build(workspace, tmp_path, _TwoSurfaces())
-    out = workspace.root / "out" / design_id[:16]
+    out = out_dir_for(workspace.root, design_id)
 
     names = sorted(p.name for p in out.glob("*-master.pdf"))
     assert len(names) == 2

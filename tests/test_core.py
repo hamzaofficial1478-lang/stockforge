@@ -318,7 +318,7 @@ def test_every_setting_the_code_reads_is_written_down():
     # Prefixes, not variables in their own right — handed to from_env(), or
     # used to ask whether a key belongs to the panel. The settings they build
     # are documented under their full names.
-    read -= {"SF_VISION", "SF_REASON", "SF_IMAGE"}
+    read -= {"SF_VISION", "SF_REASON", "SF_IMAGE", "SF_QUICK"}
     read = {name for name in read if not name.endswith("_")}
 
     assert read <= named, (

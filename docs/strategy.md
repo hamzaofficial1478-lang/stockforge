@@ -138,11 +138,59 @@ scratch — for when the flattening or the prompts have changed underneath a
 stored read. A design that failed *during* reading has nothing stored, so it
 reads again on its own without being asked.
 
+## Niches: keeping one catalogue out of another
+
+The owner works a month on Halloween cards and then moves to business cards.
+Both live in the same program and the same database, and a palette borrowed
+across that line is not a new design — it is a mistake everybody notices.
+
+There was a wall before and it was not one. Donors were matched on the
+`occasion` string the model wrote, and **when nothing matched it widened to the
+whole pool**. So a niche with only a few designs in it borrowed from every other
+niche. That is the failure at its very worst: it happens exactly when the new
+niche is small, and that is exactly when nobody is checking.
+
+A niche is now named by the owner and never inferred.
+
+- **Nothing is made without one.** The Make button is unavailable until a niche
+  is chosen, and `make()` refuses with a reason rather than guessing.
+- **Donors come only from inside it.** The pool is a join against the niche, not
+  a filter applied afterwards, so an unfiled design cannot leak in.
+- **A niche needs 24 read designs before it can be mixed from.** Below that the
+  combinations available are so few that a run repeats itself whatever the
+  ledger does — the mixer is drawing from too small a bag. `SF_SEED_DESIGNS`.
+- **The ledger is per niche**, so starting a new one does not begin
+  half-exhausted, and clearing one does not clear the others.
+- **Files land in `out/<niche>/`.** "Are they mixed?" is a question answered by
+  opening a folder, not by running a query.
+- **The choice survives a restart** — it is in `.env` as `SF_COLLECTION`, so
+  coming back the next morning cannot quietly file into a different niche.
+
+Typing a name asks one question: *have you built these before?* Saying yes
+looks it up and refuses to invent one; saying no creates it and refuses to
+quietly merge into an existing one. A near match is **offered and never taken** —
+choosing one on the owner's behalf is precisely how a month of business cards
+ends up filed under Halloween. "halloween cards" suggests "Halloween
+invitations"; "business cards" suggests nothing at all, which is the half that
+matters.
+
+Designs from before any of this go to a niche called `unfiled`, rather than
+being guessed at or silently joining whatever is started next.
+
+## A smaller model for the easy questions
+
+Three of the five reading passes do not need a big model. The palette is already
+measured off the pixels and the model only names the roles; provenance is "is
+any of this a photograph"; the survey is "which of these images are pages".
+Those three go to `SF_QUICK_MODEL` where one is configured, and because
+everything runs side by side the two hard passes — type and structure — set the
+pace rather than the sum of all five. Leave it unset and the reading model does
+all of it exactly as before.
+
 ## What would move the needle next
 
-- **Take the reasoning effort off the cheap passes.** Palette barely needs a
-  model at all — the colours are already measured from the pixels and only the
-  roles need assigning.
-- **A faster model for the reading passes.** Five calls at 3.7 minutes is the
-  remaining cost of the recovery backlog, and most of those questions are not
-  hard enough to need a 30B reasoning model.
+- **Measure the real per-call time per model.** Everything above is arithmetic
+  on one measured figure; the next honest gain needs to know which of the two
+  hard passes is actually the slow one.
+- **Drop the palette call entirely.** The colours are already measured from the
+  pixels. Naming their roles could be a rule rather than a request.

@@ -29,7 +29,7 @@ import cv2
 import numpy as np
 from pydantic import BaseModel, Field
 
-from ..providers import VisionProvider, vision
+from ..providers import VisionProvider, quick, vision
 from ..schema import (
     Background, Canvas, ColourRole, DesignDNA, DesignSpec, Element, FontClass,
     Grid, MotifElement, Page, Palette, Provenance, RasterElement, ShapeElement,
@@ -384,9 +384,14 @@ def _read_together(images: list[Path], surfaces: list, primary: Path,
     be read again, and saying so immediately is cheaper than assembling a spec
     around a hole.
     """
+    # The easy two go to the small model where one is configured. The palette
+    # is already measured off the pixels and only its roles need naming, and
+    # provenance is "is any of this a photograph" — neither is worth a big
+    # model's minutes, and they run beside the hard ones rather than after them.
+    easy = _easy(provider)
     jobs: list[tuple] = [
-        ("palette", lambda: palette(primary, provider)),
-        ("provenance", lambda: provenance(images, provider)),
+        ("palette", lambda: palette(primary, easy)),
+        ("provenance", lambda: provenance(images, easy)),
     ]
     for index, surface in enumerate(surfaces):
         flat = images[surface.image_index]
@@ -418,6 +423,19 @@ def _read_together(images: list[Path], surfaces: list, primary: Path,
                 future.cancel()
             raise
     return out
+
+
+def _easy(provider: VisionProvider) -> VisionProvider:
+    """Which model answers the questions that do not need a big one.
+
+    A caller that hands `analyse` a provider has said which model to use, and
+    that has to keep meaning what it says — a lane's model, a test's stub. The
+    small model is an upgrade you opt into by configuring one, not something
+    that quietly takes over whatever it was told to use.
+    """
+    if os.environ.get("SF_QUICK_MODEL"):
+        return quick()
+    return provider
 
 
 def _concurrency() -> int:
@@ -457,7 +475,7 @@ def analyse(
     mockups = set(mockups or ())
 
     report("Identifying pages — waiting for the vision model")
-    sv = survey(images, provider)
+    sv = survey(images, _easy(provider))
     # The model has its own opinion; take both, since either noticing is worth
     # more than neither.
     staged = mockups | {i for i in sv.mockup_indices if 0 <= i < len(images)}

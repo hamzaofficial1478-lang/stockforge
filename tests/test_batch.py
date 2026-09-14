@@ -194,11 +194,23 @@ class _CountingCopy(ScriptedProvider):
         return super().structured(system, user_text, images, model, **kw)
 
 
-def _seed_pool(pipe, specs):
+NICHE = "test-niche"
+
+
+def _seed_pool(pipe, specs, niche=NICHE):
+    """A pool filed under a niche, because nothing is made without one.
+
+    `save_read` as well as `save_spec`: a niche counts designs whose artwork has
+    actually been looked at, and a row with a spec but no reading is one that
+    was never read.
+    """
+    pipe.store.ensure_collection(niche, niche.replace("-", " ").title())
     for i, spec in enumerate(specs):
         did = f"{i:024d}"
-        pipe.store.add_made_design(did, f"seed {i}", f"seed-{i}")
-        pipe.store.save_spec(did, spec.model_dump(mode="json"))
+        pipe.store.add_made_design(did, f"seed {i}", f"seed-{i}", collection=niche)
+        payload = spec.model_dump(mode="json")
+        pipe.store.save_spec(did, payload)
+        pipe.store.save_read(did, payload)
 
 
 def test_a_whole_batch_costs_one_model_call(workspace):
@@ -209,10 +221,10 @@ def test_a_whole_batch_costs_one_model_call(workspace):
     providers.set_provider("vision", provider)
     providers.set_provider("reason", provider)
     pipe = Pipeline(workspace)
-    _seed_pool(pipe, _varied_pool(10))
+    _seed_pool(pipe, _varied_pool(30))
 
     provider.calls = 0
-    result = pipe.make(count=12)
+    result = pipe.make(count=12, collection=NICHE)
 
     assert result["made"] > 0, result["note"]
     assert provider.calls <= 6, (
@@ -226,10 +238,10 @@ def test_a_batch_is_quick_enough_to_be_worth_having(workspace):
     providers.set_provider("vision", ScriptedProvider())
     providers.set_provider("reason", ScriptedProvider())
     pipe = Pipeline(workspace)
-    _seed_pool(pipe, _varied_pool(10))
+    _seed_pool(pipe, _varied_pool(30))
 
     started = time.monotonic()
-    result = pipe.make(count=8)
+    result = pipe.make(count=8, collection=NICHE)
     each = (time.monotonic() - started) / max(1, result["made"])
     assert each < 20, f"{each:.1f}s per design of purely local work"
 
@@ -241,9 +253,9 @@ def test_a_look_alike_is_thrown_away_rather_than_queued(workspace):
     providers.set_provider("reason", ScriptedProvider())
     pipe = Pipeline(workspace)
     # Ten copies of one design: every mix of it is the same picture.
-    _seed_pool(pipe, [_spec(f"same{i:02d}", 100, "Celebrate") for i in range(10)])
+    _seed_pool(pipe, [_spec(f"same{i:02d}", 100, "Celebrate") for i in range(30)])
 
-    result = pipe.make(count=12)
+    result = pipe.make(count=12, collection=NICHE)
     assert not [d for d in result["designs"] if d["state"] == "review"], (
         "near-repeats were queued for review instead of being replaced")
     assert result["discarded"] > 0, "this pool should have produced look-alikes"
@@ -254,10 +266,10 @@ def test_a_second_run_does_not_repeat_the_first(workspace):
     providers.set_provider("vision", ScriptedProvider())
     providers.set_provider("reason", ScriptedProvider())
     pipe = Pipeline(workspace)
-    _seed_pool(pipe, _varied_pool(10))
+    _seed_pool(pipe, _varied_pool(30))
 
-    first = pipe.make(count=6)
-    second = pipe.make(count=6)
+    first = pipe.make(count=6, collection=NICHE)
+    second = pipe.make(count=6, collection=NICHE)
     assert first["made"] and second["made"]
     overlap = {d["design_id"] for d in first["designs"]} & {
         d["design_id"] for d in second["designs"]}
@@ -265,8 +277,13 @@ def test_a_second_run_does_not_repeat_the_first(workspace):
 
 
 def test_nothing_to_mix_from_is_said_plainly(workspace):
+    """An empty niche says what it needs rather than producing nothing and
+    leaving you to guess why."""
     providers.set_provider("vision", ScriptedProvider())
     providers.set_provider("reason", ScriptedProvider())
-    result = Pipeline(workspace).make(count=10)
+    pipe = Pipeline(workspace)
+    pipe.store.ensure_collection(NICHE, "Test niche")
+
+    result = pipe.make(count=10, collection=NICHE)
     assert result["made"] == 0
-    assert "not enough designs read in yet" in result["note"]
+    assert "needs 24" in result["note"], result["note"]

@@ -34,6 +34,7 @@ from pydantic import ValidationError
 from .schema import DesignSpec
 from .sources import Design, Source
 from .stages import critique as critique_stage
+from . import collections as collections_stage
 from .stages import batch as batch_stage
 from .stages import compose as compose_stage
 from .stages import derive as derive_stage
@@ -62,6 +63,22 @@ def _seed(*parts: object) -> int:
     """
     blob = ":".join(str(p) for p in parts).encode()
     return int.from_bytes(hashlib.sha256(blob).digest()[:4], "big")
+
+
+def out_dir_for(root: Path, design_id: str, niche: str | None = None) -> Path:
+    """Where a design's finished files live.
+
+    Under out/<niche>/<id> now, and under out/<id> before niches existed. One
+    definition because four places looked for them and a build that wrote to a
+    path nothing read from is indistinguishable from a build that produced
+    nothing.
+    """
+    legacy = root / "out" / design_id[:16]
+    if niche:
+        return root / "out" / niche / design_id[:16]
+    hit = next((p for p in sorted((root / "out").glob(f"*/{design_id[:16]}"))
+                if p.is_dir()), None)
+    return hit or legacy
 
 
 def _new_id(kind: str, fingerprint: str) -> str:
@@ -138,6 +155,7 @@ class Pipeline:
                 id=design.stable_id, design_key=design.design_id, title=design.title,
                 tags=json.dumps(design.tags), listing_url=design.listing_url,
                 source=design.source, image_count=len(flats), state="pending",
+                collection=self.cfg.collection or "unfiled",
             )
             count += 1
             log.info("pulled %s (%d images)", design.design_id[:60], len(flats))
@@ -326,7 +344,7 @@ class Pipeline:
     def _export(self, derived: DesignSpec, design_id: str, distinct: float,
                 master_only: bool = False, on_twin: str = "review") -> str:
         """Export every page, including imperfect recoveries that need editing."""
-        out_dir = self.cfg.root / "out" / design_id[:16]
+        out_dir = out_dir_for(self.cfg.root, design_id, self._niche_folder(design_id))
         holes: list[str] = []
         typeless: list[str] = []
         toothless: list[str] = []
@@ -491,18 +509,33 @@ class Pipeline:
                      design_id[:8], derived.provenance.reason)
         return state
 
-    def _specs(self, exclude: str | None = None, cap: int | None = None) -> list[DesignSpec]:
+    def _specs(self, exclude: str | None = None, cap: int | None = None,
+               collection: str | None = None) -> list[DesignSpec]:
         """Every design already read, newest first.
 
         A spec that will not load is said out loud. Swallowing it silently is
         how an empty donor pool looks exactly like a catalogue of one.
+
+        `collection` is the wall between niches. It is a join rather than a
+        filter applied afterwards, so a design with no niche on it cannot leak
+        into one — an unfiled Halloween card lending its palette to a business
+        card is the exact mistake this exists to stop.
         """
-        sql = "SELECT design_id FROM specs"
         params: tuple = ()
-        if exclude:
-            sql += " WHERE design_id != ?"
-            params = (exclude,)
-        sql += " ORDER BY updated_at DESC"
+        if collection:
+            sql = ("SELECT s.design_id FROM specs s JOIN designs d ON d.id = s.design_id "
+                   "WHERE d.collection = ?")
+            params = (collection,)
+            if exclude:
+                sql += " AND s.design_id != ?"
+                params = (collection, exclude)
+            sql += " ORDER BY s.updated_at DESC"
+        else:
+            sql = "SELECT design_id FROM specs"
+            if exclude:
+                sql += " WHERE design_id != ?"
+                params = (exclude,)
+            sql += " ORDER BY updated_at DESC"
         if cap:
             sql += f" LIMIT {int(cap)}"
 
@@ -603,7 +636,7 @@ class Pipeline:
     # ------------------------------------------------------------------
 
     def make(self, count: int, mix: float | None = None, strength: float | None = None,
-             seed: int = 0, on_each=None) -> dict:
+             seed: int = 0, on_each=None, collection: str | None = None) -> dict:
         """New designs from what has already been read. No reading, no model
         call per design.
 
@@ -621,11 +654,36 @@ class Pipeline:
         near-identical designs and asking which to keep is the work this is
         supposed to remove.
         """
-        pool = self._specs(exclude="", cap=200)
+        # A niche is not optional and is never guessed. Making business cards
+        # out of Halloween cards is one instruction away from happening, and it
+        # is not the kind of mistake you spot in a batch of forty-eight.
+        niche = collection or self.cfg.collection
+        if not niche:
+            return {"made": 0, "asked": count, "discarded": 0, "designs": [],
+                    "failed": [], "collection": "",
+                    "note": "Choose which niche you are working on first. Nothing is "
+                            "made until you do — mixing across niches is the one "
+                            "mistake that ruins a whole run."}
+
+        record = self.store.collection(niche)
+        if record is None:
+            return {"made": 0, "asked": count, "discarded": 0, "designs": [],
+                    "failed": [], "collection": niche,
+                    "note": f"There is no niche called {niche!r}. Create it first, or "
+                            f"pick one that exists."}
+
+        enough, why = collections_stage.ready(
+            {**record, **self._collection_counts(niche)}, self.cfg.seed_designs)
+        if not enough:
+            return {"made": 0, "asked": count, "discarded": 0, "designs": [],
+                    "failed": [], "collection": niche, "note": why}
+
+        pool = self._specs(exclude="", cap=200, collection=niche)
         if len(pool) < 2:
             return {"made": 0, "asked": count, "discarded": 0, "designs": [], "failed": [],
-                    "note": "there are not enough designs read in yet to mix from. Pull "
-                            "some in and run the queue once, then come back."}
+                    "collection": niche,
+                    "note": f"{record['name']} has nothing readable to mix from yet. "
+                            f"Pull some in and run the queue once, then come back."}
 
         mix = self.cfg.mix if mix is None else mix
         strength = self.cfg.derive_strength if strength is None else strength
@@ -644,8 +702,8 @@ class Pipeline:
                 f"that have not been made before")
             chosen = batch_stage.plan(
                 pool, short, mix=mix, strength=strength,
-                seen=self.store.recipe_seen, used=self.store.ingredient_use(),
-                seed=seed + wave)
+                seen=self.store.recipe_seen,
+                used=self.store.ingredient_use(niche), seed=seed + wave)
             exhausted = chosen.exhausted
             note = chosen.note or note
             if not chosen.made:
@@ -655,7 +713,7 @@ class Pipeline:
             # would otherwise both take the last free combination.
             kept = [pl for pl in chosen.made
                     if self.store.record_recipe(pl.fingerprint, pl.recipe.base,
-                                                pl.recipe.as_dict())]
+                                                pl.recipe.as_dict(), collection=niche)]
             if not kept:
                 break
 
@@ -677,7 +735,7 @@ class Pipeline:
                 self.on_progress(f"Drawing and exporting {len(made) + 1} of {count}")
                 try:
                     self.store.add_made_design(design_id, planned.recipe.summary(),
-                                               planned.fingerprint)
+                                               planned.fingerprint, collection=niche)
                     self.store.save_spec(design_id, spec.model_dump(mode="json"))
                     outcome = self._export(spec, design_id, distinct=1.0, on_twin="discard")
                     if outcome == "twin":
@@ -706,15 +764,39 @@ class Pipeline:
             note = (f"{repeats} came out looking like something you already have and "
                     f"were replaced rather than sent to review.")
         return {"made": len(made), "designs": made, "failed": failed,
-                "discarded": repeats, "asked": count, "note": note.strip()}
+                "discarded": repeats, "asked": count, "collection": niche,
+                "collection_name": record["name"], "note": note.strip()}
+
+    def _niche_folder(self, design_id: str) -> str:
+        """Which folder under out/ this design's files belong in.
+
+        On disk as well as in the database, because "keep the niches apart" is
+        something the owner checks by opening a folder, not by running a query.
+        """
+        row = self.store.conn.execute(
+            "SELECT collection FROM designs WHERE id=?", (design_id,)).fetchone()
+        return (row["collection"] if row and row["collection"] else "unfiled")
+
+    def _collection_counts(self, slug: str) -> dict:
+        """How much is in a niche, and how much of it has actually been read."""
+        row = self.store.conn.execute("""
+            SELECT COUNT(*) AS designs,
+                   SUM(CASE WHEN s.read_json IS NOT NULL THEN 1 ELSE 0 END) AS read
+              FROM designs d LEFT JOIN specs s ON s.design_id = d.id
+             WHERE d.collection = ?""", (slug,)).fetchone()
+        return {"designs": row["designs"] or 0, "read": row["read"] or 0}
 
     def _spec_pool(self, exclude: str, cap: int = 60) -> list[DesignSpec]:
         """Other designs of yours available to mix from.
 
-        Capped because a pool of five thousand adds nothing over a pool of
-        sixty — donors are drawn at random from whatever matches the family.
+        Only from the same niche. Capped because a pool of five thousand adds
+        nothing over a pool of sixty — donors are drawn at random from whatever
+        matches the family.
         """
-        return self._specs(exclude=exclude, cap=cap)
+        row = self.store.conn.execute(
+            "SELECT collection FROM designs WHERE id=?", (exclude,)).fetchone()
+        niche = row["collection"] if row else None
+        return self._specs(exclude=exclude, cap=cap, collection=niche)
 
     def motif_gaps(self, limit: int | None = None) -> list[motifs_stage.Gap]:
         """What to draw next, ranked by how many designs are waiting on it.
@@ -786,7 +868,7 @@ class Pipeline:
                 log.info("[%s] held back — %s", row["id"][:8], spec.provenance.reason)
                 continue
 
-            out_dir = self.cfg.root / "out" / row["id"][:16]
+            out_dir = out_dir_for(self.cfg.root, row["id"])
             for eps in sorted(out_dir.glob("*.eps")):
                 cached = self.store.get_metadata(row["id"], eps.name)
                 if cached:

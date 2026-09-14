@@ -103,6 +103,24 @@ CREATE TABLE IF NOT EXISTS metadata (
     PRIMARY KEY (design_id, filename)
 );
 
+-- The niche being worked on. Halloween cards and business cards are not the
+-- same catalogue, and a palette borrowed across that line is not a new design,
+-- it is a mistake nobody would ship.
+--
+-- There was a wall already, but a weak one: donors were matched on the
+-- `occasion` string the model wrote, and when nothing matched it widened to the
+-- whole pool. So a niche with too few designs in it quietly borrowed from every
+-- other niche — which is the failure at its worst, because it only happens when
+-- the new niche is small and that is exactly when nobody is watching.
+--
+-- This one is named by the owner and never inferred.
+CREATE TABLE IF NOT EXISTS collections (
+    id         TEXT PRIMARY KEY,      -- slug, derived from the name once
+    name       TEXT NOT NULL,         -- what the owner actually typed
+    created_at REAL NOT NULL,
+    notes      TEXT
+);
+
 -- Every combination this program has ever shipped, so it never ships it twice.
 --
 -- A mix is a handful of choices — whose layout, whose palette, whose type,
@@ -161,6 +179,23 @@ class Store:
         # How much each design borrows, set per design rather than only for the
         # whole run. One setting for five thousand designs means the careful
         # ones and the throwaway ones get the same treatment.
+        # A design belongs to one niche. Existing rows predate the idea, so they
+        # go to a collection called "unfiled" rather than being guessed at — a
+        # guess here mixes catalogues, which is the whole thing this prevents.
+        for table in ("designs", "recipes"):
+            columns = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            if "collection" not in columns:
+                with self.tx() as c:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN collection TEXT")
+        unfiled = self.conn.execute(
+            "SELECT COUNT(*) n FROM designs WHERE collection IS NULL").fetchone()["n"]
+        if unfiled:
+            self.ensure_collection("unfiled", "Unfiled")
+            with self.tx() as c:
+                c.execute("UPDATE designs SET collection='unfiled' WHERE collection IS NULL")
+                c.execute("UPDATE recipes SET collection='unfiled' WHERE collection IS NULL")
+            log.info("put %d design(s) with no niche into 'unfiled'", unfiled)
+
         design_columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(designs)")}
         with self.tx() as c:
             for column in ("mix", "derive"):
@@ -467,7 +502,8 @@ class Store:
                     f"DELETE FROM {table} WHERE {column}=?", (did,)).rowcount
         return counts
 
-    def add_made_design(self, did: str, recipe: str, fingerprint: str) -> None:
+    def add_made_design(self, did: str, recipe: str, fingerprint: str,
+                        collection: str | None = None) -> None:
         """A design this program composed, rather than one pulled from a shop.
 
         It has no listing and no source images, and saying so is the point: the
@@ -477,10 +513,65 @@ class Store:
         with self.tx() as c:
             c.execute(
                 "INSERT OR REPLACE INTO designs(id, design_key, title, source,"
-                " image_count, state, created_at) VALUES (?,?,?,?,?,?,?)",
-                (did, fingerprint, recipe, "made", 0, "building", time.time()))
+                " image_count, state, created_at, collection) VALUES (?,?,?,?,?,?,?,?)",
+                (did, fingerprint, recipe, "made", 0, "building", time.time(), collection))
             c.execute("UPDATE recipes SET design_id=? WHERE fingerprint=?",
                       (did, fingerprint))
+
+    # --- niches --------------------------------------------------------
+
+    def ensure_collection(self, slug: str, name: str) -> str:
+        with self.tx() as c:
+            c.execute("INSERT OR IGNORE INTO collections(id, name, created_at) "
+                      "VALUES (?,?,?)", (slug, name, time.time()))
+        return slug
+
+    def collections(self) -> list[dict]:
+        """Every niche, with how much is in it.
+
+        `read` is what can be mixed from — designs whose artwork has actually
+        been looked at. A niche full of pending rows has nothing to work with
+        yet, and saying so is the difference between "you have 30" and "you have
+        30 and none of them are ready".
+        """
+        rows = self.conn.execute("""
+            SELECT c.id, c.name, c.created_at, c.notes,
+                   (SELECT COUNT(*) FROM designs d WHERE d.collection = c.id) AS designs,
+                   (SELECT COUNT(*) FROM designs d JOIN specs s ON s.design_id = d.id
+                     WHERE d.collection = c.id AND s.read_json IS NOT NULL) AS read,
+                   (SELECT COUNT(*) FROM recipes r WHERE r.collection = c.id) AS made
+              FROM collections c ORDER BY c.created_at
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+    def collection(self, slug: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM collections WHERE id=?", (slug,)).fetchone()
+        return dict(row) if row else None
+
+    def set_design_collection(self, did: str, slug: str) -> None:
+        with self.tx() as c:
+            c.execute("UPDATE designs SET collection=? WHERE id=?", (slug, did))
+
+    def rename_collection(self, slug: str, name: str) -> bool:
+        with self.tx() as c:
+            return c.execute("UPDATE collections SET name=? WHERE id=?",
+                             (name, slug)).rowcount > 0
+
+    def remove_collection(self, slug: str) -> dict[str, int]:
+        """Delete a niche and everything filed under it."""
+        counts = {}
+        ids = [r["id"] for r in self.conn.execute(
+            "SELECT id FROM designs WHERE collection=?", (slug,))]
+        for did in ids:
+            self.remove_design(did)
+        with self.tx() as c:
+            counts["recipes"] = c.execute(
+                "DELETE FROM recipes WHERE collection=?", (slug,)).rowcount
+            counts["collections"] = c.execute(
+                "DELETE FROM collections WHERE id=?", (slug,)).rowcount
+        counts["designs"] = len(ids)
+        return counts
 
     # --- what has already been made ------------------------------------
 
@@ -489,7 +580,8 @@ class Store:
             "SELECT 1 FROM recipes WHERE fingerprint=?", (fingerprint,)).fetchone() is not None
 
     def record_recipe(self, fingerprint: str, base: str, ingredients: dict,
-                      design_id: str | None = None) -> bool:
+                      design_id: str | None = None,
+                      collection: str | None = None) -> bool:
         """Claim a combination. False means somebody already had it.
 
         Written the moment a recipe is chosen rather than when the design
@@ -498,15 +590,15 @@ class Store:
         try:
             with self.tx() as c:
                 c.execute(
-                    "INSERT INTO recipes(fingerprint, design_id, base, ingredients, created_at)"
-                    " VALUES (?,?,?,?,?)",
+                    "INSERT INTO recipes(fingerprint, design_id, base, ingredients,"
+                    " created_at, collection) VALUES (?,?,?,?,?,?)",
                     (fingerprint, design_id, base, json.dumps(ingredients, sort_keys=True),
-                     time.time()))
+                     time.time(), collection))
             return True
         except sqlite3.IntegrityError:
             return False
 
-    def ingredient_use(self) -> dict[str, int]:
+    def ingredient_use(self, collection: str | None = None) -> dict[str, int]:
         """How often each design has been borrowed from, across everything made.
 
         What keeps a batch from leaning on one favourite: a donor that has
@@ -514,7 +606,12 @@ class Store:
         for the tenth.
         """
         counts: dict[str, int] = {}
-        for row in self.conn.execute("SELECT base, ingredients FROM recipes"):
+        sql = "SELECT base, ingredients FROM recipes"
+        args: tuple = ()
+        if collection:
+            sql += " WHERE collection=?"
+            args = (collection,)
+        for row in self.conn.execute(sql, args):
             counts[row["base"]] = counts.get(row["base"], 0) + 1
             try:
                 for who in json.loads(row["ingredients"]).values():
@@ -524,10 +621,15 @@ class Store:
                 continue
         return counts
 
-    def forget_recipes(self) -> int:
+    def forget_recipes(self, collection: str | None = None) -> int:
         """Start the combinations again. For when the pool has changed enough
-        that old ones are worth revisiting."""
+        that old ones are worth revisiting. Scoped to one niche by default —
+        clearing every niche because you wanted to redo one is not a thing to
+        do by accident."""
         with self.tx() as c:
+            if collection:
+                return c.execute("DELETE FROM recipes WHERE collection=?",
+                                 (collection,)).rowcount
             return c.execute("DELETE FROM recipes").rowcount
 
     def pending_review(self) -> list[sqlite3.Row]:

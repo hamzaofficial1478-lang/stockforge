@@ -286,3 +286,64 @@ def test_the_panel_can_ask_for_a_fresh_reading(workspace):
     finally:
         server.shutdown()
         server.server_close()
+
+
+# --- a smaller model for the easy questions -------------------------------
+
+def test_the_easy_questions_go_to_the_small_model(workspace, monkeypatch):
+    """Three of the five reading passes do not need a big model. The palette is
+    already measured off the pixels and the model only names the roles;
+    provenance is "is any of this a photograph"; the survey is "which of these
+    images are pages". Sending those to a 30B reasoner is minutes a design for
+    nothing."""
+    monkeypatch.setenv("SF_QUICK_MODEL", "something-small")
+    big, small = _Counting(), _Counting()
+    providers.set_provider("vision", big)
+    providers.set_provider("reason", big)
+    providers.set_provider("quick", small)
+
+    pipe, design_id = _pulled(workspace, big)
+    providers.set_provider("quick", small)
+    pipe.build(design_id)
+
+    assert small.calls >= 3, (
+        f"the small model answered {small.calls} question(s) — the survey, the "
+        f"palette and the provenance should all have gone to it")
+    assert big.calls >= 2, "the hard passes did not go to the reading model"
+
+
+def test_with_no_small_model_the_reading_model_does_all_of_it(workspace, monkeypatch):
+    """It has to cost nothing to ignore. Somebody who never configures a second
+    model should see exactly what they saw before."""
+    monkeypatch.delenv("SF_QUICK_MODEL", raising=False)
+    only = _Counting()
+    pipe, design_id = _pulled(workspace, only)
+    providers.reset()
+    providers.set_provider("vision", only)
+    providers.set_provider("reason", only)
+
+    pipe.build(design_id)
+    assert only.calls >= 5, "some reading went somewhere else entirely"
+
+
+def test_the_small_model_still_respects_a_lane(workspace, monkeypatch):
+    """A lane pins its own models. The easy questions must follow that too, or
+    a lane's work quietly leaves through an endpoint it was never given."""
+    monkeypatch.delenv("SF_QUICK_MODEL", raising=False)
+    mine, others = _Counting(), _Counting()
+    providers.set_provider("vision", others)
+    providers.set_provider("reason", others)
+
+    cfg, tmp = workspace
+    pipe = Pipeline(cfg)
+    pipe.pull(open_source("folder", str(tmp / "in")))
+    providers.use_in_this_thread("vision", mine)
+    providers.use_in_this_thread("reason", mine)
+    try:
+        pipe.build(pipe.store.designs()[0]["id"])
+    finally:
+        providers.use_in_this_thread("vision", None)
+        providers.use_in_this_thread("reason", None)
+
+    assert others.calls == 0, (
+        f"{others.calls} easy question(s) went past the lane's own model")

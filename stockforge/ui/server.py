@@ -40,10 +40,11 @@ HERE = Path(__file__).parent
 EDITABLE = {
     "SF_VISION_BASE_URL", "SF_VISION_MODEL", "SF_VISION_API_KEY",
     "SF_VISION_BACKEND", "SF_VISION_EFFORT", "SF_WORKERS", "SF_VISION_SILENCE",
-    "SF_VISION_CONCURRENCY",
+    "SF_VISION_CONCURRENCY", "SF_COLLECTION", "SF_SEED_DESIGNS",
     "SF_IMAGE_BASE_URL", "SF_IMAGE_MODEL", "SF_IMAGE_API_KEY", "SF_IMAGE_BACKEND",
     "SF_REASON_BASE_URL", "SF_REASON_MODEL", "SF_REASON_API_KEY",
     "SF_REASON_BACKEND", "SF_REASON_EFFORT",
+    "SF_QUICK_BASE_URL", "SF_QUICK_MODEL", "SF_QUICK_API_KEY", "SF_QUICK_BACKEND",
     "SF_ETSY_API_KEY", "SF_ROOT", "SF_FONTS", "SF_MOTIFS",
     "SF_DERIVE_STRENGTH", "SF_DISTINCT_THRESHOLD", "SF_DERIVE_ROUNDS",
     "SF_CRITIQUE_ROUNDS", "SF_MIX", "SF_MOTIF_THRESHOLD", "SF_PRESERVE_ORIGINAL",
@@ -57,10 +58,24 @@ SECRET = {k for k in EDITABLE if k.endswith(("_KEY", "_PASS"))}
 def outputs_for(root: Path, design_id: str) -> list[Path]:
     """The editable files a design produced. One definition, because the panel
     lists them and the delete button removes them, and a delete that looked
-    somewhere else from the list would leave files nobody can see."""
-    found = sorted((root / "out" / design_id[:16]).glob("*"))
+    somewhere else from the list would leave files nobody can see.
+
+    Files now land under out/<niche>/<id>, and used to land under out/<id>.
+    Both are looked in — a workspace built before niches existed should not
+    appear to have lost everything it made.
+    """
+    from ..pipeline import out_dir_for
+
+    found = sorted(out_dir_for(root, design_id).glob("*"))
+    found += sorted((root / "out" / design_id[:16]).glob("*"))
     found += sorted((root / "renders").glob(f"{design_id[:16]}-*.svg"))
-    return [p for p in found if p.is_file() and p.suffix.lower() in {".svg", ".pdf", ".eps"}]
+    seen, out = set(), []
+    for path in found:
+        if path.is_file() and path.suffix.lower() in {".svg", ".pdf", ".eps"} \
+                and path not in seen:
+            seen.add(path)
+            out.append(path)
+    return out
 
 
 def delete_outputs(root: Path, design_id: str) -> int:
@@ -250,7 +265,8 @@ class Handler(BaseHTTPRequestHandler):
                     (did,)).fetchone()
                 renders = sorted((self.cfg.root / "renders").glob(f"{did[:16]}*.png"))
                 if not renders:
-                    renders = sorted((self.cfg.root / "out" / did[:16]).glob("*-preview.png"))
+                    from ..pipeline import out_dir_for
+                    renders = sorted(out_dir_for(self.cfg.root, did).glob("*-preview.png"))
                 out.append({
                     "design_id": did,
                     "reason": r["reason"],
@@ -541,6 +557,65 @@ class Handler(BaseHTTPRequestHandler):
                     removed.append(did)
             return self._json({"removed": len(removed), "files": files,
                                "design_ids": removed})
+
+        if route == "/api/collections":
+            """Choose, or create, the niche being worked on.
+
+            Never both at once and never guessed. `have_built` is the owner
+            saying whether this niche already exists: yes looks it up and
+            refuses to invent one, no creates it and refuses to quietly merge
+            into an existing one. Picking a near match on their behalf is how a
+            month of business cards ends up filed under Halloween.
+            """
+            from .. import collections as niches
+
+            pipe = Pipeline(self.cfg)
+            existing = pipe.store.collections()
+            typed = str(body.get("name") or "").strip()
+            action = str(body.get("action") or "").strip()
+
+            if action == "list" or not typed:
+                return self._json({"collections": existing,
+                                   "current": self.cfg.collection,
+                                   "needs": self.cfg.seed_designs})
+
+            if action == "use":                      # an exact id, already chosen
+                want = niches.slug(typed)
+                if not pipe.store.collection(want):
+                    return self._json({"error": f"no niche called {typed!r}"}, 404)
+                write_env(env_file(), {"SF_COLLECTION": want})
+                self.cfg.reload()
+                return self._json({"chosen": want,
+                                   "collections": pipe.store.collections()})
+
+            found = niches.look_up(typed, existing)
+            have_built = bool(body.get("have_built"))
+
+            if have_built:
+                if found.exact:
+                    write_env(env_file(), {"SF_COLLECTION": found.slug})
+                    self.cfg.reload()
+                    return self._json({"chosen": found.slug, "name": found.name,
+                                       "collections": pipe.store.collections()})
+                if found.near:
+                    return self._json({"near": found.near, "typed": typed,
+                                       "note": "Did you mean one of these? Nothing has "
+                                               "been chosen yet."})
+                return self._json({"error": f"Nothing here is called {typed!r} or "
+                                            f"anything like it. Say it is new to start it."},
+                                  404)
+
+            # Told it is new.
+            if found.exact:
+                return self._json({"error": f"{found.name!r} already exists. Say you have "
+                                            f"built these before to carry on with it."}, 409)
+            want = niches.slug(typed)
+            pipe.store.ensure_collection(want, typed)
+            write_env(env_file(), {"SF_COLLECTION": want})
+            self.cfg.reload()
+            return self._json({"chosen": want, "name": typed, "created": True,
+                               "near": found.near,
+                               "collections": pipe.store.collections()})
 
         if route == "/api/make":
             """New designs from what has already been read.

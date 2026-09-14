@@ -111,6 +111,27 @@ def vision() -> VisionProvider:
     return mine if mine is not None else _cached("vision", "SF_VISION")
 
 
+def quick() -> VisionProvider:
+    """A smaller model for the questions that do not need a big one.
+
+    Three of the five reading passes are easy. The palette is already measured
+    off the pixels and the model only names the roles; provenance is "is any of
+    this a photograph"; the survey is "which of these images are pages". None
+    of that needs a 30-billion-parameter reasoner, and on a hosted endpoint the
+    difference is minutes per design.
+
+    Falls back to the reading model when nothing separate is configured, so
+    this costs nothing to ignore — and because the two run side by side, the
+    hard passes set the pace rather than the sum of all five.
+    """
+    mine = _for_this_thread("quick")
+    if mine is not None:
+        return mine
+    if not os.environ.get("SF_QUICK_MODEL"):
+        return vision()
+    return _cached("quick", "SF_QUICK")
+
+
 def reason() -> VisionProvider:
     """Falls back to the vision model if no separate text model is configured."""
     mine = _for_this_thread("reason")
@@ -133,13 +154,13 @@ def reset() -> None:
     _cache.clear()
     _built_from.clear()
     _pinned.clear()
-    for role in ("vision", "reason"):
+    for role in ("vision", "reason", "quick"):
         setattr(_lane, role, None)
 
 
 __all__ = [
     "ProviderError", "VisionProvider", "OpenAICompatProvider",
     "Backend", "Preset", "register", "get", "names", "all_backends",
-    "backend", "resolve", "extract_json", "from_env", "vision", "reason",
+    "backend", "resolve", "extract_json", "from_env", "vision", "reason", "quick",
     "set_provider", "use_in_this_thread", "reset",
 ]

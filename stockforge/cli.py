@@ -25,7 +25,7 @@ import time
 import textwrap
 from pathlib import Path
 
-from .config import settings
+from .config import env_file, settings
 from .pipeline import Pipeline
 from .sources import open_source
 from .stages import fonts as fonts_stage
@@ -392,6 +392,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="read the artwork again rather than reusing the reading "
                         "already on file")
 
+    s = sub.add_parser("niche", help="which niche you are working on")
+    s.add_argument("name", nargs="?", help="leave blank to list them")
+    s.add_argument("--new", action="store_true",
+                   help="say this niche is new; without it, an existing one is expected")
+
     s = sub.add_parser("make", help="new designs from what has already been read")
     s.add_argument("count", type=int, help="how many to make")
     s.add_argument("--mix", type=float, default=None,
@@ -517,6 +522,54 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(pipe.run(limit=args.limit), indent=2))
     elif args.cmd == "build":
         print(pipe.build(args.design_id, reread=args.reread))
+    elif args.cmd == "niche":
+        from . import collections as niches
+        from .ui.server import write_env
+
+        have = pipe.store.collections()
+        if not args.name:
+            if not have:
+                print("No niches yet. Start one with: stockforge niche \"Halloween cards\" --new")
+                return 1
+            for c in have:
+                mark = "*" if c["id"] == settings.collection else " "
+                ready, why = niches.ready(c, settings.seed_designs)
+                print(f" {mark} {c['id']:<28} {c['name']:<28} "
+                      f"{c['read']:>4} read  {c['made']:>4} made  "
+                      f"{'' if ready else 'needs ' + str(settings.seed_designs)}")
+            print(f"\n* is the one in use. Switch with: stockforge niche <name>")
+            return 0
+
+        found = niches.look_up(args.name, have)
+        if args.new:
+            if found.exact:
+                print(f"{found.name!r} already exists — drop --new to carry on with it.")
+                return 1
+            want = niches.slug(args.name)
+            pipe.store.ensure_collection(want, args.name)
+            if found.near:
+                print("Note: these already exist and look similar — "
+                      + ", ".join(c["name"] for c in found.near))
+        elif found.exact:
+            want = found.slug
+        elif found.near:
+            print(f"Nothing is called {args.name!r}. Did you mean: "
+                  + ", ".join(f"{c['name']} ({c['id']})" for c in found.near))
+            return 1
+        else:
+            print(f"Nothing here is called {args.name!r} or anything like it. "
+                  f"Add --new to start it.")
+            return 1
+
+        write_env(env_file(), {"SF_COLLECTION": want})
+        settings.reload()
+        record = pipe.store.collection(want)
+        counts = pipe._collection_counts(want)
+        ready, why = niches.ready({**record, **counts}, settings.seed_designs)
+        print(f"working on: {record['name']} ({want})")
+        print("  ready to mix from." if ready else f"  {why}")
+        return 0
+
     elif args.cmd == "make":
         if args.forget:
             gone = pipe.store.forget_recipes()

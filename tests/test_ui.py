@@ -20,6 +20,7 @@ from stockforge import providers
 from stockforge.config import Settings, load_env
 from stockforge.pipeline import Pipeline
 from stockforge.sources import open_source
+from stockforge.pipeline import out_dir_for
 from stockforge.ui.server import EDITABLE, Handler, read_env, write_env
 from stockforge.worker import State, Worker
 
@@ -272,7 +273,7 @@ def test_removing_a_design_keeps_its_files_unless_asked(panel):
     came here for is not something to do as a side effect of tidying."""
     base, cfg = panel
     did = _one_design(cfg)
-    out = cfg.root / "out" / did[:16]
+    out = out_dir_for(cfg.root, did, "unfiled")
     out.mkdir(parents=True, exist_ok=True)
     (out / "front.pdf").write_bytes(b"%PDF-1.4 pretend")
 
@@ -283,7 +284,7 @@ def test_removing_a_design_keeps_its_files_unless_asked(panel):
 def test_the_files_go_when_they_are_asked_for(panel):
     base, cfg = panel
     did = _one_design(cfg)
-    out = cfg.root / "out" / did[:16]
+    out = out_dir_for(cfg.root, did, "unfiled")
     out.mkdir(parents=True, exist_ok=True)
     (out / "front.pdf").write_bytes(b"%PDF-1.4 pretend")
     (out / "front.svg").write_text("<svg/>")
