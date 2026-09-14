@@ -317,6 +317,17 @@ class Store:
             "SELECT read_json FROM specs WHERE design_id=?", (did,)).fetchone()
         return json.loads(row["read_json"]) if row and row["read_json"] else None
 
+    def forget_read(self, did: str) -> bool:
+        """Drop what the analyser understood, so the next build reads it again.
+
+        Cheaper than plumbing a flag through the worker: the build path already
+        reads the artwork when there is nothing on file, so taking the file
+        away is the whole of "read it again".
+        """
+        with self.tx() as c:
+            return c.execute(
+                "UPDATE specs SET read_json=NULL WHERE design_id=?", (did,)).rowcount > 0
+
     def get_spec(self, did: str) -> dict | None:
         row = self.conn.execute("SELECT spec_json FROM specs WHERE design_id=?", (did,)).fetchone()
         return json.loads(row["spec_json"]) if row else None

@@ -20,6 +20,8 @@ exactly which part of the read went wrong.
 from __future__ import annotations
 
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from collections.abc import Callable
 
@@ -367,6 +369,71 @@ def _hold_back_rasters(pages: list[Page], prov: Provenance,
                     if f"raster element: {r}" not in warnings)
 
 
+def _read_together(images: list[Path], surfaces: list, primary: Path,
+                   provider: VisionProvider, report) -> dict:
+    """Ask everything that does not depend on anything else, at the same time.
+
+    The provider is passed in rather than looked up inside each worker. A lane
+    installs its model for its own thread only, so a thread started here would
+    ask `providers.vision()` and get whatever the environment says instead of
+    the model this design is meant to be read by — which is the sort of bug
+    that produces correct-looking output from the wrong endpoint.
+
+    The first failure is raised and the rest are dropped. Four answers where
+    one is wrong is not three quarters of a design; it is a design that has to
+    be read again, and saying so immediately is cheaper than assembling a spec
+    around a hole.
+    """
+    jobs: list[tuple] = [
+        ("palette", lambda: palette(primary, provider)),
+        ("provenance", lambda: provenance(images, provider)),
+    ]
+    for index, surface in enumerate(surfaces):
+        flat = images[surface.image_index]
+        jobs.append((("typography", index), lambda f=flat: typography(f, provider)))
+        jobs.append((("structure", index), lambda f=flat: structure(f, provider)))
+
+    # Named rather than counted. This line is what somebody watches for twenty
+    # minutes, and "4 questions" tells them nothing about which one is stuck.
+    pages = "" if len(surfaces) <= 1 else f" across {len(surfaces)} pages"
+    asking = (f"colours, artwork provenance, type (matched against OCR) and "
+              f"structure{pages}")
+
+    workers = max(1, min(_concurrency(), len(jobs)))
+    if workers == 1 or len(jobs) == 1:
+        report(f"Reading {asking} — one at a time, waiting for the vision model")
+        return {key: run() for key, run in jobs}
+
+    report(f"Reading {asking} — {len(jobs)} questions, {workers} at once; "
+           f"waiting for the vision model")
+    out: dict = {}
+    with ThreadPoolExecutor(max_workers=workers,
+                            thread_name_prefix="sf-read") as pool:
+        running = {pool.submit(run): key for key, run in jobs}
+        try:
+            for done in as_completed(running):
+                out[running[done]] = done.result()
+        except BaseException:
+            for future in running:
+                future.cancel()
+            raise
+    return out
+
+
+def _concurrency() -> int:
+    """How many reading questions to have in the air at once.
+
+    Four covers a single-page card exactly — palette, provenance, type,
+    structure — which is the common case. A twelve-page wedding suite would
+    otherwise open twenty-six connections at once and get rate limited for it,
+    so it is a cap rather than a target.
+    """
+    try:
+        return max(1, int(os.environ.get("SF_VISION_CONCURRENCY", 4)))
+    except ValueError:
+        return 4
+
+
 def analyse(
     images: list[Path],
     asset_id: str,
@@ -404,10 +471,13 @@ def analyse(
                               chosen[0] if chosen else 0))
     primary = images[primary_index]
 
-    report("Measuring colors and identifying their roles — waiting for the vision model")
-    pal = palette(primary, provider)
-    report("Checking artwork provenance — waiting for the vision model")
-    prov = provenance(images, provider)
+    # Everything left depends on the survey and on nothing else. The palette
+    # does not need to know what the type is; the type does not need to know
+    # what the shapes are. They ran one after another only because nobody had
+    # made them do otherwise, and on a hosted model that is four waits of
+    # several minutes where one would do.
+    reads = _read_together(images, surfaces, primary, provider, report)
+    pal, prov = reads["palette"], reads["provenance"]
 
     pages: list[Page] = []
     grid, pairing, background, vocabulary = Grid(), [], Background(), []
@@ -421,10 +491,8 @@ def analyse(
                 f"'{surface.name}' was read from a staged photograph, not a flat "
                 f"export — the colours and the text are less reliable")
 
-        report(f"Reading text with OCR and matching typography — page {index}/{len(surfaces)}")
-        type_read = typography(flat, provider)
-        report(f"Reconstructing shapes and artwork — page {index}/{len(surfaces)}; waiting for the vision model")
-        struct = structure(flat, provider)
+        type_read = reads[("typography", index - 1)]
+        struct = reads[("structure", index - 1)]
 
         elements: list[Element] = [*struct.rasters, *struct.shapes,
                                    *struct.motifs, *type_read.elements]

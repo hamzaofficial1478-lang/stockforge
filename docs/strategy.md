@@ -108,14 +108,41 @@ design dead. A generated motif would be a starting point to trace, in the same
 way a harvested crop is. That is the only slot it should be given, and the
 output should be treated as reference rather than as a deliverable.
 
+## Done since
+
+**The four independent reading calls now run together.** Palette, provenance,
+typography and structure depend only on which image the survey picked, not on
+each other. Five waits became two. Measured with a fixed one-second model:
+6.1 s down to 3.0 s, so on a hosted model that is roughly eighteen minutes of
+reading down to seven. `SF_VISION_CONCURRENCY` caps how many are in the air at
+once — four covers a single-page card exactly, and the cap is there so a
+twelve-page wedding suite does not open twenty-six connections and get rate
+limited for it.
+
+The provider is captured and handed to each worker rather than looked up inside
+it. A lane installs its model for its own thread only, so a thread that asked
+`providers.vision()` would get whatever the environment says instead — correct
+looking output from the wrong endpoint, which is the worst shape of bug there
+is. There is a test named after it.
+
+**A retry no longer re-reads.** `build()` kept the analyser's read and threw it
+away on the next build, so pressing Run again on a design in Review spent five
+model calls arriving at an answer already in the database. Measured: a retry
+went from 8 calls to 3. The reading is what a model saw in the artwork, and the
+artwork has not changed; what a retry is actually retrying is everything after
+it.
+
+Two buttons in Review now, because they are different jobs. **Run again** mixes
+and draws from the reading on file. **Read it again** looks at the artwork from
+scratch — for when the flattening or the prompts have changed underneath a
+stored read. A design that failed *during* reading has nothing stored, so it
+reads again on its own without being asked.
+
 ## What would move the needle next
 
-- **Run the four independent reading calls together.** Palette, provenance,
-  typography and structure all depend only on which image the survey picked, not
-  on each other. Five waits becomes two, and pile A gets forty percent faster.
-- **Stop re-reading on retry.** `build()` calls `analyse()` unconditionally, so
-  pressing Run again on a design in Review spends five calls repeating work
-  already stored in the database.
 - **Take the reasoning effort off the cheap passes.** Palette barely needs a
   model at all — the colours are already measured from the pixels and only the
   roles need assigning.
+- **A faster model for the reading passes.** Five calls at 3.7 minutes is the
+  remaining cost of the recovery backlog, and most of those questions are not
+  hard enough to need a 30B reasoning model.

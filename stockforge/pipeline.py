@@ -29,6 +29,8 @@ from collections.abc import Callable
 
 from .config import Settings, settings as default_settings
 from .db import Store
+from pydantic import ValidationError
+
 from .schema import DesignSpec
 from .sources import Design, Source
 from .stages import critique as critique_stage
@@ -143,7 +145,19 @@ class Pipeline:
 
     # -- 2-6. work one design ----------------------------------------------
 
-    def build(self, design_id: str) -> str:
+    def build(self, design_id: str, reread: bool = False) -> str:
+        """One design, end to end.
+
+        The analyser's read is kept and reused. It used to be re-made on every
+        build, so pressing Run again on a design in Review spent five model
+        calls repeating work already sitting in the database — about twenty
+        minutes, to arrive at the answer it already had. The read is what a
+        model saw in the artwork, and the artwork has not changed; what a retry
+        is actually retrying is everything after it.
+
+        `reread` forces a fresh one, for when the flattening or the prompts
+        have changed underneath a stored read.
+        """
         self.on_progress("Preparing source images")
         row = self.store.conn.execute(
             "SELECT * FROM designs WHERE id=?", (design_id,)
@@ -168,11 +182,23 @@ class Pipeline:
         mockups = {i for i, a in enumerate(usable) if a["is_mockup"]}
 
         # --- read it --------------------------------------------------
-        spec = analyse(
-            images, asset_id=usable[0]["id"], design_id=design_id,
-            listing_url=row["listing_url"], mockups=mockups,
-            on_progress=self.on_progress,
-        )
+        spec = None
+        if not reread:
+            kept = self.store.get_read(design_id)
+            if kept:
+                try:
+                    spec = DesignSpec.model_validate(kept)
+                    self.on_progress("Using the reading already on file — no model needed")
+                    log.info("[%s] reusing the stored read", design_id[:8])
+                except ValidationError as exc:
+                    log.info("[%s] the stored read no longer fits the schema, "
+                             "reading again: %s", design_id[:8], exc)
+        if spec is None:
+            spec = analyse(
+                images, asset_id=usable[0]["id"], design_id=design_id,
+                listing_url=row["listing_url"], mockups=mockups,
+                on_progress=self.on_progress,
+            )
         # Point every decorative element at a drawing in our own library. What
         # nothing matches stays unresolved on purpose — the renderer reports it
         # as a hole and the description tells you what to draw next.

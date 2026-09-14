@@ -1352,7 +1352,10 @@ async function loadReview(){
       </div>
       <div class="row" style="margin-top:12px">
         <button class="btn primary small" onclick="decide('${r.design_id}','approve')">Clear for delivery</button>
-        <button class="btn small" onclick="decide('${r.design_id}','retry')">Run again</button>
+        <button class="btn small" onclick="decide('${r.design_id}','retry')"
+          title="Mix and draw it again from the reading already on file — no model needed to read it">Run again</button>
+        <button class="btn small" onclick="decide('${r.design_id}','reread')"
+          title="Look at the artwork again from scratch. Slower — this is the expensive half">Read it again</button>
         <button class="btn small" onclick="decide('${r.design_id}','reject')">Master only</button>
         <button class="btn small danger" onclick="removeDesign('${r.design_id}', this)">Remove</button>
         ${r.listing_url ? `<a class="mono" href="${esc(r.listing_url)}" target="_blank" rel="noreferrer">listing &#8599;</a>` : ''}

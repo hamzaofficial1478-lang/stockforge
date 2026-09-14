@@ -388,6 +388,9 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("build", help="run a single design end to end")
     s.add_argument("design_id")
+    s.add_argument("--reread", action="store_true",
+                   help="read the artwork again rather than reusing the reading "
+                        "already on file")
 
     s = sub.add_parser("make", help="new designs from what has already been read")
     s.add_argument("count", type=int, help="how many to make")
@@ -513,7 +516,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "run":
         print(json.dumps(pipe.run(limit=args.limit), indent=2))
     elif args.cmd == "build":
-        print(pipe.build(args.design_id))
+        print(pipe.build(args.design_id, reread=args.reread))
     elif args.cmd == "make":
         if args.forget:
             gone = pipe.store.forget_recipes()

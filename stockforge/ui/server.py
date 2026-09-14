@@ -40,6 +40,7 @@ HERE = Path(__file__).parent
 EDITABLE = {
     "SF_VISION_BASE_URL", "SF_VISION_MODEL", "SF_VISION_API_KEY",
     "SF_VISION_BACKEND", "SF_VISION_EFFORT", "SF_WORKERS", "SF_VISION_SILENCE",
+    "SF_VISION_CONCURRENCY",
     "SF_IMAGE_BASE_URL", "SF_IMAGE_MODEL", "SF_IMAGE_API_KEY", "SF_IMAGE_BACKEND",
     "SF_REASON_BASE_URL", "SF_REASON_MODEL", "SF_REASON_API_KEY",
     "SF_REASON_BACKEND", "SF_REASON_EFFORT",
@@ -502,14 +503,21 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/api/decide":
             did, decision = body.get("design_id"), body.get("decision")
-            if not did or decision not in ("approve", "reject", "retry"):
+            if not did or decision not in ("approve", "reject", "retry", "reread"):
                 return self._json({"error": "design_id and a decision are required"}, 400)
             pipe = Pipeline(self.cfg)
+            # Reading again is a retry that first throws away what the analyser
+            # understood, so the build has nothing to reuse. For everything else
+            # the reading stands: a retry is retrying the mixing and the
+            # drawing, not the look at the artwork.
+            if decision == "reread":
+                pipe.store.forget_read(did)
             with pipe.store.tx() as c:
                 c.execute("UPDATE review SET decision=?, decided_at=strftime('%s','now') "
-                          "WHERE design_id=?", (decision, did))
+                          "WHERE design_id=?", ("retry" if decision == "reread" else decision, did))
             pipe.store.set_design_state(
-                did, {"approve": "ready", "reject": "master_only", "retry": "pending"}[decision]
+                did, {"approve": "ready", "reject": "master_only",
+                      "retry": "pending", "reread": "pending"}[decision]
             )
             return self._json({"design_id": did, "decision": decision})
 
