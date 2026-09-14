@@ -29,6 +29,8 @@ sharpens the matching.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from collections import Counter
@@ -508,6 +510,9 @@ def resolve(spec: DesignSpec, motifs_dir: Path,
 # --------------------------------------------------------------------------
 
 HARVEST_DIR = "_harvested"
+# Where generated reference goes. Underscored and PNG, so the library scan —
+# which only ever globs *.svg — cannot pick one up as a real motif.
+DRAWN_DIR = "_drawn"
 
 
 @dataclass
@@ -618,6 +623,112 @@ def harvest(gap: "Gap", motifs_dir: Path, pad: float = 0.06) -> Harvested | None
         return Harvested(gap=gap, path=path, width=x1 - x0, height=y1 - y0,
                          coverage=round(coverage, 3), note=note)
     return None
+
+
+# What to ask for. Flat, one subject, solid colours, nothing clever: the point
+# is something that traces cleanly, not something that looks finished. A soft
+# painterly render with a drop shadow is prettier and useless — you cannot pull
+# a clean path out of it.
+DRAW_SYSTEM = (
+    "A single {kind} illustration of {what}. "
+    "Flat vector style, solid colours, clean even outlines, one subject only, "
+    "centred, filling most of the frame, on a plain pure white background. "
+    "No text, no lettering, no watermark, no drop shadow, no gradient, no "
+    "photographic texture, no border, no frame, nothing else in the picture."
+)
+
+
+@dataclass
+class Drawn:
+    """A generated picture of something the library has not got.
+
+    Reference to trace from, never a deliverable. It is a raster and it is not
+    yours to sell — the trace is.
+    """
+
+    gap: "Gap"
+    path: Path
+    prompt: str
+    model: str
+    note: str = ""
+
+
+def prompt_for(gap: "Gap") -> str:
+    """The wording for one gap, from what the analyser actually saw."""
+    what = (gap.description or "").strip().rstrip(".")
+    kind = (gap.kind or "icon").strip().lower()
+    readable = {"botanical": "botanical", "seasonal": "seasonal",
+                "frame": "decorative frame", "rule": "divider",
+                "icon": "icon"}.get(kind, kind)
+    return DRAW_SYSTEM.format(kind=readable, what=what or "a simple decorative motif")
+
+
+def draw(gap: "Gap", motifs_dir: Path, provider=None, size: int | None = None) -> "Drawn | None":
+    """Ask a drawing model for one missing motif.
+
+    Returns None when there is nothing to ask for. Anything the model does
+    wrong is raised, because a silent failure here looks exactly like a gap
+    nobody got round to.
+    """
+    what = (gap.description or "").strip()
+    if not what:
+        return None
+    if provider is None:
+        from ..providers.images import from_env
+        provider = from_env()
+
+    prompt = prompt_for(gap)
+    data = provider.draw(prompt, size=size)
+
+    folder = motifs_dir / DRAWN_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = f"{gap.slug or gap.kind}-{hashlib.sha256(prompt.encode()).hexdigest()[:8]}"
+    path = folder / f"{stem}.png"
+    path.write_bytes(data)
+
+    # Where it came from, beside it. Six months on, "did I draw this or did a
+    # model?" is not a question you want to answer by squinting at it.
+    path.with_suffix(".json").write_text(json.dumps({
+        "description": gap.description,
+        "kind": gap.kind,
+        "prompt": prompt,
+        "model": getattr(provider, "name", "unknown"),
+        "generated": True,
+        "note": "Reference only. Trace it to SVG before using it in a design.",
+    }, indent=2), encoding="utf-8")
+
+    note = ""
+    if len(data) < 2000:
+        note = "tiny"
+    return Drawn(gap=gap, path=path, prompt=prompt,
+                 model=getattr(provider, "name", "unknown"), note=note)
+
+
+def draw_all(gaps: list["Gap"], motifs_dir: Path, provider=None,
+             size: int | None = None, on_each=None) -> tuple[list["Drawn"], list[str]]:
+    """Draw every gap that has something to draw from.
+
+    One failure does not stop the rest: a model that refuses one prompt will
+    usually manage the next, and coming back with six of seven beats coming
+    back with none.
+    """
+    if provider is None:
+        from ..providers.images import from_env
+        provider = from_env()
+    done: list[Drawn] = []
+    trouble: list[str] = []
+    for index, gap in enumerate(gaps, 1):
+        if on_each:
+            on_each(index, len(gaps), gap.description)
+        try:
+            made = draw(gap, motifs_dir, provider, size=size)
+        except Exception as exc:
+            trouble.append(f"{gap.description[:60]}: {str(exc)[:160]}")
+            log.warning("could not draw %r: %s", gap.description[:60], exc)
+            continue
+        if made:
+            done.append(made)
+    return done, trouble
 
 
 def harvest_all(gaps_found: list["Gap"], motifs_dir: Path) -> list[Harvested]:

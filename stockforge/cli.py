@@ -31,6 +31,48 @@ from .sources import open_source
 from .stages import fonts as fonts_stage
 
 
+def _draw_motifs(settings, gaps, size) -> int:
+    """Ask a drawing model for the motifs the library has not got.
+
+    Reference to trace, never a deliverable — which is said here rather than
+    only in the docs, because this is where somebody will be standing when they
+    decide what to do with the files.
+    """
+    from .providers.base import ProviderError
+    from .stages import motifs as motifs_stage
+
+    if not gaps:
+        print("nothing missing — there is nothing to draw.")
+        return 0
+    try:
+        from .providers.images import from_env
+        provider = from_env()
+    except ProviderError as exc:
+        print(exc)
+        return 1
+
+    print(f"asking {provider.name} for {len(gaps)} drawing(s)\n")
+
+    def tick(done, total, what):
+        print(f"\r  {done}/{total}  {what[:56]:<56}", end="", flush=True)
+
+    drawn, trouble = motifs_stage.draw_all(gaps, settings.motifs_dir, provider,
+                                           size=size, on_each=tick)
+    folder = settings.motifs_dir / motifs_stage.DRAWN_DIR
+    print(f"\r{len(drawn)} of {len(gaps)} drawn into {folder}" + " " * 20)
+    width = max((len(d.path.name) for d in drawn), default=20)
+    for made in drawn:
+        print(f"  {made.path.name:<{width}}  {made.gap.designs:>2} design(s)"
+              f"{'  ' + made.note if made.note else ''}")
+    for line in trouble:
+        print(f"  could not draw {line}")
+    if drawn:
+        print("\nGenerated reference, not artwork you own. Trace what you like to "
+              "\nSVG on a 0..100 square and put the trace in the library; the PNGs "
+              "\nstay where they are and are never placed in a design.")
+    return 0 if drawn else 1
+
+
 def _log(verbose: bool) -> None:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
@@ -304,6 +346,9 @@ def cmd_motifs_harvest(args, pipe: Pipeline) -> int:
               "`stockforge pull` and `stockforge run` first.")
         return 0
 
+    if args.action == "draw":
+        return _draw_motifs(settings, found[:args.limit], args.size)
+
     cut = motifs_stage.harvest_all(found[:args.limit], settings.motifs_dir)
     if not cut:
         print(f"{len(found)} motifs are missing, but none could be cut out — "
@@ -430,11 +475,13 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("action", choices=["scan", "list", "install", "download"])
 
     m = sub.add_parser("motifs", help="inspect the motif library and grow it")
-    m.add_argument("action", choices=["list", "match", "todo", "harvest"])
+    m.add_argument("action", choices=["list", "match", "todo", "harvest", "draw"])
     m.add_argument("description", nargs="?", help="for `match` — what the analyser saw")
     m.add_argument("--kind", default="icon",
                    help="for `match` — botanical, seasonal, frame, ...")
     m.add_argument("--limit", type=int, default=20, help="for `todo` — how many to show")
+    m.add_argument("--size", type=int, default=None,
+                   help="for `draw` — pixels down each side, default 1024")
     m.add_argument("--scaffold", action="store_true",
                    help="for `todo` — write a tagged stub SVG for each one")
 

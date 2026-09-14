@@ -42,6 +42,7 @@ EDITABLE = {
     "SF_VISION_BACKEND", "SF_VISION_EFFORT", "SF_WORKERS", "SF_VISION_SILENCE",
     "SF_VISION_CONCURRENCY", "SF_COLLECTION", "SF_SEED_DESIGNS",
     "SF_IMAGE_BASE_URL", "SF_IMAGE_MODEL", "SF_IMAGE_API_KEY", "SF_IMAGE_BACKEND",
+    "SF_IMAGE_SIZE",
     "SF_REASON_BASE_URL", "SF_REASON_MODEL", "SF_REASON_API_KEY",
     "SF_REASON_BACKEND", "SF_REASON_EFFORT",
     "SF_QUICK_BASE_URL", "SF_QUICK_MODEL", "SF_QUICK_API_KEY", "SF_QUICK_BACKEND",
@@ -557,6 +558,39 @@ class Handler(BaseHTTPRequestHandler):
                     removed.append(did)
             return self._json({"removed": len(removed), "files": files,
                                "design_ids": removed})
+
+        if route == "/api/draw":
+            """Ask a drawing model for the motifs the library has not got.
+
+            Reference to trace, never a deliverable — the files land in a
+            folder the library scan does not look in, with a note beside each
+            saying where it came from.
+            """
+            from ..providers.base import ProviderError
+            from ..providers.images import from_env
+            from ..stages import motifs as motifs_stage
+
+            pipe = Pipeline(self.cfg)
+            gaps = pipe.motif_gaps(limit=int(body.get("limit") or 12))
+            if not gaps:
+                return self._json({"drawn": 0, "note": "nothing is missing."})
+            try:
+                provider = from_env()
+            except ProviderError as exc:
+                return self._json({"error": str(exc)}, 400)
+
+            started = time.monotonic()
+            drawn, trouble = motifs_stage.draw_all(gaps, self.cfg.motifs_dir, provider)
+            return self._json({
+                "drawn": len(drawn), "asked": len(gaps),
+                "seconds": round(time.monotonic() - started, 1),
+                "model": provider.name,
+                "where": str(self.cfg.motifs_dir / motifs_stage.DRAWN_DIR),
+                "files": [{"name": d.path.name, "path": str(d.path),
+                           "what": d.gap.description, "designs": d.gap.designs}
+                          for d in drawn],
+                "trouble": trouble,
+            })
 
         if route == "/api/collections":
             """Choose, or create, the niche being worked on.

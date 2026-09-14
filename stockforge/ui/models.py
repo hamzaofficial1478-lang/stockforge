@@ -24,6 +24,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from ..providers.openai_compat import model_options
 from ..providers.base import extract_json
+# The awkward parts — which character separates the width from the height,
+# and where in a reply the picture turns up — are the same questions the
+# drawing stage asks, so there is one answer to each. The transport stays
+# here: this probes a connection interactively, that draws artwork.
+from ..providers.images import find_image as _find_image, size_separator
 
 log = logging.getLogger("stockforge.ui.models")
 
@@ -312,22 +317,6 @@ def _test_image(base: str, model: str, api_key: str, timeout: int) -> dict:
             "reply": found[:80]}
 
 
-_EXPECTED_SIZE = re.compile(r"<\s*width\s*>\s*(.)\s*<\s*height\s*>", re.I)
-
-
-def size_separator(detail: str) -> str:
-    """The character a server wants between width and height, read from its own
-    complaint.
-
-    Qwen answers 512x512 with `Expected format: '<width>*<height>'`, OpenAI's
-    images API wants the x. Rather than keeping a list of which vendor uses
-    which — a list that is wrong the moment somebody adds a third — the message
-    names the separator and this takes it from there.
-    """
-    found = _EXPECTED_SIZE.search(detail or "")
-    return found.group(1) if found else ""
-
-
 def _post_image(base: str, api_key: str, payload: dict, timeout: int):
     """One generation request, retried once with the separator the server asked
     for. Costs nothing when the first guess was right."""
@@ -344,34 +333,6 @@ def _post_image(base: str, api_key: str, payload: dict, timeout: int):
         retried = json.loads(json.dumps(payload))
         retried["size"] = re.sub(r"[^0-9]", wanted, size, count=1)
         return _request(f"{base}/chat/completions", api_key, retried, timeout)
-
-
-def _find_image(body) -> str:
-    """The url or base64 of the first image anywhere in a reply.
-
-    Servers disagree about where to put it — choices[].message.images[],
-    a top-level data[], output.results[] — so this looks rather than assumes,
-    which is cheaper than one branch per vendor and does not rot.
-    """
-    seen: list[str] = []
-
-    def walk(node):
-        if len(seen) > 0:
-            return
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key in ("url", "b64_json", "image_url", "image", "base64") and isinstance(value, str) and value:
-                    seen.append(value)
-                    return
-                walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
-        elif isinstance(node, str) and (node.startswith("http") or node.startswith("data:image")):
-            seen.append(node)
-
-    walk(body)
-    return seen[0] if seen else ""
 
 
 def test(base_url: str, model: str, api_key: str = "", timeout: int = 90,

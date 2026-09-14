@@ -98,15 +98,36 @@ or six times.
 When the pool genuinely cannot give what was asked, it says so and says why,
 rather than padding the run with repeats.
 
-## Where an image model fits
+## Where an image model fits — and it is one place only
 
-Nothing here generates artwork, and it should not: a generated illustration is
-not something you own the rights to sell without care. The one place an image
-model earns its place is the **motif gaps** — decoration the analyser found in
-your designs that your library has no drawing for. Those currently stop a
-design dead. A generated motif would be a starting point to trace, in the same
-way a harvested crop is. That is the only slot it should be given, and the
-output should be treated as reference rather than as a deliverable.
+The **motif gaps**: decoration the analyser found in your own designs that the
+library has no drawing for. Seven of them in one Halloween card, each one
+stopping its design dead. Harvesting cuts those out of your own artwork where
+they exist; drawing is for the ones that do not.
+
+`stockforge motifs draw`, or the button on Review. It asks for flat vector
+style, one subject, solid colours, plain white ground, and rules out text,
+gradients and drop shadows — because the job is something that traces cleanly,
+not something that looks finished. A soft painterly render is prettier and
+useless.
+
+**The output is reference, never a deliverable**, and that is about rights
+rather than taste. A generated illustration is not a thing you own outright,
+and the reason every delivered file matches against your own library is that
+every curve in it is yours to sell. So three things hold that line, and each
+has a test that fails when it is removed:
+
+- The files land in `assets/motifs/_drawn/` as PNGs, and the library scan only
+  ever globs `*.svg`. A generated picture cannot be picked up as a motif and
+  placed into a design.
+- A JSON note sits beside each one recording the prompt, the model and the
+  date. Six months on, "did I draw this or did a model?" is not a question to
+  answer by squinting at it.
+- One model refusing a prompt does not lose the rest of the batch. Six of seven
+  beats none.
+
+Trace what you like to SVG on a 0..100 square, put the trace in the library, and
+the trace is yours.
 
 ## Done since
 

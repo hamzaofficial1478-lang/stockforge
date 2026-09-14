@@ -575,9 +575,12 @@
         own cards — cut them out below.</p>
       <div class="row" style="margin-top:12px">
         <button class="btn primary" onclick="doHarvest()">Cut these out of my own designs</button>
+        <button class="btn" onclick="doDraw()">Have a model draw them to trace</button>
         <button class="btn" onclick="doScaffold()">Write me an empty starter file for each</button>
       </div>
       <p class="hint" id="harvest-msg" style="margin-top:8px"></p>
+      <p class="hint" id="draw-msg"></p>
+      <div id="draw-out"></div>
       <div id="harvest-out"></div>
       <span id="scaffold-msg" class="mono"></span>
       <div id="gaps-list" style="margin-top:14px"></div>
@@ -1416,6 +1419,22 @@ async function doHarvest(){
         </div>
       </div>`).join('');
   } catch (e){ msg.textContent = String(e); }
+}
+
+async function doDraw(){
+  const msg = $('draw-msg');
+  msg.textContent = 'drawing… a picture a time, give it a minute';
+  $('draw-out').innerHTML = '';
+  const r = await api('/api/draw', {});
+  if (r.error) return msg.textContent = r.error;
+  msg.innerHTML = `${r.drawn} of ${r.asked} drawn by ${esc(r.model || 'the drawing model')}`
+    + ` in ${r.seconds}s, into <span class="mono">${esc(r.where || '')}</span>.`
+    + ` <b>Reference to trace, not artwork you own</b> — trace what you like to SVG`
+    + ` and put the trace in the library.`;
+  $('draw-out').innerHTML = (r.files || []).map(f =>
+    `<div class="hint"><span class="mono">${esc(f.name)}</span> &mdash; ${esc(f.what)}`
+    + ` <span style="opacity:.7">(${f.designs} design${f.designs === 1 ? '' : 's'})</span></div>`).join('')
+    + (r.trouble || []).map(t => `<div class="hint" style="color:var(--bad)">${esc(t)}</div>`).join('');
 }
 
 async function doScaffold(){
