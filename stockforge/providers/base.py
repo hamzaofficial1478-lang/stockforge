@@ -200,6 +200,7 @@ class VisionProvider(ABC):
             f"It must validate against this schema:\n{schema_hint(model)}"
         )
         last_error = ""
+        last_said = ""
 
         for attempt in range(self.max_repairs + 1):
             if attempt:
@@ -209,10 +210,18 @@ class VisionProvider(ABC):
                     f"Return corrected JSON only, matching:\n{schema_hint(model)}"
                 )
             raw = self.chat(system, prompt, images, **kw)
+            last_said = raw
             try:
                 return model.model_validate(extract_json(raw))
             except (ProviderError, ValidationError) as exc:
                 last_error = str(exc)[:1500]
                 log.debug("[%s] attempt %d failed: %s", self.name, attempt + 1, last_error[:200])
 
-        raise ProviderError(f"{self.name} could not produce valid {model.__name__}: {last_error}")
+        # What it actually said, not only that it was wrong. "No parseable JSON
+        # in response" describes every one of empty, refused, prose, and a
+        # truncated object, and those want four different answers — so the
+        # reply goes in the message, where the person reading it is.
+        said = " ".join((last_said or "").split())[:300] or "nothing at all"
+        raise ProviderError(
+            f"{self.name} could not produce valid {model.__name__}: {last_error}\n"
+            f"It said: {said}")

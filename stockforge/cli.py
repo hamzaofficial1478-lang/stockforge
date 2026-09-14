@@ -514,6 +514,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--new", action="store_true",
                    help="say this niche is new; without it, an existing one is expected")
 
+    s = sub.add_parser("retry", help="put everything that failed back in the queue")
+    s.add_argument("--all-niches", action="store_true",
+                   help="not just the one you are working on")
+
     s = sub.add_parser("bench", help="time the batch path against your real models")
     s.add_argument("--count", type=int, default=12, help="how many to make")
     s.add_argument("--keep", action="store_true",
@@ -692,6 +696,12 @@ def main(argv: list[str] | None = None) -> int:
         ready, why = niches.ready({**record, **counts}, settings.seed_designs)
         print(f"working on: {record['name']} ({want})")
         print("  ready to mix from." if ready else f"  {why}")
+        return 0
+
+    elif args.cmd == "retry":
+        done = pipe.retry_failed(None if args.all_niches else (settings.collection or None))
+        print(f"{done['queued']} design(s) put back in the queue."
+              + (" Run `stockforge run` to work them." if done["queued"] else ""))
         return 0
 
     elif args.cmd == "bench":

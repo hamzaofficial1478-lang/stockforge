@@ -805,13 +805,41 @@ class Pipeline:
         return (row["collection"] if row and row["collection"] else "unfiled")
 
     def _collection_counts(self, slug: str) -> dict:
-        """How much is in a niche, and how much of it has actually been read."""
+        """How much is in a niche, how much was read, and what got stuck.
+
+        `failed` is here because without it the wait for twenty-four designs is
+        a wall with no door in it: three failed reads and the count simply
+        stops going up, with nothing on screen saying why or what to do.
+        """
         row = self.store.conn.execute("""
             SELECT COUNT(*) AS designs,
-                   SUM(CASE WHEN s.read_json IS NOT NULL THEN 1 ELSE 0 END) AS read
+                   SUM(CASE WHEN s.read_json IS NOT NULL THEN 1 ELSE 0 END) AS read,
+                   SUM(CASE WHEN d.state = 'failed' THEN 1 ELSE 0 END) AS failed,
+                   SUM(CASE WHEN d.state = 'pending' THEN 1 ELSE 0 END) AS waiting
               FROM designs d LEFT JOIN specs s ON s.design_id = d.id
              WHERE d.collection = ?""", (slug,)).fetchone()
-        return {"designs": row["designs"] or 0, "read": row["read"] or 0}
+        return {"designs": row["designs"] or 0, "read": row["read"] or 0,
+                "failed": row["failed"] or 0, "waiting": row["waiting"] or 0}
+
+    def retry_failed(self, collection: str | None = None) -> dict:
+        """Put every failed design back in the queue.
+
+        One action, because the alternative is finding them by eye in a list of
+        five thousand. A design that failed while being read has nothing stored
+        to reuse, so it reads again on its own — there is nothing to clear.
+        """
+        sql = "SELECT id FROM designs WHERE state='failed'"
+        args: tuple = ()
+        if collection:
+            sql += " AND collection=?"
+            args = (collection,)
+        ids = [r["id"] for r in self.store.conn.execute(sql, args)]
+        for did in ids:
+            self.store.set_design_state(did, "pending")
+        with self.store.tx() as c:
+            for did in ids:
+                c.execute("DELETE FROM review WHERE design_id=?", (did,))
+        return {"queued": len(ids), "design_ids": ids}
 
     def _spec_pool(self, exclude: str, cap: int = 60) -> list[DesignSpec]:
         """Other designs of yours available to mix from.

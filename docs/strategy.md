@@ -243,6 +243,53 @@ everything runs side by side the two hard passes — type and structure — set 
 pace rather than the sum of all five. Leave it unset and the reading model does
 all of it exactly as before.
 
+## Getting to twenty-four when the reading keeps failing
+
+A real run, two lanes, three designs, two of them dead:
+
+    13:17:44 lane 2 failed: could not produce valid PaletteRead:
+             no parseable JSON in response
+
+Both models in the chain answered the palette in prose and the whole design was
+lost with them. Which is a bad trade — the design had already been downloaded,
+flattened and half read, and what went unanswered was **which colour is the
+paper**, on a pass whose colours are measured off the artwork before a model is
+involved at all.
+
+So the reading passes are split by whether a design can be built without them:
+
+- **Type and structure are the design.** No type and no shapes means nothing to
+  draw, and failing is the only honest outcome.
+- **The palette and the provenance are not.** A failed palette falls back to a
+  rule — biggest area is the paper, darkest is the ink, most saturated of the
+  rest is the accent — and the design carries a note saying so. A failed
+  provenance holds the design back from stock rather than losing it, because
+  "we could not check" has to mean master-only when getting it wrong costs the
+  contributor account.
+
+And the twenty-four gate needed a door in it. Three failed reads and the count
+simply stopped going up with nothing saying why. Now the wait names what is
+stuck — *"3 failed — retry them rather than pulling more in"* — and there is one
+action that puts every failed design back in the queue, because the alternative
+is finding them by eye in a list of five thousand, which nobody does.
+
+Two more things the error messages needed. A failure now carries **what the
+model actually said**: "no parseable JSON in response" describes empty, refused,
+prose and truncated equally, and those want four different answers.
+
+### How long twenty-four actually takes
+
+From that same log, the design that worked took **5.3 minutes** end to end — not
+the thirty minutes it was before the reading went parallel.
+
+| lanes | 24 designs |
+|---|---|
+| 1 | about 2 hours |
+| 2 | about 1 hour |
+| 4 | about 30 minutes |
+
+It is a one-off per niche, and it is the only expensive part.
+
 ## Measuring it on your own models
 
 `stockforge bench --count 12` times a batch against the endpoints actually

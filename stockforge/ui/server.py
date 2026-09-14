@@ -598,6 +598,20 @@ class Handler(BaseHTTPRequestHandler):
                 "trouble": trouble,
             })
 
+        if route == "/api/retry-failed":
+            """Put everything that failed back in the queue, in one action.
+
+            The alternative is finding them by eye in a list of five thousand,
+            which nobody does, so they sit there and the count towards a usable
+            niche simply stops going up.
+            """
+            pipe = Pipeline(self.cfg)
+            where = body.get("collection")
+            if where is None:
+                where = self.cfg.collection or None
+            done = pipe.retry_failed(where or None)
+            return self._json({**done, "collection": where or "everything"})
+
         if route == "/api/collections":
             """Choose, or create, the niche being worked on.
 

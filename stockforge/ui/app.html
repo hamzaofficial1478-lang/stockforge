@@ -477,6 +477,10 @@
       <h3>Catalogue</h3>
       <div id="totals" class="grid"></div>
       <div class="row" style="margin-top:14px">
+        <button class="btn" onclick="doRetryFailed()">Retry everything that failed</button>
+        <span id="retry-msg" class="mono"></span>
+      </div>
+      <div class="row" style="margin-top:10px">
         <select id="clear-what" style="max-width:220px">
           <option value="">Everything</option>
           <option value="failed">Only the failed ones</option>
@@ -1329,6 +1333,18 @@ async function doMake(){
     lines.push(`<div>… and ${r.designs.length - 12} more</div>`);
   $('make-out').innerHTML = lines.join('');
   loadTotals(); loadDesigns(); loadNiches();
+}
+
+async function doRetryFailed(){
+  const msg = $('retry-msg');
+  msg.textContent = 'queueing…';
+  const r = await api('/api/retry-failed', {});
+  if (r.error) return msg.textContent = r.error;
+  msg.textContent = r.queued
+    ? `${r.queued} put back in the queue — press Start on the Queue screen`
+    : 'nothing has failed';
+  loadTotals(); loadDesigns(); loadNiches();
+  setTimeout(() => msg.textContent = '', 8000);
 }
 
 async function doClear(withFiles){

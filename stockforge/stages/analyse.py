@@ -171,6 +171,46 @@ def _snap(hex_: str, sampled: list[tuple[str, float]]) -> tuple[str, float]:
     return nearest, coverage
 
 
+def palette_from_pixels(sampled: list[tuple[str, float]]) -> Palette:
+    """Roles assigned without asking anybody.
+
+    The colours are measured off the artwork before a model is involved; the
+    only thing the model adds is which one is the background and which is the
+    ink. That is a judgement worth having and it is not worth losing a design
+    over — a small model that answers with prose used to kill the whole read,
+    and the design along with it.
+
+    Biggest area is the paper. Darkest is the ink. The most saturated of what
+    is left is the accent. It is a rule rather than a reading, and it is right
+    far more often than it is wrong.
+    """
+    if not sampled:
+        return Palette(swatches=[Swatch(role=ColourRole.BACKGROUND,
+                                        hex="#ffffff", coverage=1.0)])
+
+    def light(hex_: str) -> float:
+        r, g, b = _rgb(hex_)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    def punch(hex_: str) -> float:
+        r, g, b = _rgb(hex_)
+        return (max(r, g, b) - min(r, g, b)) / 255.0
+
+    left = sorted(sampled, key=lambda pair: -pair[1])
+    swatches = [Swatch(role=ColourRole.BACKGROUND, hex=left[0][0], coverage=left[0][1])]
+    rest = left[1:]
+    if rest:
+        ink = min(rest, key=lambda pair: light(pair[0]))
+        swatches.append(Swatch(role=ColourRole.INK, hex=ink[0], coverage=ink[1]))
+        rest = [pair for pair in rest if pair is not ink]
+    for role, pair in zip(
+            (ColourRole.ACCENT, ColourRole.ACCENT_ALT, ColourRole.SURFACE,
+             ColourRole.INK_MUTED, ColourRole.LINE),
+            sorted(rest, key=lambda pair: -punch(pair[0]))):
+        swatches.append(Swatch(role=role, hex=pair[0], coverage=pair[1]))
+    return Palette(swatches=swatches, temperature="neutral", contrast="medium")
+
+
 def palette(flat: Path, provider: VisionProvider) -> Palette:
     sampled = dominant_colours(flat)
     listing = "\n".join(f"  {hex_} covering {cov:.1%} of the canvas" for hex_, cov in sampled)
@@ -389,14 +429,27 @@ def _read_together(images: list[Path], surfaces: list, primary: Path,
     # provenance is "is any of this a photograph" — neither is worth a big
     # model's minutes, and they run beside the hard ones rather than after them.
     easy = _easy(provider)
+    # Which answers a design cannot be built without, and which it can limp on.
+    #
+    # Type and structure are the design. Without them there is nothing to draw
+    # and failing is the only honest outcome.
+    #
+    # The palette and the provenance are not. The colours are measured off the
+    # artwork before a model is involved and only their roles are being asked
+    # for; the provenance decides whether a finished design may be submitted,
+    # and not knowing has a safe answer. Losing a whole design — an image
+    # already downloaded, flattened and about to be read — because a small
+    # model answered one of those two in prose is a bad trade, and it is the
+    # trade that killed two designs out of three on a real run.
     jobs: list[tuple] = [
-        ("palette", lambda: palette(primary, easy)),
-        ("provenance", lambda: provenance(images, easy)),
+        ("palette", lambda: palette(primary, easy),
+         lambda: palette_from_pixels(dominant_colours(primary))),
+        ("provenance", lambda: provenance(images, easy), _unknown_provenance),
     ]
     for index, surface in enumerate(surfaces):
         flat = images[surface.image_index]
-        jobs.append((("typography", index), lambda f=flat: typography(f, provider)))
-        jobs.append((("structure", index), lambda f=flat: structure(f, provider)))
+        jobs.append((("typography", index), lambda f=flat: typography(f, provider), None))
+        jobs.append((("structure", index), lambda f=flat: structure(f, provider), None))
 
     # Named rather than counted. This line is what somebody watches for twenty
     # minutes, and "4 questions" tells them nothing about which one is stuck.
@@ -404,25 +457,58 @@ def _read_together(images: list[Path], surfaces: list, primary: Path,
     asking = (f"colours, artwork provenance, type (matched against OCR) and "
               f"structure{pages}")
 
+    fallbacks = {key: spare for key, _run, spare in jobs}
+    missed: list[str] = []
+
+    def settle(key, future_or_call):
+        """One answer, or the fallback where there is one."""
+        try:
+            return future_or_call()
+        except Exception as exc:
+            spare = fallbacks.get(key)
+            if spare is None:
+                raise
+            name = key if isinstance(key, str) else key[0]
+            missed.append(f"the {name} could not be read ({str(exc).splitlines()[0][:120]}) "
+                          f"— worked out from the artwork instead")
+            log.warning("%s failed, using the fallback: %s", name, str(exc)[:200])
+            return spare()
+
     workers = max(1, min(_concurrency(), len(jobs)))
+    out: dict = {}
     if workers == 1 or len(jobs) == 1:
         report(f"Reading {asking} — one at a time, waiting for the vision model")
-        return {key: run() for key, run in jobs}
-
-    report(f"Reading {asking} — {len(jobs)} questions, {workers} at once; "
-           f"waiting for the vision model")
-    out: dict = {}
-    with ThreadPoolExecutor(max_workers=workers,
-                            thread_name_prefix="sf-read") as pool:
-        running = {pool.submit(run): key for key, run in jobs}
-        try:
-            for done in as_completed(running):
-                out[running[done]] = done.result()
-        except BaseException:
-            for future in running:
-                future.cancel()
-            raise
+        for key, run, _spare in jobs:
+            out[key] = settle(key, run)
+    else:
+        report(f"Reading {asking} — {len(jobs)} questions, {workers} at once; "
+               f"waiting for the vision model")
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="sf-read") as pool:
+            running = {pool.submit(run): key for key, run, _spare in jobs}
+            try:
+                for done in as_completed(running):
+                    key = running[done]
+                    out[key] = settle(key, done.result)
+            except BaseException:
+                for future in running:
+                    future.cancel()
+                raise
+    out["_missed"] = missed
     return out
+
+
+def _unknown_provenance():
+    """What to assume when nobody could say.
+
+    Not stock-safe. Stock agencies want you to hold the rights to every element
+    in a submitted file and getting it wrong costs the contributor account, so
+    "we could not check" has to mean "editable master only" rather than "carry
+    on". The design still gets made; it just does not get sent.
+    """
+    return Provenance(stock_safe=False,
+                      reason="the provenance check could not be read, so this is "
+                             "held back from stock as a precaution")
 
 
 def _easy(provider: VisionProvider) -> VisionProvider:
@@ -496,11 +582,12 @@ def analyse(
     # several minutes where one would do.
     reads = _read_together(images, surfaces, primary, provider, report)
     pal, prov = reads["palette"], reads["provenance"]
+    settled_for = reads.get("_missed") or []
 
     pages: list[Page] = []
     grid, pairing, background, vocabulary = Grid(), [], Background(), []
 
-    warnings = [f"raster element: {r}" for r in prov.raster_elements]
+    warnings = list(settled_for) + [f"raster element: {r}" for r in prov.raster_elements]
 
     for index, surface in enumerate(surfaces, 1):
         flat = images[surface.image_index]

@@ -116,12 +116,19 @@ def ready(collection: dict | None, least: int = SEED_DESIGNS) -> tuple[bool, str
     if have >= least:
         return True, ""
     pulled = int(collection.get("designs") or 0)
-    waiting = pulled - have
+    failed = int(collection.get("failed") or 0)
+    waiting = max(0, pulled - have - failed)
     fix = (f"{collection['name']} has {have} design{'' if have == 1 else 's'} read "
            f"in, and needs {least} before it can be mixed from.")
-    if waiting > 0:
+    # Naming the stuck ones is the difference between a wall and a door. Three
+    # failed reads and the count simply stops going up, with nothing on screen
+    # saying why or what to do about it.
+    if failed:
+        fix += (f" {failed} failed — retry {'it' if failed == 1 else 'them'} "
+                f"rather than pulling more in.")
+    if waiting:
         fix += (f" {waiting} more {'is' if waiting == 1 else 'are'} pulled in but "
                 f"not read yet — run the queue.")
-    else:
+    if not failed and not waiting:
         fix += f" Pull in {least - have} more and run the queue."
     return False, fix
