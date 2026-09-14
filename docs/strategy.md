@@ -159,6 +159,41 @@ scratch — for when the flattening or the prompts have changed underneath a
 stored read. A design that failed *during* reading has nothing stored, so it
 reads again on its own without being asked.
 
+## What may lend an ingredient, and what may not
+
+Two rules, and both decide whether a delivered file is safe to sell.
+
+**Only a design somebody actually looked at.** A design this program made has a
+spec but no reading. Mixing from those compounds: the third run is a mix of
+mixes of mixes and drifts away from anything anybody chose. It was doing exactly
+that — measured, thirty seed designs became thirty-six donors after one run of
+six. Donors now require `read_json`, so the pool is the designs that were read
+and stays that size.
+
+Which is also the answer to "do I have to hand the designs over again?" — **no**.
+Twenty-four designs go in, get read once, and every run afterwards reuses that
+reading. There is a test that watches which passes run and fails if a batch
+reads anything.
+
+**Only a design that is yours.** Every ingredient in a delivered file being your
+own is the entire reason the file is safe to sell — it is the premise the
+program was built on. So designs come in marked one way or the other:
+
+- **Mine** — from your own shop, your own folder, your own uploads, or a link
+  you say is yours. These lend palettes, grids, type and decoration.
+- **Reference** — anything from somewhere else. Read, listed, flattened, there
+  to look at. It never lends anything to anything that gets made.
+
+The links door asks, and the safe answer is the default: a pasted link is
+reference unless you say it is yours. The unsafe direction needs a deliberate
+act, which is the right way round for a rule nobody can see working.
+
+Your own designs listed on other platforms are still yours — marking them so is
+all it takes. What this will not do is turn somebody else's stock listing into
+an ingredient of something you then sell, and that is not a technical limit. A
+mix of other people's work sold as stock is takedowns, a closed account, and a
+real cost to the artist it came from.
+
 ## Niches: keeping one catalogue out of another
 
 The owner works a month on Halloween cards and then moves to business cards.
@@ -207,6 +242,19 @@ Those three go to `SF_QUICK_MODEL` where one is configured, and because
 everything runs side by side the two hard passes — type and structure — set the
 pace rather than the sum of all five. Leave it unset and the reading model does
 all of it exactly as before.
+
+## Measuring it on your own models
+
+`stockforge bench --count 12` times a batch against the endpoints actually
+configured, and counts the model calls by wrapping the provider rather than
+estimating. It reports calls per design, seconds per design, and what an hour of
+that would come to. It undoes itself afterwards unless you pass `--keep`:
+benchmarking should not quietly fill a niche with designs nobody asked for, nor
+burn combinations out of the ledger.
+
+Nobody else can run it. It needs the endpoints and the keys, and the only figure
+that settles an argument about speed is one measured on the hardware the work
+will actually run on.
 
 ## What would move the needle next
 

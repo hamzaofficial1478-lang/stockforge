@@ -103,8 +103,15 @@ class Pipeline:
 
     # -- 1. pull designs in -----------------------------------------------
 
-    def pull(self, source: Source) -> int:
-        """Flatten every image of every design and record it. No models yet."""
+    def pull(self, source: Source, owned: bool = True) -> int:
+        """Flatten every image of every design and record it. No models yet.
+
+        `owned` is whether these are the owner's own designs. Only what is
+        yours may lend an ingredient to anything made: every ingredient in a
+        delivered file being your own is precisely what makes the file safe to
+        sell. Anything else comes in as reference — read, listed, looked at,
+        and never mixed into a design.
+        """
         count = 0
         for design in source.designs():
             flats: list[Path] = []
@@ -156,6 +163,7 @@ class Pipeline:
                 tags=json.dumps(design.tags), listing_url=design.listing_url,
                 source=design.source, image_count=len(flats), state="pending",
                 collection=self.cfg.collection or "unfiled",
+                owned=1 if owned else 0,
             )
             count += 1
             log.info("pulled %s (%d images)", design.design_id[:60], len(flats))
@@ -510,7 +518,7 @@ class Pipeline:
         return state
 
     def _specs(self, exclude: str | None = None, cap: int | None = None,
-               collection: str | None = None) -> list[DesignSpec]:
+               collection: str | None = None, donors_only: bool = False) -> list[DesignSpec]:
         """Every design already read, newest first.
 
         A spec that will not load is said out loud. Swallowing it silently is
@@ -521,21 +529,40 @@ class Pipeline:
         into one — an unfiled Halloween card lending its palette to a business
         card is the exact mistake this exists to stop.
         """
-        params: tuple = ()
+        params: list = []
+        where: list[str] = []
+        joined = bool(collection or donors_only)
         if collection:
-            sql = ("SELECT s.design_id FROM specs s JOIN designs d ON d.id = s.design_id "
-                   "WHERE d.collection = ?")
-            params = (collection,)
-            if exclude:
-                sql += " AND s.design_id != ?"
-                params = (collection, exclude)
-            sql += " ORDER BY s.updated_at DESC"
+            where.append("d.collection = ?")
+            params.append(collection)
+        if donors_only:
+            # Two rules, and both are about what an ingredient may be.
+            #
+            # It has to be a design somebody actually looked at. A design this
+            # program made has a spec but no reading, and mixing from those
+            # compounds: the third run is a mix of mixes of mixes and drifts
+            # away from anything you chose. Measured — thirty seeds became
+            # thirty-six donors after one run of six.
+            #
+            # And it has to be yours. Every ingredient in a delivered file
+            # being your own is the reason the file is safe to sell, so a
+            # design brought in for reference can be read and listed and looked
+            # at, and never lends anything to anything.
+            where.append("s.read_json IS NOT NULL")
+            where.append("d.owned = 1")
+        prefix = "s." if joined else ""
+        if exclude:
+            where.append(f"{prefix}design_id != ?")
+            params.append(exclude)
+
+        if joined:
+            sql = "SELECT s.design_id FROM specs s JOIN designs d ON d.id = s.design_id"
         else:
             sql = "SELECT design_id FROM specs"
-            if exclude:
-                sql += " WHERE design_id != ?"
-                params = (exclude,)
-            sql += " ORDER BY updated_at DESC"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += f" ORDER BY {prefix}updated_at DESC"
+        params = tuple(params)
         if cap:
             sql += f" LIMIT {int(cap)}"
 
@@ -678,7 +705,7 @@ class Pipeline:
             return {"made": 0, "asked": count, "discarded": 0, "designs": [],
                     "failed": [], "collection": niche, "note": why}
 
-        pool = self._specs(exclude="", cap=200, collection=niche)
+        pool = self._specs(exclude="", cap=200, collection=niche, donors_only=True)
         if len(pool) < 2:
             return {"made": 0, "asked": count, "discarded": 0, "designs": [], "failed": [],
                     "collection": niche,
@@ -796,7 +823,8 @@ class Pipeline:
         row = self.store.conn.execute(
             "SELECT collection FROM designs WHERE id=?", (exclude,)).fetchone()
         niche = row["collection"] if row else None
-        return self._specs(exclude=exclude, cap=cap, collection=niche)
+        return self._specs(exclude=exclude, cap=cap, collection=niche,
+                           donors_only=True)
 
     def motif_gaps(self, limit: int | None = None) -> list[motifs_stage.Gap]:
         """What to draw next, ranked by how many designs are waiting on it.

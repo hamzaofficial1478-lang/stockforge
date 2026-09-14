@@ -425,6 +425,15 @@
       <!-- links -->
       <div id="door-links" class="door" hidden style="margin-top:16px">
         <p class="hint">One link per line. Image links work anywhere; listing pages, Etsy only.</p>
+        <div class="grid" style="max-width:480px;margin-bottom:10px">
+          <div><label for="links-owned">Whose designs are these?</label>
+            <select id="links-owned">
+              <option value="0">Somebody else's &mdash; reference only, never mixed in</option>
+              <option value="1">Mine &mdash; safe to build from</option>
+            </select></div>
+        </div>
+        <p class="hint">Only your own designs lend ingredients to what the program makes.
+          That is what keeps every delivered file yours to sell.</p>
         <div>
           <label>Paste the links</label>
           <textarea id="links-text" rows="7" spellcheck="false"
@@ -1013,7 +1022,11 @@ async function doPull(kind, targetId, limitId){
   const buttons = [...$('door-' + kind).querySelectorAll('button')];
   buttons.forEach(b => b.disabled = true);
   try {
-    const r = await api('/api/pull', {kind, target, limit: $(limitId).value || null});
+    // Only the links door asks whose designs these are; a folder or your own
+    // shop is yours by definition.
+    const owned = !(kind === 'links' && $('links-owned') && $('links-owned').value === '0');
+    const r = await api('/api/pull',
+      {kind, target, limit: $(limitId).value || null, owned});
     msg.textContent = r.error ? 'Import failed: ' + r.error
       : `Added ${r.pulled} designs to the queue. ${r.pulled ? 'Open Queue and press Start to convert them.' : 'No images were imported.'}`;
     if (r.warnings?.length) msg.textContent += '\n' + r.warnings.join('\n');

@@ -182,6 +182,16 @@ class Store:
         # A design belongs to one niche. Existing rows predate the idea, so they
         # go to a collection called "unfiled" rather than being guessed at — a
         # guess here mixes catalogues, which is the whole thing this prevents.
+        # Whose design it is. Everything already here came out of the owner's
+        # own shop, so it defaults to theirs; a link pasted from somewhere else
+        # has to be marked deliberately. Only what is yours can lend an
+        # ingredient — that is the whole reason a delivered file is safe to
+        # sell, and it is not a thing to get wrong by default.
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(designs)")}
+        if "owned" not in columns:
+            with self.tx() as c:
+                c.execute("ALTER TABLE designs ADD COLUMN owned INTEGER NOT NULL DEFAULT 1")
+
         for table in ("designs", "recipes"):
             columns = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             if "collection" not in columns:

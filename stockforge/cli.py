@@ -31,6 +31,78 @@ from .sources import open_source
 from .stages import fonts as fonts_stage
 
 
+def _bench(pipe, settings, count: int, keep: bool) -> int:
+    """Time a batch against the models actually configured here.
+
+    Nobody else can run this — it needs the endpoints and the keys, and the
+    only number that settles an argument about speed is the one measured on the
+    hardware the work will run on. Everything it reports is counted rather than
+    estimated: the model calls are counted by wrapping the provider, and the
+    seconds by a clock.
+
+    It undoes itself by default. Benchmarking should not quietly fill a niche
+    with twelve designs nobody asked for, and it should not burn combinations
+    out of the ledger either.
+    """
+    import time as _time
+
+    from . import providers as registry
+
+    niche = settings.collection
+    if not niche:
+        print("Choose a niche first: stockforge niche \"Halloween cards\"")
+        return 1
+
+    calls = {"n": 0}
+    real = registry.reason()
+
+    class Counting:
+        name = getattr(real, "name", "the writing model")
+
+        def __getattr__(self, item):
+            return getattr(real, item)
+
+        def structured(self, *a, **kw):
+            calls["n"] += 1
+            return real.structured(*a, **kw)
+
+        def chat(self, *a, **kw):
+            calls["n"] += 1
+            return real.chat(*a, **kw)
+
+    registry.use_in_this_thread("reason", Counting())
+    print(f"making {count} in {niche} with {Counting.name}\n")
+    started = _time.monotonic()
+    try:
+        result = pipe.make(count, on_each=lambda n, total: print(
+            f"\r  {n}/{total}", end="", flush=True))
+    finally:
+        registry.use_in_this_thread("reason", None)
+    took = _time.monotonic() - started
+
+    made = result["made"]
+    print(f"\r{'':<20}")
+    print(f"  made         {made} of {result['asked']}")
+    print(f"  model calls  {calls['n']}"
+          + (f"  ({calls['n'] / made:.2f} per design)" if made else ""))
+    print(f"  wall clock   {took:.1f}s"
+          + (f"  ({took / made:.1f}s per design)" if made else ""))
+    if made:
+        print(f"  an hour of this would be about {int(3600 / (took / made))} designs")
+    if result.get("discarded"):
+        print(f"  {result['discarded']} thrown away as too close to something you have")
+    if result.get("note"):
+        print(f"  {result['note']}")
+
+    if not keep and result.get("designs"):
+        for entry in result["designs"]:
+            pipe.store.remove_design(entry["design_id"])
+        pipe.store.forget_recipes(niche)
+        print(f"\n  undone — {len(result['designs'])} design(s) removed and the "
+              f"combinations released. Pass --keep to keep them.")
+    return 0 if made else 1
+
+
 def _draw_motifs(settings, gaps, size) -> int:
     """Ask a drawing model for the motifs the library has not got.
 
@@ -442,6 +514,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--new", action="store_true",
                    help="say this niche is new; without it, an existing one is expected")
 
+    s = sub.add_parser("bench", help="time the batch path against your real models")
+    s.add_argument("--count", type=int, default=12, help="how many to make")
+    s.add_argument("--keep", action="store_true",
+                   help="keep what it makes; by default the run is undone afterwards")
+
     s = sub.add_parser("make", help="new designs from what has already been read")
     s.add_argument("count", type=int, help="how many to make")
     s.add_argument("--mix", type=float, default=None,
@@ -616,6 +693,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"working on: {record['name']} ({want})")
         print("  ready to mix from." if ready else f"  {why}")
         return 0
+
+    elif args.cmd == "bench":
+        return _bench(pipe, settings, args.count, args.keep)
 
     elif args.cmd == "make":
         if args.forget:

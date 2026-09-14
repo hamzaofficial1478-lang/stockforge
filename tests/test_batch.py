@@ -287,3 +287,101 @@ def test_nothing_to_mix_from_is_said_plainly(workspace):
     result = pipe.make(count=10, collection=NICHE)
     assert result["made"] == 0
     assert "needs 24" in result["note"], result["note"]
+
+
+# --- what may lend an ingredient ------------------------------------------
+
+def test_the_program_does_not_mix_from_its_own_output(workspace):
+    """Measured before this was true: thirty seeds became thirty-six donors
+    after one run of six. Mixing from your own output compounds — the third run
+    is a mix of mixes of mixes, drifting away from anything anybody chose."""
+    providers.set_provider("vision", ScriptedProvider())
+    providers.set_provider("reason", ScriptedProvider())
+    pipe = Pipeline(workspace)
+    _seed_pool(pipe, _varied_pool(30))
+
+    before = len(pipe._specs(exclude="", cap=500, collection=NICHE, donors_only=True))
+    result = pipe.make(count=6, collection=NICHE)
+    after = len(pipe._specs(exclude="", cap=500, collection=NICHE, donors_only=True))
+
+    assert result["made"] > 0, result["note"]
+    assert after == before, (
+        f"the pool grew from {before} to {after} — it is mixing from what it made")
+
+
+def test_the_seed_designs_are_read_once_and_used_for_ever(workspace):
+    """The owner's actual question, and the answer is no — you do not hand the
+    designs over again. They are read once and every run after that reuses the
+    reading, which is why a batch costs one request rather than five per
+    design. Asserted by which passes run at all: not one reading pass appears
+    in either run."""
+    asked: list[str] = []
+
+    class Watching(ScriptedProvider):
+        def structured(self, system, user_text, images, model, **kw):
+            asked.append(model.__name__)
+            return super().structured(system, user_text, images, model, **kw)
+
+    provider = Watching()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+    pipe = Pipeline(workspace)
+    _seed_pool(pipe, _varied_pool(30))
+
+    asked.clear()
+    first = pipe.make(count=4, collection=NICHE)
+    second = pipe.make(count=4, collection=NICHE)
+
+    assert first["made"] and second["made"], (first["note"], second["note"])
+    reading = {"Survey", "PaletteRead", "Provenance", "TypeRead", "StructureRead"}
+    assert not (set(asked) & reading), (
+        f"a batch read the artwork again: {sorted(set(asked) & reading)}")
+    # What a batch does ask for is covered by the call-count test above. The
+    # claim here is narrower and is the one the owner asked about: the seed
+    # designs are read once, and no run afterwards reads anything.
+    assert set(asked) <= {"CopySet", "NewCopy"}, (
+        f"a batch asked for more than the wording: {sorted(set(asked))}")
+
+
+def test_somebody_elses_design_is_never_an_ingredient(workspace):
+    """Reference can be read, listed and looked at. It cannot lend a palette to
+    something that gets sold — every ingredient being the owner's own is the
+    whole reason a delivered file is safe to sell."""
+    providers.set_provider("vision", ScriptedProvider())
+    providers.set_provider("reason", ScriptedProvider())
+    pipe = Pipeline(workspace)
+    _seed_pool(pipe, _varied_pool(30))
+
+    # one brought in for reference, filed in the same niche
+    borrowed = _spec("someone-elses", 200, "Not Mine")
+    pipe.store.ensure_collection(NICHE, "Test niche")
+    pipe.store.add_made_design("ref0000000000000000000000", "reference", "ref-0",
+                               collection=NICHE)
+    payload = borrowed.model_dump(mode="json")
+    pipe.store.save_spec("ref0000000000000000000000", payload)
+    pipe.store.save_read("ref0000000000000000000000", payload)
+    with pipe.store.tx() as c:
+        c.execute("UPDATE designs SET owned=0 WHERE id='ref0000000000000000000000'")
+
+    pool = pipe._specs(exclude="", cap=500, collection=NICHE, donors_only=True)
+    assert "someone-elses" not in {compose_stage._identity(s) for s in pool}, (
+        "a design marked as somebody else's was offered as an ingredient")
+
+
+def test_your_own_designs_from_anywhere_are_ingredients(workspace):
+    """The other half. Designs of yours listed on another platform are still
+    yours, and marking them so is all it takes."""
+    providers.set_provider("vision", ScriptedProvider())
+    providers.set_provider("reason", ScriptedProvider())
+    pipe = Pipeline(workspace)
+    _seed_pool(pipe, _varied_pool(30))
+
+    mine = _spec("mine-elsewhere", 90, "Also Mine")
+    pipe.store.add_made_design("own0000000000000000000000", "mine", "own-0",
+                               collection=NICHE)
+    payload = mine.model_dump(mode="json")
+    pipe.store.save_spec("own0000000000000000000000", payload)
+    pipe.store.save_read("own0000000000000000000000", payload)
+
+    pool = pipe._specs(exclude="", cap=500, collection=NICHE, donors_only=True)
+    assert "mine-elsewhere" in {compose_stage._identity(s) for s in pool}

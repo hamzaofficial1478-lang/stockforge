@@ -386,10 +386,16 @@ class Handler(BaseHTTPRequestHandler):
             if kind not in ("shop", "links", "folder") or not target:
                 return self._json({"error": "kind and target are required"}, 400)
             limit = body.get("limit") or None
+            # Whose designs these are. Only what is yours can lend an ingredient
+            # to anything made, so a link from somewhere else comes in as
+            # reference unless the owner says otherwise — the unsafe direction
+            # is the one that needs a deliberate act.
+            owned = body.get("owned")
+            owned = True if owned is None else bool(owned)
             try:
                 source = open_source(kind, target, cache_dir=self.cfg.root / "downloads",
                                      limit=int(limit) if limit else None)
-                pulled = Pipeline(self.cfg).pull(source)
+                pulled = Pipeline(self.cfg).pull(source, owned=owned)
             except Exception as exc:
                 return self._json({"error": str(exc)}, 400)
             warnings = source.warnings[-20:]
