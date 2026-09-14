@@ -147,11 +147,17 @@ def _detail(grey: np.ndarray, size: tuple[int, int] = (512, 512)) -> float:
     return float(np.count_nonzero(edges)) / edges.size
 
 
-def signals(source: Path, rebuild: Path) -> Signals:
+def signals(source: Path, rebuild: Path, compare_shape: bool = True) -> Signals:
     """Look at both images with arithmetic before looking at them with a model.
 
     Ordered cheapest first and returns at the first fault, so a blank render
     costs one Canny pass rather than a model call and two minutes of GPU.
+
+    `compare_shape` is off when the source was never cropped to the artwork.
+    A square listing photograph of a 5x7 card is 1.00 and the rebuild is
+    rightly 0.71, and calling that a misread trim is blaming the rebuild for
+    something the source did — it sent good designs to review with a reason
+    that pointed at the wrong end of the problem.
     """
     out = Signals()
     src = cv2.imread(str(source), cv2.IMREAD_GRAYSCALE)
@@ -168,9 +174,15 @@ def signals(source: Path, rebuild: Path) -> Signals:
     src_aspect = src.shape[1] / src.shape[0]
     reb_aspect = reb.shape[1] / reb.shape[0]
     out.aspect_error = abs(reb_aspect - src_aspect) / src_aspect
-    if out.aspect_error > MAX_ASPECT_ERROR:
+    if compare_shape and out.aspect_error > MAX_ASPECT_ERROR:
         out.fault = (f"the rebuild is the wrong shape — {reb_aspect:.2f} against the "
                      f"source's {src_aspect:.2f}, so the trim was misread")
+        return out
+
+    if not compare_shape:
+        # The same reason the shape is not compared: the pixels either side of
+        # the artwork are a table, and structural similarity against a table
+        # says nothing about the rebuild.
         return out
 
     out.ssim = ssim(source, rebuild)

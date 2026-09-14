@@ -185,9 +185,15 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.delenv("FONTCONFIG_FILE", raising=False)
     build_font_library(tmp_path / "fonts")
     build_motif_library(tmp_path / "motifs")
+    # least_donors=0 because these tests are about what happens *after* a
+    # variation is attempted — the metadata, the fonts, the duplicate check —
+    # and a one-design fixture would otherwise be refused a variation and never
+    # reach any of it. Whether that refusal is right has its own tests, in
+    # test_surviving.py, where it is the subject rather than the scaffolding.
     return Settings(root=tmp_path / "work", preserve_original=False,
                     fonts_dir=tmp_path / "fonts",
-                    motifs_dir=tmp_path / "motifs")
+                    motifs_dir=tmp_path / "motifs",
+                    least_donors=0)
 
 
 def test_a_design_goes_all_the_way_through(workspace, tmp_path):

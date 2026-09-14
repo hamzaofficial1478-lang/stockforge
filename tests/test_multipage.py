@@ -99,8 +99,11 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.delenv("FONTCONFIG_FILE", raising=False)
     build_font_library(tmp_path / "fonts")
     build_motif_library(tmp_path / "motifs")
+    # least_donors=0: these tests are about what happens after a variation is
+    # attempted, and a small fixture would otherwise be refused one and never
+    # reach the subject. The refusal has its own tests in test_surviving.py.
     return Settings(root=tmp_path / "work", fonts_dir=tmp_path / "fonts", preserve_original=False,
-                    motifs_dir=tmp_path / "motifs")
+                    motifs_dir=tmp_path / "motifs", least_donors=0)
 
 
 def _build(workspace, tmp_path, provider):

@@ -256,6 +256,27 @@ class Pipeline:
         # result on its own terms. Mixing does the heavier lifting.
         source_flat = images[0]
         pool = self._spec_pool(exclude=design_id)
+
+        # A variation needs something to vary from. With one other design in
+        # the niche, every round borrows from the same place and the result is
+        # the original with its hue nudged — a real run scored 0.10 twice over
+        # and went to review saying it still read as a copy, which is true and
+        # was never going to stop being true.
+        #
+        # It costs three model calls and four minutes to learn that. The master
+        # is made instead, with the reason, and the design is ready to vary the
+        # moment there is a catalogue to vary from.
+        if len(pool) < self.cfg.least_donors:
+            log.info("[%s] only %d other design(s) to mix from — master only",
+                     design_id[:8], len(pool))
+            spec.warnings.append(
+                f"made as a recovered master rather than a variation: there "
+                f"{'is' if len(pool) == 1 else 'are'} only {len(pool)} other "
+                f"design{'' if len(pool) == 1 else 's'} read in this niche, and a "
+                f"variation needs at least {self.cfg.least_donors} to borrow from. "
+                f"Read more in and run this one again.")
+            return self._export(spec, design_id, distinct=0.0, master_only=True)
+
         derived = spec
         distinct = 0.0
         recipe = None
@@ -617,7 +638,12 @@ class Pipeline:
             # Arithmetic before eyes: this is the first model call of the
             # build, so a render that failed outright is caught here rather
             # than described back to us at the cost of a GPU minute.
-            numbers = critique_stage.signals(source, preview)
+            # Only compare shapes when the source really is the artwork. An
+            # uncropped square listing photo is 1.00 against a 5x7 rebuild's
+            # 0.71, and calling that a misread trim blames the rebuild for what
+            # the source did.
+            numbers = critique_stage.signals(
+                source, preview, compare_shape=self._is_cropped(source))
             if numbers.fault:
                 return 0.0, "fault", f"'{page.name}': {numbers.fault}"
 
@@ -633,6 +659,18 @@ class Pipeline:
                 break
 
         return worst, verdict, ""
+
+    def _is_cropped(self, source: Path) -> bool:
+        """Was this image actually cut down to the artwork?
+
+        `flat` means it arrived as the artwork; `cropped` means we found the
+        card and warped to it. `unsure` means we could not find it and read the
+        photograph whole, and everything measured against it is measured
+        against a table.
+        """
+        row = self.store.conn.execute(
+            "SELECT trim FROM assets WHERE flat_path=? LIMIT 1", (str(source),)).fetchone()
+        return (row["trim"] if row else "flat") in ("flat", "cropped")
 
     def _check_for_a_twin(self, design_id: str, page_name: str,
                           preview: Path | None) -> duplicates_stage.Twin | None:

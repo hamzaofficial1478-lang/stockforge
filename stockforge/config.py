@@ -70,7 +70,7 @@ PANEL_OWNED = ("SF_VISION_", "SF_REASON_", "SF_IMAGE_", "SF_QUICK_", "SF_ETSY_",
                "SF_MIX", "SF_DERIVE_", "SF_DISTINCT_", "SF_MOTIF_",
                "SF_CRITIQUE_", "SF_PRESERVE_", "SF_PUBLISH", "SF_WORKERS",
                "SF_ROOT", "SF_FONTS", "SF_MOTIFS",
-               "SF_COLLECTION", "SF_SEED_")
+               "SF_COLLECTION", "SF_SEED_", "SF_LEAST_")
 
 
 def _panel_owned(key: str) -> bool:
@@ -261,6 +261,13 @@ class Settings:
     # there are so few combinations that a run repeats itself whatever the
     # ledger does: the mixer is drawing from too small a bag.
     seed_designs: int = field(default_factory=lambda: _i("SF_SEED_DESIGNS", 24), metadata={"env": "SF_SEED_DESIGNS"})
+    # The fewest other designs a single variation will attempt to borrow from.
+    # Lower than the batch's twenty-four because one design at a time is a
+    # smaller ask — but not one, which is the case that cannot work at all: with
+    # a single donor every ingredient comes from the same place and the result
+    # is the original with its hue nudged. Below this the recovered master is
+    # made instead, with the reason on it.
+    least_donors: int = field(default_factory=lambda: _i("SF_LEAST_DONORS", 4), metadata={"env": "SF_LEAST_DONORS"})
 
     # --- did we actually rebuild it ---------------------------------------
     # How much of a surface may be placed photograph before we stop calling it

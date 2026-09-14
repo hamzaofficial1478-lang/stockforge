@@ -196,3 +196,114 @@ def test_it_does_not_tell_you_to_pull_more_in_when_the_problem_is_failures():
 def test_it_does_say_to_pull_more_in_when_that_is_the_problem():
     _, why = niches.ready({"name": "Halloween", "read": 2, "designs": 2, "failed": 0}, 24)
     assert "Pull in 22 more" in why
+
+
+# --- not paying to find out what was knowable in advance ------------------
+
+def test_a_variation_with_nothing_to_borrow_from_is_not_attempted(tmp_path):
+    """From a real run, a pool of two:
+
+        round 1: worst distinct=0.10 -> derive_further
+        round 2: worst distinct=0.10 -> derive_further
+        ac131054 -> review
+
+    The second round borrowed every ingredient it could and the score did not
+    move, because every ingredient came from the same single donor. Three model
+    calls and four minutes to learn something countable in advance.
+    """
+    build_font_library(tmp_path / "fonts")
+    build_motif_library(tmp_path / "motifs")
+    cfg = Settings(root=tmp_path / "work", fonts_dir=tmp_path / "fonts",
+                   motifs_dir=tmp_path / "motifs", preserve_original=False)
+    cfg.ensure_dirs()
+    _listing(tmp_path / "in", "only-one")
+
+    asked: list[str] = []
+
+    class Watching(ScriptedProvider):
+        def structured(self, system, user_text, images, model, **kw):
+            asked.append(model.__name__)
+            return super().structured(system, user_text, images, model, **kw)
+
+    provider = Watching()
+    providers.set_provider("vision", provider)
+    providers.set_provider("reason", provider)
+    pipe = Pipeline(cfg)
+    pipe.pull(open_source("folder", str(tmp_path / "in")))
+    design_id = pipe.store.designs()[0]["id"]
+
+    assert pipe.build(design_id) == "master_only"
+    assert "Distinctiveness" not in asked, (
+        "it paid a model to score a variation it had nothing to build")
+    warnings = pipe.store.get_spec(design_id)["warnings"]
+    assert any("variation needs at least" in w for w in warnings), warnings
+
+
+def test_a_real_catalogue_still_gets_its_variation(tmp_path):
+    """The other side: the guard must not quietly turn everybody's variations
+    into masters the moment it exists."""
+    build_font_library(tmp_path / "fonts")
+    build_motif_library(tmp_path / "motifs")
+    cfg = Settings(root=tmp_path / "work", fonts_dir=tmp_path / "fonts",
+                   motifs_dir=tmp_path / "motifs", preserve_original=False)
+    cfg.ensure_dirs()
+    for n in range(6):
+        _listing(tmp_path / "in", f"card{n}")
+
+    providers.set_provider("vision", ScriptedProvider())
+    providers.set_provider("reason", ScriptedProvider())
+    pipe = Pipeline(cfg)
+    pipe.pull(open_source("folder", str(tmp_path / "in")))
+    rows = pipe.store.designs(state="pending")
+    for row in rows[:-1]:
+        pipe.build(row["id"])
+
+    assert pipe.build(rows[-1]["id"]) != "master_only", (
+        "a design with five others to borrow from was refused a variation")
+
+
+# --- a photograph is not something to measure a rebuild against -----------
+
+def test_an_uncropped_source_is_not_called_a_misread_trim(tmp_path):
+    """From the same run:
+
+        'cover': the rebuild is the wrong shape — 0.71 against the source's
+        1.00, so the trim was misread
+
+    The source is a square listing photograph that was never cropped to the
+    card. The rebuild is 0.71 because that is what a 5x7 card is, which is
+    correct — and the reason blamed the rebuild for what the source did.
+    """
+    import cv2
+    import numpy as np
+    from stockforge.stages import critique as critique_stage
+
+    square = tmp_path / "photo.png"
+    card = tmp_path / "rebuild.png"
+    cv2.imwrite(str(square), np.full((900, 900, 3), 230, np.uint8))
+    shot = np.full((1000, 710, 3), 250, np.uint8)
+    cv2.putText(shot, "HALLOWEEN", (40, 400), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (30, 30, 30), 3)
+    cv2.imwrite(str(card), shot)
+
+    blamed = critique_stage.signals(square, card, compare_shape=True)
+    assert "wrong shape" in (blamed.fault or ""), "this test is measuring nothing"
+
+    fair = critique_stage.signals(square, card, compare_shape=False)
+    assert not fair.fault, f"it still faulted the rebuild: {fair.fault}"
+
+
+def test_a_cropped_source_is_still_checked_for_shape(tmp_path):
+    """The check is worth having where it means something — a rebuild at the
+    wrong trim is a real fault and this is what catches it."""
+    import cv2
+    import numpy as np
+    from stockforge.stages import critique as critique_stage
+
+    portrait = tmp_path / "source.png"
+    landscape = tmp_path / "rebuild.png"
+    cv2.imwrite(str(portrait), np.full((1000, 710, 3), 240, np.uint8))
+    wrong = np.full((710, 1000, 3), 250, np.uint8)
+    cv2.putText(wrong, "HALLOWEEN", (40, 300), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (30, 30, 30), 3)
+    cv2.imwrite(str(landscape), wrong)
+
+    assert "wrong shape" in (critique_stage.signals(portrait, landscape).fault or "")

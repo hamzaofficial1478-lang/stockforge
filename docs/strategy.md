@@ -277,6 +277,34 @@ Two more things the error messages needed. A failure now carries **what the
 model actually said**: "no parseable JSON in response" describes empty, refused,
 prose and truncated equally, and those want four different answers.
 
+### Two things the same run showed next
+
+With the designs no longer dying, what they did instead was visible — and both
+were the program blaming a design for something it had not done.
+
+**A photograph is not something to measure a rebuild against.**
+
+    'cover': the rebuild is the wrong shape — 0.71 against the source's
+    1.00, so the trim was misread
+
+The source is a square listing photograph that was never cropped to the card.
+The rebuild is 0.71 because that is what a 5x7 card is — it was right, and the
+reason pointed at the wrong end of the problem. The shape check now runs only
+when the source really is the artwork; the trim state was already recorded and
+nothing had asked it.
+
+**A variation needs something to vary from.**
+
+    round 1: worst distinct=0.10 -> derive_further
+    round 2: worst distinct=0.10 -> derive_further
+    ac131054 -> review
+
+The second round borrowed every ingredient it could and the score did not move,
+because every ingredient came from the same single donor. Three model calls and
+four minutes to learn something countable in advance. Below `SF_LEAST_DONORS`
+(four) the recovered master is made instead, with the reason on it, and the
+design is ready to vary the moment there is a catalogue to vary from.
+
 ### How long twenty-four actually takes
 
 From that same log, the design that worked took **5.3 minutes** end to end — not
