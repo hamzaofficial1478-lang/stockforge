@@ -856,9 +856,15 @@ async function loadConns(){
 }
 
 function paintConns(){
+  // With nothing set up, the one thing to do on this screen is add a model —
+  // and it was behind a collapsed "Add a connection" summary, which reads as
+  // a heading rather than a button. Open it when the list is empty.
+  const wrap = $('conn-form-wrap');
+  if (wrap && !CONNS.length) wrap.open = true;
   if (!CONNS.length){
-    $('conns').innerHTML = '<div class="empty">No connections yet. Add one below — ' +
-      'a local server usually needs only its address.</div>';
+    $('conns').innerHTML = '<div class="empty">No connections yet. Fill the form below — ' +
+      'a local server (Ollama, LM Studio, or any OpenAI-compatible bridge) needs ' +
+      'only its address, like <code>http://127.0.0.1:8000/v1</code>.</div>';
     return;
   }
   $('conns').innerHTML = CONNS.map(c => `
