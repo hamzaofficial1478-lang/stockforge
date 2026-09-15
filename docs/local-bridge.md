@@ -137,12 +137,34 @@ Setup → Models → **Add a connection**:
 the whole path works rather than that the address looks plausible. It took 12
 seconds when measured.
 
-**Which role.** The bridge handles images properly — it decodes the base64 that
-stockforge sends and uploads them to Gemini — so reading designs does work. But
-reading sends two images per call and several calls per design, which is the
-traffic a single web session gets throttled for. Writing from a brief sends no
-images at all and costs one call per design. Give it **writing** first, and try
-reading only once you know the bridge is stable.
+**Which role — and this one is measured, not guessed.** Give it a role that
+sends no images: **writing designs from a brief**, or the easy questions. Do
+not give it reading, and do not use it with `invent --like`.
+
+The bridge does not answer image calls. It accepts the picture, uploads it to
+Google, returns `200` — and then never sends a body. Measured three ways, all
+identical: the full 1588px listing photo, the same photo shrunk to 640px, and
+again with `httpx` installed for true streaming. Every one ended
+`sent nothing for 180s`, twice per design, 0 of 1 written.
+
+The control that makes it conclusive rather than a guess: a text-only call to
+the same bridge, in the same session, moments after an image call failed,
+answered in **13 seconds**. It is not throttling or an exhausted quota. It is
+image calls.
+
+Reading the bridge's source suggests otherwise — it really does decode the
+base64 that stockforge sends, and the log really does say `Image uploaded`. But
+decoding and uploading is not answering, and the source was where an earlier
+version of this page got it wrong.
+
+So:
+
+| job | through the bridge |
+|---|---|
+| `invent` from a brief | yes — 22s a design, three of three `ready` |
+| the easy questions (quick role) | yes |
+| `invent --like <picture>` | no — use an API key |
+| reading designs (`run`) | no — use an API key |
 
 ## When it stops working
 

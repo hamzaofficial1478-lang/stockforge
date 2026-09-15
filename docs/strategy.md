@@ -570,6 +570,34 @@ there but does nothing". It opens by itself now when there is nothing set up.
 The thing the panel cannot do is *be* the bridge. Pointing it at an address
 where nothing is listening fails the Test button, correctly.
 
+## What a web bridge can and cannot carry
+
+Measured, because the source code said one thing and the program said another.
+
+A local Gemini bridge answers **text** calls well: 13 seconds for a connection
+test, 22 seconds a design, three of three `ready` writing from a brief. It
+answers **image** calls not at all. It accepts the picture, uploads it to
+Google, returns `200`, and never sends a body.
+
+Three configurations, all identical — the full 1588px listing photo, the same
+shrunk to 640px, and again with `httpx` installed so the bridge does true
+streaming rather than buffering. Every one: `sent nothing for 180s`, twice per
+design, nothing written.
+
+The control is what makes that a conclusion rather than a guess. A text-only
+call to the same bridge, in the same session, moments after an image call had
+failed, came back in 13 seconds. Not throttling, not an exhausted anonymous
+quota. Image calls.
+
+Two things worth keeping from getting there. The first version of the bridge
+page said reading designs through it works, because the bridge's source really
+does decode the base64 stockforge sends and its log really does say `Image
+uploaded` — but decoding and uploading is not answering, and a claim read off
+source code is not a measurement. The second: the first two runs were made
+against a bridge with no `httpx`, in buffered mode, which is not the setup the
+page tells the owner to build. Testing a configuration you did not recommend
+proves nothing about the one you did.
+
 ## Closing the motif loop: the trace
 
 The chain was complete except for one link, and without it the whole thing did
