@@ -802,6 +802,12 @@ class Pipeline:
                 failed.append(str(exc)[:200])
                 continue
 
+            # Bring any oversized line down to what will actually fit, using
+            # the face the renderer will use. Without it the renderer shrinks
+            # it instead and reports "type does not fit its box", which is a
+            # review for something nobody needs to look at.
+            invent_stage.fit_type(spec, self.cfg.fonts_dir)
+
             # Point every motif at a drawing we hold. `build` does this after
             # reading and this path did not, so every invented design came out
             # with library_id unset and the renderer reported a hole for a

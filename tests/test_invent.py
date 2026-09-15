@@ -268,3 +268,90 @@ def test_the_command_line_can_write_designs(tmp_path, monkeypatch, capsys):
     said = capsys.readouterr().out
     assert code == 0, said
     assert "design(s) written" in said, said
+
+
+# --- the words have to fit the box ----------------------------------------
+#
+# Run against real Gemini through a local bridge, three designs, all three to
+# review: "type does not fit its box: title 'A WICKED NIGHT' at 43% of its
+# intended size". The prompt was then given the arithmetic in words, the model
+# followed it correctly, and it was STILL 43% — because the rule as written
+# left out two things a prompt cannot carry. `size_ratio` is a cap height as a
+# fraction of the canvas HEIGHT, the em is that over the face's own cap ratio,
+# and the box is a fraction of the WIDTH. Getting between them needs the page
+# aspect and the metrics of a font file nobody has opened yet.
+#
+# So it is measured in code instead, with the same face and the same measure
+# the renderer uses.
+
+def test_type_too_big_for_its_box_is_brought_down_before_it_is_drawn(tmp_path):
+    from stockforge.schema import (Box, Canvas, DesignDNA, FontClass, Page,
+                                   Palette, Swatch, ColourRole, TextElement,
+                                   TypeRole, DesignSpec)
+    from stockforge.stages.invent import fit_type
+
+    build_font_library(tmp_path / "fonts")
+    huge = TextElement(role=TypeRole.TITLE, content="A WICKED NIGHT",
+                       box=Box(x=0.1, y=0.2, w=0.8, h=0.15),
+                       font=FontClass(category="serif", weight=400),
+                       size_ratio=0.16)
+    spec = DesignSpec(
+        source_asset_id="x", confidence=0.6,
+        dna=DesignDNA(category="invitation", occasion="halloween",
+                      palette=Palette(swatches=[
+                          Swatch(role=ColourRole.BACKGROUND, hex="#ffffff", coverage=0.8),
+                          Swatch(role=ColourRole.INK, hex="#000000", coverage=0.2)])),
+        pages=[Page(name="front", canvas=Canvas(width_mm=127, height_mm=178),
+                    elements=[huge])])
+
+    changed = fit_type(spec, tmp_path / "fonts")
+    assert changed, "a 14-character title at 0.16 on a 5x7 was left as it was"
+    assert huge.size_ratio < 0.16, "the size did not come down"
+    assert huge.box.h >= huge.size_ratio * 1.4, (
+        "the box did not come down with it, so the line floats in it")
+
+
+def test_type_that_already_fits_is_left_alone(tmp_path):
+    """The other side. A pass that shrinks everything would quietly flatten
+    every design's hierarchy, which is worse than the fault it fixes."""
+    from stockforge.schema import (Box, Canvas, DesignDNA, FontClass, Page,
+                                   Palette, Swatch, ColourRole, TextElement,
+                                   TypeRole, DesignSpec)
+    from stockforge.stages.invent import fit_type
+
+    build_font_library(tmp_path / "fonts")
+    small = TextElement(role=TypeRole.BODY, content="Oct 31",
+                        box=Box(x=0.1, y=0.6, w=0.8, h=0.06),
+                        font=FontClass(category="sans", weight=400),
+                        size_ratio=0.025)
+    spec = DesignSpec(
+        source_asset_id="x", confidence=0.6,
+        dna=DesignDNA(category="invitation", occasion="halloween",
+                      palette=Palette(swatches=[
+                          Swatch(role=ColourRole.BACKGROUND, hex="#ffffff", coverage=0.8),
+                          Swatch(role=ColourRole.INK, hex="#000000", coverage=0.2)])),
+        pages=[Page(name="front", canvas=Canvas(width_mm=127, height_mm=178),
+                    elements=[small])])
+
+    assert fit_type(spec, tmp_path / "fonts") == []
+    assert small.size_ratio == 0.025
+
+
+def test_the_fitting_pass_runs_before_a_design_is_exported(shop):
+    """It has to be wired in, not merely available: the whole point is that no
+    invented design reaches the renderer needing to be shrunk."""
+    pipe, _ = shop
+    called = {}
+    import stockforge.stages.invent as invent_mod
+    real = invent_mod.fit_type
+
+    def watch(spec, fonts_dir):
+        called["yes"] = True
+        return real(spec, fonts_dir)
+
+    invent_mod.fit_type = watch
+    try:
+        pipe.invent(1, Brief(niche="halloween-cards"))
+    finally:
+        invent_mod.fit_type = real
+    assert called.get("yes"), "invented designs go to the renderer unfitted"

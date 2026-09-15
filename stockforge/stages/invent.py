@@ -31,8 +31,10 @@ from pydantic import BaseModel, Field
 from pathlib import Path
 
 from ..providers import VisionProvider, vision
-from ..schema import DesignDNA, Page, Provenance, DesignSpec
+from ..schema import DesignDNA, Page, Provenance, DesignSpec, TextElement
 from . import motifs as motifs_stage
+from .fonts import load_manifest, match, open_face
+from .render import FIT_MARGIN, MM_PER_PX
 
 log = logging.getLogger("stockforge.invent")
 
@@ -73,6 +75,24 @@ text element a role, the actual wording, and a size_ratio relative to the page. 
 A headline sits around 0.10 to 0.16; body text around 0.025 to 0.04. Wording \
 that the buyer personalises — names, dates, venues, phone numbers — is marked \
 placeholder:true so it can be rewritten per design. Fixed design words are not.
+
+MAKE THE WORDS FIT THE BOX. This is the rule most often got wrong, and when it \
+is wrong the line is shrunk to fit and the design is ruined. Letters are about \
+half as wide as they are tall, so a line of N characters at size_ratio S needs \
+roughly N * S * 0.55 of the page width. Before you write a text element, count \
+the characters and check:
+
+    size_ratio <= box.w / (characters * 0.55)
+
+"A WICKED NIGHT" is 14 characters. In a box 0.8 wide that allows a size_ratio \
+of about 0.10, not 0.16. If you want it bigger, use fewer words — not a bigger \
+number. Set box.h to at least 1.4 * size_ratio so the line has room to sit, and \
+give a two-line block twice that.
+
+PUNCTUATION. Keep to what every typeface has: letters, digits, full stops, \
+commas, ampersands, hyphens, apostrophes. A bullet, an em-dash, a fancy quote \
+or an emoji may be missing from the face this gets set in, and a missing glyph \
+sends the design to a human. Separate items with a hyphen or start a new line.
 
 DECORATION. You will be given the list of drawings actually available. Use \
 those, described in plain words the way you would ask an illustrator — "a \
@@ -159,6 +179,59 @@ def available_motifs(motifs_dir: Path, cap: int = 60) -> list[str]:
         if said and said not in out:
             out.append(said)
     return out[:cap]
+
+
+def fit_type(spec: DesignSpec, fonts_dir: Path) -> list[str]:
+    """Shrink any line that will not fit its box, before it is drawn.
+
+    A model asked to size type by arithmetic gets it wrong, and it is not its
+    fault: `size_ratio` is a CAP HEIGHT as a fraction of the canvas HEIGHT, the
+    em is that divided by the face's own cap ratio, and the box it has to fit
+    is a fraction of the WIDTH. Getting from one to the other needs the page
+    aspect and the metrics of a font file nobody has opened yet. Real Gemini,
+    given the rule in words and following it correctly, still produced a title
+    that had to be shrunk to 43% — because the rule as stated left out the
+    aspect and the cap ratio, and a prompt cannot carry a font's metrics.
+
+    So it is measured here instead, with the same face and the same `measure`
+    the renderer will use, and the size is lowered until it fits. The renderer
+    would shrink it anyway — this only moves that from a surprise, reported to
+    a human as "type does not fit its box", to a decision made before drawing.
+    The design keeps its hierarchy either way; what it loses is the review.
+
+    Returns what was resized, for the record.
+    """
+    library = load_manifest(fonts_dir)
+    changed: list[str] = []
+    for page in spec.pages:
+        h = page.canvas.height_mm / MM_PER_PX
+        w = page.canvas.width_mm / MM_PER_PX
+        for el in page.elements:
+            if not isinstance(el, TextElement) or not el.content.strip():
+                continue
+            entry, _ = match(el.font, library)
+            face = open_face(entry, fonts_dir) if entry else None
+            if face is None:
+                continue
+            box_w = el.box.w * w
+            if box_w <= 0:
+                continue
+            size = (el.size_ratio * h) / face.cap_ratio
+            widest = max((face.measure(line, size, el.tracking)
+                          for line in el.content.split("\n")), default=0.0)
+            if widest <= box_w * FIT_MARGIN or widest <= 0:
+                continue
+            shrink = (box_w * FIT_MARGIN) / widest
+            was = el.size_ratio
+            el.size_ratio = max(0.008, was * shrink)
+            # The box was sized for the type it was asked to hold, so it comes
+            # down with it — a heading in a box twice its height floats.
+            el.box.h = max(el.box.h * shrink, el.size_ratio * 1.4)
+            changed.append(f"{el.role.value} {el.content.splitlines()[0][:30]!r} "
+                           f"{was:.3f} -> {el.size_ratio:.3f}")
+    if changed:
+        log.info("fitted %d line(s) to their boxes: %s", len(changed), "; ".join(changed[:3]))
+    return changed
 
 
 def invent(brief: Brief, provider: VisionProvider | None = None) -> DesignSpec:

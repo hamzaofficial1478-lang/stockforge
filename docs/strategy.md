@@ -520,6 +520,38 @@ design stands on. Anything that does not resolve is reported as a hole and the
 design goes to a human — the existing behaviour, and the reason provenance can
 be set here rather than guessed at.
 
+### Measured against real Gemini
+
+The invent path was built against a scripted provider and then run against real
+Gemini through a local bridge, which is where it stopped being theory. Three
+rounds, and each one found something a fixture could not.
+
+**Round one — it designed with what we have.** Told the library holds an arched
+frame, a thin rule and a eucalyptus sprig, it used exactly those three, and
+wrote copy nobody would be embarrassed by: *A WICKED NIGHT — ANNUAL HALLOWEEN
+MASQUERADE — BLACKWOOD MANOR, 1313 CEMETERY LANE — RSVP IF YOU DARE.* But it
+went to review: a bullet character the face had no glyph for, and a title
+shrunk to **43%** of its asked-for size to fit its box.
+
+**Round two — the prompt was given the arithmetic, and it still did not work.**
+The bullet went away. The title was still at 43%, and the model was following
+the rule correctly: every line it wrote satisfied the formula it had been
+given. The formula was wrong. `size_ratio` is a cap height as a fraction of the
+canvas HEIGHT, the em is that over the face's own cap ratio, and the box is a
+fraction of the WIDTH — so converting between them needs the page aspect and
+the metrics of a font file nobody has opened. A prompt cannot carry a font's
+metrics, and no amount of rewording was going to fix that.
+
+**Round three — measured in code.** `fit_type` opens the same face the renderer
+will use, measures with the same `measure`, and brings any oversized line down
+before the design is drawn. Three for three came out `ready`.
+
+The lesson is the one this project keeps relearning from the other direction:
+when a rule needs a number the model cannot see, stop explaining and go and
+measure it.
+
+Twenty-two seconds a design through the bridge, single file.
+
 ## Pointing the program at a local bridge
 
 Any server that speaks OpenAI's `/v1/chat/completions` is a first-class model
