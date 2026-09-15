@@ -155,6 +155,18 @@ class Brief:
     # shown the picture and writes something in the same voice; without it, it
     # works from the words alone.
     like: Path | None = None
+    # The same thing in words, for when the model cannot be shown a picture.
+    #
+    # A local web bridge answers text in twelve seconds and does not answer
+    # image calls at all — measured, including a 512px picture with a one-line
+    # question, which timed out at five minutes. So on the free path there is
+    # no way to hand the model an inspiration design directly.
+    #
+    # There is a way round it that costs one paste. Gemini's own web page takes
+    # pictures perfectly well; describe the design there, bring the description
+    # back, and it goes in here. One manual step per inspiration, not per
+    # design — the twelve designs that come out of it are automatic.
+    inspired_by: str = ""
 
     def as_prompt(self) -> str:
         lines = [f"Niche: {self.niche}",
@@ -167,6 +179,11 @@ class Brief:
             lines.append(f"Style: {self.style}")
         if self.wording:
             lines.append(f"Wording to work in: {self.wording}")
+        if self.inspired_by:
+            lines.append("A design to work in the spirit of, described:\n"
+                         + self.inspired_by.strip()
+                         + "\n\nWork in that spirit and then make something else — "
+                           "not that design with the words swapped.")
         if self.avoid:
             # What the shop already has. Naming it is cheaper than discovering
             # a repeat after it is drawn, and far cheaper than shipping one.

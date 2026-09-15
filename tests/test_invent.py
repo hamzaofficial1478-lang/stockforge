@@ -503,3 +503,68 @@ def test_motifs_draw_is_reachable_from_the_command_line(tmp_path, monkeypatch, c
         "`motifs draw` is still falling through to the match branch")
     assert "draw" in said or "nothing missing" in said, (
         f"it did not answer as a draw command: {said[:200]}")
+
+
+# --- an inspiration in words, for a model that cannot be shown one ----------
+#
+# Measured against a local Gemini bridge: text answers in 12 seconds, image
+# calls do not answer at all — a 512px picture with a one-line question and no
+# schema timed out at five minutes. So on the free path there is no way to hand
+# a model the design you want to work in the spirit of.
+#
+# The way round costs one paste. Gemini's own web page takes pictures perfectly
+# well; describe the design there, bring the words back, and they go in here.
+# One manual step per inspiration, and the twelve designs that come out of it
+# are automatic.
+
+def test_a_pasted_description_reaches_the_model(shop):
+    pipe, _ = shop
+    said = {}
+
+    class Watching(ScriptedProvider):
+        def structured(self, system, user_text, images, model, **kw):
+            if model.__name__ == "Invented":
+                said["prompt"] = user_text
+                said["images"] = len(images)
+            return super().structured(system, user_text, images, model, **kw)
+
+    providers.set_provider("vision", Watching())
+    pipe.invent(1, Brief(niche="halloween-cards",
+                         inspired_by="aged cream paper, a cartoon ghost in a "
+                                     "witch hat, soot black and pumpkin orange"))
+
+    assert "cartoon ghost in a witch hat" in said.get("prompt", ""), said.get("prompt", "")[:300]
+    assert said.get("images") == 0, (
+        "it sent a picture — the whole point of this path is that it does not")
+
+
+def test_the_description_is_told_not_to_be_copied(shop):
+    """Same rule as `--like`: work in its spirit, then make something else. A
+    description handed over bare produces that design with the words swapped."""
+    pipe, _ = shop
+    said = {}
+
+    class Watching(ScriptedProvider):
+        def structured(self, system, user_text, images, model, **kw):
+            if model.__name__ == "Invented":
+                said["prompt"] = user_text
+            return super().structured(system, user_text, images, model, **kw)
+
+    providers.set_provider("vision", Watching())
+    pipe.invent(1, Brief(niche="halloween-cards", inspired_by="a vintage ghost card"))
+    assert "make something else" in said.get("prompt", ""), said.get("prompt", "")[:300]
+
+
+def test_no_description_leaves_the_brief_as_it_was(shop):
+    pipe, _ = shop
+    said = {}
+
+    class Watching(ScriptedProvider):
+        def structured(self, system, user_text, images, model, **kw):
+            if model.__name__ == "Invented":
+                said["prompt"] = user_text
+            return super().structured(system, user_text, images, model, **kw)
+
+    providers.set_provider("vision", Watching())
+    pipe.invent(1, Brief(niche="halloween-cards"))
+    assert "spirit of, described" not in said.get("prompt", "")

@@ -692,7 +692,8 @@ class Handler(BaseHTTPRequestHandler):
                 occasion=str(body.get("occasion") or ""),
                 style=str(body.get("style") or ""),
                 trim=str(body.get("trim") or "5x7in"),
-                wording=str(body.get("wording") or "")))
+                wording=str(body.get("wording") or ""),
+                inspired_by=str(body.get("inspired_by") or "")))
             result["seconds"] = round(time.monotonic() - started, 1)
             return self._json(result)
 
