@@ -21,7 +21,7 @@ from ..schema import (
     ShapeElement, TextElement,
 )
 from .fonts import FontEntry, load_manifest, match, open_face
-from .motifs import load as load_motifs
+from .motifs import RASTER_SUFFIX, load as load_motifs
 
 MM_PER_PX = 25.4 / 96.0
 
@@ -198,15 +198,59 @@ def _motif_file(library_id: str | None, motifs_dir: Path) -> Path | None:
     It arrives on a spec, and a spec has been through a model — the schema we
     hand the analyser includes this field, so it can fill it in with anything
     it likes. Not something to join onto a path unchecked.
+
+    A drawing first, then a picture. An object in this library may be either,
+    and where both exist the drawing wins: it recolours and it scales without
+    limit, and a picture does neither.
     """
     if not library_id:
         return None
+    for name in (f"{library_id}.svg", f"{library_id}{RASTER_SUFFIX}"):
+        try:
+            src = (motifs_dir / name).resolve()
+            src.relative_to(motifs_dir.resolve())
+        except (ValueError, OSError):
+            continue
+        if src.is_file():
+            return src
+    return None
+
+
+def _picture(el: MotifElement, src: Path, w: float, h: float) -> str:
+    """Place a picture as an object: a painted ghost, a watercolour border.
+
+    Embedded rather than linked, for the same reason the source rasters are:
+    the file has to survive being moved off this machine, and a relative path
+    into somebody's workspace does not.
+
+    It keeps its own shape unless the library says it may be pulled about, so a
+    square ghost in a wide box is centred rather than stretched — the same rule
+    the drawings follow, and for the same reason.
+    """
+    import base64
+
     try:
-        src = (motifs_dir / f"{library_id}.svg").resolve()
-        src.relative_to(motifs_dir.resolve())
-    except (ValueError, OSError):
-        return None
-    return src if src.is_file() else None
+        data = base64.standard_b64encode(src.read_bytes()).decode()
+    except OSError as exc:
+        log.warning("could not read the picture %s: %s", src.name, exc)
+        return ""
+
+    x, y, bw, bh = _px(el.box, w, h)
+    entry = next((e for e in load_motifs(src.parent)
+                  if e.library_id == el.library_id), None)
+    fit = "none" if (entry is not None and entry.stretch) else "xMidYMid meet"
+    flip = (f' transform="translate({2 * x + bw:.2f} 0) scale(-1 1)"'
+            if el.flip_x else "")
+    rot = _rot(el, x + bw / 2, y + bh / 2)
+    mime = "image/png" if src.suffix.lower() == ".png" else "image/jpeg"
+    opacity = ""
+    return (f'<g{rot}><g{flip}><image x="{x:.2f}" y="{y:.2f}" '
+            f'width="{bw:.2f}" height="{bh:.2f}"{opacity} '
+            f'preserveAspectRatio="{fit}" '
+            f'xlink:href="data:{mime};base64,{data}" '
+            f'href="data:{mime};base64,{data}"><title>'
+            f'{escape(el.description or el.library_id or "")}</title>'
+            f'</image></g></g>')
 
 
 def _motif(spec: DesignSpec, el: MotifElement, w: float, h: float, motifs_dir: Path) -> str:
@@ -215,6 +259,8 @@ def _motif(spec: DesignSpec, el: MotifElement, w: float, h: float, motifs_dir: P
     src = _motif_file(el.library_id, motifs_dir)
     if src is None:
         return ""
+    if src.name.endswith(RASTER_SUFFIX):
+        return _picture(el, src, w, h)
 
     x, y, bw, bh = _px(el.box, w, h)
     body = _motif_body(src.read_text(encoding="utf-8"))

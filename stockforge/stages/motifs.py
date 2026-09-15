@@ -33,6 +33,7 @@ import hashlib
 import json
 import logging
 import re
+import shutil
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -115,6 +116,18 @@ class MotifEntry:
     # was not square came out distorted — a eucalyptus in a 3:1 box was three
     # times too wide.
     stretch: bool = False
+    # A motif may be a picture rather than a drawing.
+    #
+    # The owner, who sells the things: "if designer made design he picks the
+    # objects from stock marketplaces ... the main thing to be editable is
+    # fonts not the design". Quite so. A buyer downloads a card, changes the
+    # names and the date, and prints it; nobody opens it to redraw the pumpkin.
+    # So an object can be a painted PNG — from an image model, or cut out of
+    # the owner's own artwork — placed, sized and positioned like any other.
+    #
+    # What it gives up is recolouring, which is a fill attribute on a path and
+    # a repaint job on a picture. That is a trade the owner made explicitly.
+    raster: bool = False
     tokens: set[str] = field(default_factory=set, repr=False)
 
     def __post_init__(self) -> None:
@@ -146,20 +159,61 @@ def read(path: Path) -> MotifEntry:
     title = m.group(1).strip() if (m := _TITLE.search(raw)) else ""
     desc = m.group(1).strip() if (m := _DESC.search(raw)) else ""
 
-    return MotifEntry(library_id=path.stem, kind=kind, name=title,
+    return MotifEntry(library_id=picture_id(path), kind=kind, name=title,
                       description=desc, tags=tags, stretch=stretch)
+
+
+def picture_id(path: Path) -> str:
+    """The id a picture answers to — `pumpkin.art.png` is `pumpkin`.
+
+    `Path.stem` would leave `pumpkin.art`, which then reads back as a motif
+    called "pumpkin art" and puts a word in the matcher that nobody wrote.
+    """
+    name = path.name
+    return name[:-len(RASTER_SUFFIX)] if name.endswith(RASTER_SUFFIX) else path.stem
+
+
+def read_picture(path: Path) -> MotifEntry:
+    """A picture used as a motif, described by the JSON written beside it.
+
+    `draw` and `harvest` already write that sidecar — what the thing is, what
+    was asked for, which model drew it — so a picture arrives in the library
+    knowing what it is. Without one there is still the filename, which is how
+    every motif in this library has always introduced itself at worst.
+    """
+    said = {}
+    sidecar = path.with_suffix(".json")
+    if sidecar.is_file():
+        try:
+            said = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            log.warning("%s: unreadable sidecar (%s)", path.name, exc)
+    kind = str(said.get("kind") or "").lower()
+    if kind and kind not in _KINDS:
+        kind = ""
+    tags = said.get("tags") or []
+    return MotifEntry(library_id=picture_id(path), kind=kind,
+                      name=str(said.get("name") or ""),
+                      description=str(said.get("description") or ""),
+                      tags=[str(t).lower() for t in tags],
+                      stretch=bool(said.get("stretch")),
+                      raster=True)
 
 
 def scan(motifs_dir: Path) -> list[MotifEntry]:
     entries: list[MotifEntry] = []
-    for path in sorted(motifs_dir.glob("*.svg")):
-        if not _SAFE_ID.match(path.stem):
-            log.warning("skipping %s — a motif filename must be plain", path.name)
-            continue
-        try:
-            entries.append(read(path))
-        except OSError as exc:
-            log.warning("could not read motif %s: %s", path.name, exc)
+    # Drawings first, then pictures, so a drawing wins a straight tie on name —
+    # it can be recoloured and it scales without limit, which a picture cannot.
+    for pattern, reader in (("*.svg", read), (f"*{RASTER_SUFFIX}", read_picture)):
+        for path in sorted(motifs_dir.glob(pattern)):
+            ident = picture_id(path)
+            if not _SAFE_ID.match(ident):
+                log.warning("skipping %s — a motif filename must be plain", path.name)
+                continue
+            try:
+                entries.append(reader(path))
+            except OSError as exc:
+                log.warning("could not read motif %s: %s", path.name, exc)
     return entries
 
 
@@ -174,8 +228,10 @@ def load(motifs_dir: Path) -> list[MotifEntry]:
     restart. Motif files are small and there are hundreds, not millions.
     """
     try:
-        stamp = tuple(sorted((p.name, p.stat().st_mtime)
-                             for p in motifs_dir.glob("*.svg")))
+        stamp = tuple(sorted(
+            (p.name, p.stat().st_mtime)
+            for pattern in ("*.svg", f"*{RASTER_SUFFIX}")
+            for p in motifs_dir.glob(pattern)))
     except OSError:
         return []
     hit = _cache.get(motifs_dir)
@@ -509,6 +565,13 @@ def resolve(spec: DesignSpec, motifs_dir: Path,
 # cutting a motif out of the owner's own artwork
 # --------------------------------------------------------------------------
 
+# What a picture used as a motif is called. Deliberately not plain ".png": the
+# library sits beside `_drawn/` and `_harvested/`, which are full of PNGs that
+# are reference and not artwork, and somebody will one day copy one up a level.
+# A motif you can place has to have said so on purpose.
+RASTER_SUFFIX = ".art.png"
+
+
 HARVEST_DIR = "_harvested"
 # Where generated reference goes. Underscored and PNG, so the library scan —
 # which only ever globs *.svg — cannot pick one up as a real motif.
@@ -729,7 +792,7 @@ def draw(gap: "Gap", motifs_dir: Path, provider=None, size: int | None = None,
 
 def adopt(picture: Path, motifs_dir: Path, *, kind: str = "icon",
           description: str = "", name: str = "", tags: list[str] | None = None,
-          colours: int = 5, stretch: bool = False,
+          colours: int = 5, stretch: bool = False, as_picture: bool = False,
           provenance: dict | None = None) -> MotifEntry:
     """Trace a picture into the library, so it can actually be used.
 
@@ -769,12 +832,48 @@ def adopt(picture: Path, motifs_dir: Path, *, kind: str = "icon",
         n += 1
 
     record = dict(provenance or {})
+
+    if as_picture:
+        # Kept as it is, and used as it is. A trace is a redrawing — fewer
+        # colours, simplified edges — which is right for a flat icon and wrong
+        # for a watercolour ghost or anything with shading in it. The owner
+        # sells cards whose artwork is artwork and whose TEXT is what a buyer
+        # edits, so an object that stays a picture is the product rather than a
+        # compromise.
+        out = motifs_dir / f"{stem}{RASTER_SUFFIX}"
+        n = 2
+        while out.exists():
+            if _picture_source(out) == picture.name:
+                log.info("replacing %s — same picture, adopted again", out.name)
+                break
+            out = motifs_dir / f"{stem}-{n:02d}{RASTER_SUFFIX}"
+            n += 1
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(picture, out)
+        record.setdefault("adopted_from", picture.name)
+        out.with_suffix(".json").write_text(json.dumps({
+            "kind": kind, "name": name or said, "description": said,
+            "tags": list(tags or []), "stretch": stretch, **record,
+        }, indent=2), encoding="utf-8")
+        _cache.pop(motifs_dir, None)
+        log.info("adopted %s as a picture -> %s", picture.name, out.name)
+        return read_picture(out)
+
     record.setdefault("traced_from", picture.name)
     trace_png(picture, out, colours=colours, kind=kind, name=name or said,
               description=said, tags=list(tags or []), stretch=stretch,
               provenance=record)
     _cache.pop(motifs_dir, None)          # the library changed under us
     return read(out)
+
+
+def _picture_source(art: Path) -> str:
+    """Which picture this object was adopted from, per its sidecar."""
+    sidecar = art.with_suffix(".json")
+    try:
+        return str(json.loads(sidecar.read_text(encoding="utf-8")).get("adopted_from", ""))
+    except (OSError, ValueError):
+        return ""
 
 
 def _traced_from(svg: Path) -> str:

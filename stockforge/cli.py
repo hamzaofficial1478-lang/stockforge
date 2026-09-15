@@ -152,7 +152,8 @@ def _draw_motifs(settings, gaps, size) -> int:
     return 0 if drawn else 1
 
 
-def _adopt_pictures(settings, pattern: str, kind: str, colours: int) -> int:
+def _adopt_pictures(settings, pattern: str, kind: str, colours: int,
+                    as_picture: bool = False) -> int:
     """Trace pictures already on disk into the library.
 
     For the ones `harvest` cut out of the owner's own artwork, and for anything
@@ -184,7 +185,7 @@ def _adopt_pictures(settings, pattern: str, kind: str, colours: int) -> int:
         try:
             entry = motifs_stage.adopt(picture, folder, kind=kind,
                                        description=said, colours=colours,
-                                       provenance={"traced_from": picture.name})
+                                       as_picture=as_picture)
         except Exception as exc:
             print(f"  {picture.name}: {str(exc)[:90]}")
             failed += 1
@@ -192,9 +193,13 @@ def _adopt_pictures(settings, pattern: str, kind: str, colours: int) -> int:
         print(f"  {picture.name:<34} -> {entry.library_id}.svg")
         done += 1
 
-    print(f"\n{done} traced into {folder}"
+    doing = "adopted" if as_picture else "traced"
+    print(f"\n{done} {doing} into {folder}"
           + (f", {failed} could not be" if failed else ""))
-    if done:
+    if done and as_picture:
+        print("Kept as pictures: placed, sized and positioned, but not "
+              "recoloured.\nRight for anything painted or shaded.")
+    elif done:
         print("Look at them before you ship anything — a trace is a redrawing, "
               "\nnot a copy, and a trace of a bad picture is a bad drawing.")
     return 0 if done else 1
@@ -287,7 +292,8 @@ def cmd_motifs(args, pipe: Pipeline) -> int:
     if args.action == "trace":
         # Before the library is loaded, because tracing is exactly what you do
         # when the library is empty and everything is coming back as a hole.
-        return _adopt_pictures(settings, args.pattern, args.kind, args.colours)
+        return _adopt_pictures(settings, args.pattern, args.kind, args.colours,
+                               as_picture=args.as_picture)
 
     library = motifs_stage.load(settings.motifs_dir)
     if not library:
@@ -653,6 +659,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="for `trace` — which pictures to trace, e.g. 'pumpkin*.png'")
     m.add_argument("--colours", type=int, default=5,
                    help="how many flat colours a trace may use")
+    m.add_argument("--as-picture", action="store_true",
+                   help="for `trace` — keep the artwork as a picture instead of "
+                        "tracing it. Right for anything painted or shaded, where "
+                        "a trace would flatten it; the object is then placed, "
+                        "sized and positioned but cannot be recoloured.")
     m.add_argument("--size", type=int, default=None,
                    help="for `draw` — pixels down each side, default 1024")
     m.add_argument("--scaffold", action="store_true",
