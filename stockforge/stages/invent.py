@@ -35,7 +35,7 @@ from ..providers import VisionProvider, vision
 from ..schema import DesignDNA, Page, Provenance, DesignSpec, TextElement
 from . import motifs as motifs_stage
 from .fonts import load_manifest, match, open_face
-from .render import FIT_MARGIN, MM_PER_PX
+from .render import FIT_MARGIN, MM_PER_PX, _guess_width
 
 log = logging.getLogger("stockforge.invent")
 
@@ -249,13 +249,15 @@ def fit_type(spec: DesignSpec, fonts_dir: Path) -> list[str]:
                 continue
             entry, _ = match(el.font, library)
             face = open_face(entry, fonts_dir) if entry else None
-            if face is None:
-                continue
             box_w = el.box.w * w
             if box_w <= 0:
                 continue
-            size = (el.size_ratio * h) / face.cap_ratio
-            widest = max((face.measure(line, size, el.tracking)
+            # No matched face is not a reason to skip: it is the case where the
+            # renderer draws a generic fallback, and skipping left four designs
+            # in a row with the headline off both edges of the page.
+            size = (el.size_ratio * h) / (face.cap_ratio if face else 0.70)
+            widest = max((face.measure(line, size, el.tracking) if face
+                          else _guess_width(line, size, el.tracking)
                           for line in el.content.split("\n")), default=0.0)
             if widest <= box_w * FIT_MARGIN or widest <= 0:
                 continue

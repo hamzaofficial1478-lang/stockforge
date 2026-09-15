@@ -568,3 +568,100 @@ def test_no_description_leaves_the_brief_as_it_was(shop):
     providers.set_provider("vision", Watching())
     pipe.invent(1, Brief(niche="halloween-cards"))
     assert "spirit of, described" not in said.get("prompt", "")
+
+
+# --- the one case where nothing checked the words fit -----------------------
+#
+# Four designs in a row through a real model came out with the headline running
+# off both edges of the page — "O HOUSE", "AUNTE", "ELLBOU", the middles of
+# words with the ends past the trim. Every text element had come back NO FACE,
+# because the library could not answer "display, weight 700, high contrast,
+# condensed, vintage, spooky".
+#
+# And both fitting passes skipped on exactly that condition: `fit_type` had
+# `if face is None: continue`, and the renderer had `if face and bw > 0`. So
+# the one case where the drawn font is a generic fallback nobody chose was also
+# the only case where nothing measured it. The program said "no font in the
+# library", which is true, and wrote four unusable files.
+
+def _spec_with(content: str, size_ratio: float, category: str = "display"):
+    from stockforge.schema import (Box, Canvas, ColourRole, DesignDNA, DesignSpec,
+                                   FontClass, Page, Palette, Swatch, TextElement,
+                                   TypeRole)
+    el = TextElement(role=TypeRole.TITLE, content=content,
+                     box=Box(x=0.1, y=0.3, w=0.8, h=0.18),
+                     font=FontClass(category=category, weight=700,
+                                    contrast="high", mood=["spooky", "vintage"]),
+                     size_ratio=size_ratio)
+    spec = DesignSpec(
+        source_asset_id="x", confidence=0.6,
+        dna=DesignDNA(category="invitation", occasion="halloween",
+                      palette=Palette(swatches=[
+                          Swatch(role=ColourRole.BACKGROUND, hex="#ffffff", coverage=0.8),
+                          Swatch(role=ColourRole.INK, hex="#000000", coverage=0.2)])),
+        pages=[Page(name="front", canvas=Canvas(width_mm=127, height_mm=178),
+                    elements=[el])])
+    return spec, el
+
+
+def test_type_is_fitted_even_when_no_font_matched(tmp_path):
+    """The fixture is an EMPTY font library, which is the only honest way to
+    reproduce it: no face can match, so nothing can be measured, and the
+    fitting has to happen on an estimate or not at all."""
+    from stockforge.stages.invent import fit_type
+
+    empty = tmp_path / "no-fonts"
+    empty.mkdir()
+    spec, el = _spec_with("HAUNTED HOUSE SOIREE", 0.16)
+
+    changed = fit_type(spec, empty)
+
+    assert changed, "nothing was fitted, so the words will run off the page"
+    assert el.size_ratio < 0.16, "the size did not come down"
+
+
+def test_the_renderer_also_fits_without_a_face(tmp_path):
+    """Both passes had the same hole, and fixing only one leaves a design made
+    outside `invent` — a rebuild, a mix — still overflowing."""
+    from stockforge.stages.render import render
+
+    empty = tmp_path / "no-fonts"
+    empty.mkdir()
+    (tmp_path / "motifs").mkdir()
+    spec, _ = _spec_with("HAUNTED HOUSE SOIREE AT THE OLD MANOR", 0.16)
+
+    result = render(spec, empty, tmp_path / "motifs")
+    assert result.refits, "the renderer drew it at full size with no face to measure"
+    assert result.worst_refit < 1.0
+
+
+def test_a_line_that_already_fits_is_left_alone_without_a_face(tmp_path):
+    """The estimate must not shrink everything: a pass that did would flatten
+    every hierarchy in the shop to one size."""
+    from stockforge.stages.invent import fit_type
+
+    empty = tmp_path / "no-fonts"
+    empty.mkdir()
+    spec, el = _spec_with("OCT 31", 0.03)
+
+    assert fit_type(spec, empty) == []
+    assert el.size_ratio == 0.03
+
+
+def test_the_estimate_is_in_the_right_neighbourhood(tmp_path):
+    """It stands in for a real measurement, so it has to be close enough to be
+    worth having. Against a real face, within a third either way."""
+    from stockforge.stages.fonts import load_manifest, match, open_face
+    from stockforge.stages.render import _guess_width
+    from stockforge.schema import FontClass
+
+    build_font_library(tmp_path / "fonts")
+    entry, _ = match(FontClass(category="serif", weight=400),
+                     load_manifest(tmp_path / "fonts"))
+    face = open_face(entry, tmp_path / "fonts")
+
+    for line in ("HAUNTED HOUSE SOIREE", "Oct 31", "The Old Manor House"):
+        measured = face.measure(line, 100.0)
+        guessed = _guess_width(line, 100.0)
+        assert 0.66 < guessed / measured < 1.5, (
+            f"{line!r}: guessed {guessed:.0f} against measured {measured:.0f}")

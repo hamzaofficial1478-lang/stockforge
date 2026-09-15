@@ -308,6 +308,21 @@ def describe_font(f: FontClass) -> str:
     return ", ".join(str(b) for b in bits if b)
 
 
+# What a character costs when there is no font file to ask. Caps and digits run
+# wider than lowercase, and a fallback serif is the likeliest thing to be drawn,
+# so this errs generous — too small is a design that reads; too big is a design
+# that runs off the page.
+GUESSED_ADVANCE = 0.58
+
+
+def _guess_width(text: str, size: float, tracking: float = 0.0) -> float:
+    """How wide this line will be, near enough, with no face to measure."""
+    if not text:
+        return 0.0
+    return (len(text) * GUESSED_ADVANCE * size
+            + tracking * size * max(0, len(text) - 1))
+
+
 def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
           library: list[FontEntry], fonts_dir: Path
           ) -> tuple[str, float, float, list[str]]:
@@ -339,9 +354,21 @@ def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
 
     lines = content.split("\n")
     refit = 1.0
-    if face and bw > 0:
-        widest = max((face.measure(line, size, el.tracking) for line in lines),
-                     default=0.0)
+    if bw > 0:
+        # Without a matched face there is no `measure`, and this used to skip
+        # fitting altogether — so the one case where the drawn font is a
+        # generic fallback nobody chose was also the one case where nothing
+        # checked whether the words fit. Four designs in a row came out with
+        # the headline running off both edges of the page, and the only
+        # complaint was "no font in the library", which is true and is not what
+        # the file looks like.
+        #
+        # An estimate is not a measurement, and it is enormously better than
+        # nothing: an average advance of a little over half an em holds for
+        # every text face a fallback is likely to be.
+        widest = max((face.measure(line, size, el.tracking) if face
+                      else _guess_width(line, size, el.tracking)
+                      for line in lines), default=0.0)
         if widest > bw * FIT_MARGIN:
             # Set it smaller rather than letting it run off the page. Shrinking
             # keeps the design's structure; rewrapping would change what the
