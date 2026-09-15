@@ -134,15 +134,70 @@ def _draw_motifs(settings, gaps, size) -> int:
     print(f"\r{len(drawn)} of {len(gaps)} drawn into {folder}" + " " * 20)
     width = max((len(d.path.name) for d in drawn), default=20)
     for made in drawn:
+        became = f"  -> {made.motif.library_id}.svg" if made.motif else "  (not traced)"
         print(f"  {made.path.name:<{width}}  {made.gap.designs:>2} design(s)"
-              f"{'  ' + made.note if made.note else ''}")
+              f"{became}{'  ' + made.note if made.note else ''}")
     for line in trouble:
         print(f"  could not draw {line}")
+
+    traced = [d for d in drawn if d.motif]
+    if traced:
+        print(f"\n{len(traced)} traced into the library and usable now — "
+              f"re-run those designs and the holes will fill.")
     if drawn:
-        print("\nGenerated reference, not artwork you own. Trace what you like to "
-              "\nSVG on a 0..100 square and put the trace in the library; the PNGs "
-              "\nstay where they are and are never placed in a design.")
+        print("\nThe PNGs are generated reference and are never placed in a "
+              "\ndesign. What goes in the library is the trace: your own paths, "
+              "\nfewer colours, simplified edges. Look at them before you ship "
+              "\nanything — a trace of a bad drawing is a bad drawing.")
     return 0 if drawn else 1
+
+
+def _adopt_pictures(settings, pattern: str, kind: str, colours: int) -> int:
+    """Trace pictures already on disk into the library.
+
+    For the ones `harvest` cut out of the owner's own artwork, and for anything
+    drawn earlier and left as a PNG back when there was nothing that could
+    trace it.
+    """
+    from .stages import motifs as motifs_stage
+
+    folder = settings.motifs_dir
+    found = sorted(set(list((folder / motifs_stage.HARVEST_DIR).glob(pattern))
+                       + list((folder / motifs_stage.DRAWN_DIR).glob(pattern))))
+    if not found:
+        print(f"no pictures matching {pattern!r} in {folder / motifs_stage.HARVEST_DIR} "
+              f"or {folder / motifs_stage.DRAWN_DIR}.\n"
+              f"`stockforge motifs harvest` cuts them out of your own designs; "
+              f"`stockforge motifs draw` asks a model for them.")
+        return 1
+
+    done, failed = 0, 0
+    for picture in found:
+        said = ""
+        sidecar = picture.with_suffix(".json")
+        if sidecar.is_file():
+            try:
+                said = json.loads(sidecar.read_text()).get("description", "")
+            except (OSError, ValueError):
+                said = ""
+        said = said or picture.stem.replace("-", " ")
+        try:
+            entry = motifs_stage.adopt(picture, folder, kind=kind,
+                                       description=said, colours=colours,
+                                       provenance={"traced_from": picture.name})
+        except Exception as exc:
+            print(f"  {picture.name}: {str(exc)[:90]}")
+            failed += 1
+            continue
+        print(f"  {picture.name:<34} -> {entry.library_id}.svg")
+        done += 1
+
+    print(f"\n{done} traced into {folder}"
+          + (f", {failed} could not be" if failed else ""))
+    if done:
+        print("Look at them before you ship anything — a trace is a redrawing, "
+              "\nnot a copy, and a trace of a bad picture is a bad drawing.")
+    return 0 if done else 1
 
 
 def _log(verbose: bool) -> None:
@@ -225,6 +280,10 @@ def cmd_motifs(args, pipe: Pipeline) -> int:
         return cmd_motifs_todo(args, pipe)
     if args.action == "harvest":
         return cmd_motifs_harvest(args, pipe)
+    if args.action == "trace":
+        # Before the library is loaded, because tracing is exactly what you do
+        # when the library is empty and everything is coming back as a hole.
+        return _adopt_pictures(settings, args.pattern, args.kind, args.colours)
 
     library = motifs_stage.load(settings.motifs_dir)
     if not library:
@@ -565,11 +624,15 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("action", choices=["scan", "list", "install", "download"])
 
     m = sub.add_parser("motifs", help="inspect the motif library and grow it")
-    m.add_argument("action", choices=["list", "match", "todo", "harvest", "draw"])
+    m.add_argument("action", choices=["list", "match", "todo", "harvest", "draw", "trace"])
     m.add_argument("description", nargs="?", help="for `match` — what the analyser saw")
     m.add_argument("--kind", default="icon",
                    help="for `match` — botanical, seasonal, frame, ...")
     m.add_argument("--limit", type=int, default=20, help="for `todo` — how many to show")
+    m.add_argument("--pattern", default="*.png",
+                   help="for `trace` — which pictures to trace, e.g. 'pumpkin*.png'")
+    m.add_argument("--colours", type=int, default=5,
+                   help="how many flat colours a trace may use")
     m.add_argument("--size", type=int, default=None,
                    help="for `draw` — pixels down each side, default 1024")
     m.add_argument("--scaffold", action="store_true",

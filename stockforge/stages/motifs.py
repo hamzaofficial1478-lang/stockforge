@@ -651,6 +651,9 @@ class Drawn:
     prompt: str
     model: str
     note: str = ""
+    # The traced library entry, when it was traced. None means the picture is
+    # there and the drawing is not, which is a different thing to report.
+    motif: "MotifEntry | None" = None
 
 
 def prompt_for(gap: "Gap") -> str:
@@ -663,7 +666,8 @@ def prompt_for(gap: "Gap") -> str:
     return DRAW_SYSTEM.format(kind=readable, what=what or "a simple decorative motif")
 
 
-def draw(gap: "Gap", motifs_dir: Path, provider=None, size: int | None = None) -> "Drawn | None":
+def draw(gap: "Gap", motifs_dir: Path, provider=None, size: int | None = None,
+         adopt_it: bool = True, colours: int = 5) -> "Drawn | None":
     """Ask a drawing model for one missing motif.
 
     Returns None when there is nothing to ask for. Anything the model does
@@ -700,12 +704,76 @@ def draw(gap: "Gap", motifs_dir: Path, provider=None, size: int | None = None) -
     note = ""
     if len(data) < 2000:
         note = "tiny"
+
+    # And trace it, because a picture in `_drawn/` is not a motif. This used to
+    # stop at the PNG with a note telling the owner to trace it by hand, which
+    # meant asking a model for a pumpkin produced homework rather than a
+    # pumpkin. The raster stays beside it as the reference it always was.
+    entry = None
+    if adopt_it:
+        try:
+            entry = adopt(path, motifs_dir, kind=gap.kind or "icon",
+                          description=gap.description, colours=colours,
+                          provenance={"generated": True, "prompt": prompt,
+                                      "model": getattr(provider, "name", "unknown")})
+        except Exception as exc:
+            # The picture is real and worth keeping even when the trace fails;
+            # it can be traced again with different settings, or by hand.
+            note = (note + "; " if note else "") + f"not traced: {str(exc)[:80]}"
+            log.warning("drew %r but could not trace it: %s", gap.description[:50], exc)
+
     return Drawn(gap=gap, path=path, prompt=prompt,
-                 model=getattr(provider, "name", "unknown"), note=note)
+                 model=getattr(provider, "name", "unknown"), note=note,
+                 motif=entry)
+
+
+def adopt(picture: Path, motifs_dir: Path, *, kind: str = "icon",
+          description: str = "", name: str = "", tags: list[str] | None = None,
+          colours: int = 5, stretch: bool = False,
+          provenance: dict | None = None) -> MotifEntry:
+    """Trace a picture into the library, so it can actually be used.
+
+    The step that was missing. `draw` asks a model for a picture and `harvest`
+    cuts one out of the owner's own artwork, and both write a PNG into a folder
+    with a note saying to trace it — while the library only ever globs `*.svg`.
+    So a drawn pumpkin could never become a usable pumpkin; it sat in `_drawn/`
+    being reference for a trace nobody could do.
+
+    The traced file lands in the library proper, named after what it is, with
+    where it came from written inside it. It is a redrawing rather than a copy —
+    fewer colours, simplified edges — which is the right trade for something
+    printed at 40mm beside a line of type, and it is what makes the result the
+    owner's own line work rather than a model's raster.
+    """
+    from .trace import trace as trace_png
+
+    said = (description or name or picture.stem).strip()
+    stem = slug_for(said) or picture.stem
+    out = motifs_dir / f"{stem}.svg"
+    n = 2
+    while out.exists():
+        out = motifs_dir / f"{stem}-{n:02d}.svg"
+        n += 1
+
+    record = dict(provenance or {})
+    record.setdefault("traced_from", picture.name)
+    trace_png(picture, out, colours=colours, kind=kind, name=name or said,
+              description=said, tags=list(tags or []), stretch=stretch,
+              provenance=record)
+    _cache.pop(motifs_dir, None)          # the library changed under us
+    return read(out)
+
+
+def slug_for(said: str) -> str:
+    """A filename for a description. `scan` refuses anything that is not plain,
+    so this has to produce one that is."""
+    out = re.sub(r"[^a-z0-9]+", "-", (said or "").lower()).strip("-")
+    return out[:48].strip("-")
 
 
 def draw_all(gaps: list["Gap"], motifs_dir: Path, provider=None,
-             size: int | None = None, on_each=None) -> tuple[list["Drawn"], list[str]]:
+             size: int | None = None, on_each=None,
+             adopt_it: bool = True) -> tuple[list["Drawn"], list[str]]:
     """Draw every gap that has something to draw from.
 
     One failure does not stop the rest: a model that refuses one prompt will
@@ -721,7 +789,7 @@ def draw_all(gaps: list["Gap"], motifs_dir: Path, provider=None,
         if on_each:
             on_each(index, len(gaps), gap.description)
         try:
-            made = draw(gap, motifs_dir, provider, size=size)
+            made = draw(gap, motifs_dir, provider, size=size, adopt_it=adopt_it)
         except Exception as exc:
             trouble.append(f"{gap.description[:60]}: {str(exc)[:160]}")
             log.warning("could not draw %r: %s", gap.description[:60], exc)

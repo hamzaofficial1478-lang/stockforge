@@ -570,6 +570,63 @@ there but does nothing". It opens by itself now when there is nothing set up.
 The thing the panel cannot do is *be* the bridge. Pointing it at an address
 where nothing is listening fails the Test button, correctly.
 
+## Closing the motif loop: the trace
+
+The chain was complete except for one link, and without it the whole thing did
+nothing. A design asks for a carved pumpkin; the library has not got one;
+`motifs draw` asks an image model for a picture of one and writes it to
+`_drawn/` with a note saying
+
+    "Reference only. Trace it to SVG before using it in a design."
+
+and there it stopped, because the library only ever globs `*.svg`. Asking a
+model for a pumpkin produced homework. The same was true of every cutout
+`harvest` took out of the owner's own artwork.
+
+So: `stages/trace.py`, and `motifs.adopt` on top of it. **Not potrace** — that
+is a binary dependency for a project whose whole shape is "standard library,
+OpenCV, nothing to install" — but OpenCV, which is here already and is well
+suited because the job is deliberately easy. The prompt that generates these
+asks for *flat vector style, solid colours, clean even outlines, no gradient,
+no photographic texture*, which is a picture made of a few flat regions.
+Quantise, find the regions, follow their edges, write the paths.
+
+`motifs draw` now traces by default, so a drawn motif is usable on the next
+run. `motifs trace` does the same for pictures already on disk — everything
+`harvest` cut out, and anything drawn back when nothing could trace it.
+
+### Three artefacts, each found by looking at the output
+
+**Faceted curves.** `approxPolyDP` gives straight segments, and a pumpkin in
+forty straight segments reads as a pumpkin drawn by a committee. The same
+points run through Catmull-Rom and converted to cubics follow the same outline
+and arrive smooth.
+
+**White seams.** Each colour is traced separately, so the anti-aliased pixels
+along a boundary belong to neither side — the first trace had a white gap
+around the eyes and mouth. Growing each region by a pixel closes them, and
+costs nothing because regions are painted largest first, so a neighbour's
+overspill ends up underneath.
+
+**A pale halo right round the body.** k-means will happily spend a whole colour
+on the soft pixels along a boundary, and traced, that colour comes back as a
+ring around the shape it borders. The test that catches it needs no threshold
+on colour: *a shape has an inside, a rim does not.* Erode it; if almost nothing
+survives, it was never a shape. The same test applied per contour as well as
+per colour, because the green of a stalk also picked up the rim around two
+eyes — solid enough as a colour to pass, and painting green rings when drawn.
+
+### What a trace is, and is not
+
+It is a redrawing: fewer colours, simplified edges, specks dropped. That is the
+right trade for something printed at 40mm beside a line of type, and it is why
+what goes in the library is the owner's own paths rather than a model's raster.
+The PNG stays beside it as the reference it always was and is never placed in a
+design. Where a drawing came from is written **inside** the SVG, not in a file
+next to it, because a file next to it gets separated from it the first time
+somebody tidies up — and six months on, "did I draw this or did a model?" is a
+question about whether it may be sold.
+
 ## Measuring it on your own models
 
 `stockforge bench --count 12` times a batch against the endpoints actually
