@@ -190,7 +190,9 @@ def _adopt_pictures(settings, pattern: str, kind: str, colours: int,
             print(f"  {picture.name}: {str(exc)[:90]}")
             failed += 1
             continue
-        print(f"  {picture.name:<34} -> {entry.library_id}.svg")
+        became = (f"{entry.library_id}{motifs_stage.RASTER_SUFFIX}"
+                  if entry.raster else f"{entry.library_id}.svg")
+        print(f"  {picture.name:<34} -> {became}")
         done += 1
 
     doing = "adopted" if as_picture else "traced"
@@ -199,6 +201,23 @@ def _adopt_pictures(settings, pattern: str, kind: str, colours: int,
     if done and as_picture:
         print("Kept as pictures: placed, sized and positioned, but not "
               "recoloured.\nRight for anything painted or shaded.")
+        # The failure this run can have while reporting success. Where a
+        # drawing and a picture share a name the drawing wins, so adopting
+        # pictures into a library that was already traced changes nothing at
+        # all — and says "32 adopted" while doing it.
+        shadowed = motifs_stage.shadowed_by_a_drawing(folder)
+        if shadowed:
+            print(f"\nBut {len(shadowed)} of them will not be used. A traced "
+                  f"drawing of the same name\nalready exists and wins, because "
+                  f"a drawing recolours and scales without limit.\n"
+                  f"To use the pictures instead, delete those traces:\n")
+            for ident in shadowed[:4]:
+                print(f"    {folder / (ident + '.svg')}")
+            if len(shadowed) > 4:
+                print(f"    ... and {len(shadowed) - 4} more")
+            print(f"\n  PowerShell:  Get-ChildItem '{folder}\\*.art.png' | "
+                  f"ForEach-Object {{ Remove-Item ($_.FullName -replace "
+                  f"'\\.art\\.png$', '.svg') -ErrorAction SilentlyContinue }}")
     elif done:
         print("Look at them before you ship anything — a trace is a redrawing, "
               "\nnot a copy, and a trace of a bad picture is a bad drawing.")

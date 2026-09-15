@@ -198,3 +198,96 @@ def test_a_stray_png_is_not_treated_as_artwork(shop, tmp_path):
 
     ids = [e.library_id for e in m.scan(cfg.motifs_dir)]
     assert "stray" not in ids, "a loose PNG became a placeable object"
+
+
+# --- reporting a run that changed nothing ----------------------------------
+#
+# The owner ran `motifs trace --as-picture` over a library that already held a
+# trace of every one of those pictures. It printed "32 adopted into
+# assets\motifs" and not one of them would ever be drawn, because where a
+# drawing and a picture share a name the drawing wins. A run that succeeds
+# loudly and does nothing is worse than one that fails.
+
+def test_pictures_a_drawing_will_shadow_are_reported(shop, tmp_path):
+    _, cfg = shop
+    m.adopt(_painted(tmp_path / "ghost.png"), cfg.motifs_dir, as_picture=True,
+            description="a painted ghost")
+    assert m.shadowed_by_a_drawing(cfg.motifs_dir) == [], "nothing shadows it yet"
+
+    (cfg.motifs_dir / "a-painted-ghost.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+        '<title>t</title><circle cx="50" cy="50" r="40"/></svg>\n')
+
+    assert m.shadowed_by_a_drawing(cfg.motifs_dir) == ["a-painted-ghost"]
+
+
+def test_the_command_line_says_so_and_says_what_to_do(tmp_path, monkeypatch, capsys):
+    from stockforge import cli
+    from stockforge.config import settings as live
+
+    build_font_library(tmp_path / "fonts")
+    build_motif_library(tmp_path / "motifs")
+    harvested = tmp_path / "motifs" / m.HARVEST_DIR
+    harvested.mkdir(parents=True)
+    _painted(harvested / "ghost-abc.png")
+    (harvested / "ghost-abc.json").write_text('{"description": "a painted ghost"}')
+    (tmp_path / "motifs" / "a-painted-ghost.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+        '<title>t</title><circle cx="50" cy="50" r="40"/></svg>\n')
+
+    for key, value in {"SF_ROOT": str(tmp_path / "work"),
+                       "SF_FONTS": str(tmp_path / "fonts"),
+                       "SF_MOTIFS": str(tmp_path / "motifs")}.items():
+        monkeypatch.setenv(key, value)
+    live.reload()
+    live.ensure_dirs()
+
+    cli.main(["motifs", "trace", "--as-picture"])
+    said = capsys.readouterr().out
+
+    assert "will not be used" in said, f"it reported success and said nothing: {said}"
+    assert "a-painted-ghost.svg" in said, "it did not name the file in the way"
+
+
+def test_the_command_line_names_the_file_it_actually_wrote(tmp_path, monkeypatch, capsys):
+    """It printed `-> name.svg` for every picture it adopted, because the
+    suffix was hardcoded. The owner's log said one thing on the INFO line and
+    the opposite on the line under it."""
+    from stockforge import cli
+    from stockforge.config import settings as live
+
+    build_font_library(tmp_path / "fonts")
+    build_motif_library(tmp_path / "motifs")
+    harvested = tmp_path / "motifs" / m.HARVEST_DIR
+    harvested.mkdir(parents=True)
+    _painted(harvested / "ghost-abc.png")
+    (harvested / "ghost-abc.json").write_text('{"description": "a painted ghost"}')
+
+    for key, value in {"SF_ROOT": str(tmp_path / "work"),
+                       "SF_FONTS": str(tmp_path / "fonts"),
+                       "SF_MOTIFS": str(tmp_path / "motifs")}.items():
+        monkeypatch.setenv(key, value)
+    live.reload()
+    live.ensure_dirs()
+
+    cli.main(["motifs", "trace", "--as-picture"])
+    said = capsys.readouterr().out
+
+    assert "a-painted-ghost.art.png" in said
+    assert "-> a-painted-ghost.svg" not in said, "it named a file it did not write"
+
+
+def test_adopting_a_picture_does_not_log_about_tracing(tmp_path, caplog):
+    """The log said `replacing X.svg — same picture, traced again` while
+    adopting a picture, because the trace path ran first and then the picture
+    branch quietly took over. Two contradictory lines about one file."""
+    import logging
+
+    (tmp_path / "a-painted-ghost.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+        '<title>t</title><circle cx="50" cy="50" r="40"/></svg>\n')
+    with caplog.at_level(logging.INFO, logger="stockforge.motifs"):
+        m.adopt(_painted(tmp_path / "g.png"), tmp_path, as_picture=True,
+                description="a painted ghost")
+
+    assert "traced again" not in caplog.text, caplog.text

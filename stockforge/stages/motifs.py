@@ -812,6 +812,13 @@ def adopt(picture: Path, motifs_dir: Path, *, kind: str = "icon",
 
     said = (description or name or picture.stem).strip()
     stem = slug_for(said) or picture.stem
+    record = dict(provenance or {})
+
+    if as_picture:
+        return _adopt_picture(picture, motifs_dir, stem=stem, said=said,
+                              kind=kind, name=name, tags=tags,
+                              stretch=stretch, record=record)
+
     out = motifs_dir / f"{stem}.svg"
 
     # Re-tracing the same picture replaces its drawing rather than adding a
@@ -831,40 +838,60 @@ def adopt(picture: Path, motifs_dir: Path, *, kind: str = "icon",
         out = motifs_dir / f"{stem}-{n:02d}.svg"
         n += 1
 
-    record = dict(provenance or {})
-
-    if as_picture:
-        # Kept as it is, and used as it is. A trace is a redrawing — fewer
-        # colours, simplified edges — which is right for a flat icon and wrong
-        # for a watercolour ghost or anything with shading in it. The owner
-        # sells cards whose artwork is artwork and whose TEXT is what a buyer
-        # edits, so an object that stays a picture is the product rather than a
-        # compromise.
-        out = motifs_dir / f"{stem}{RASTER_SUFFIX}"
-        n = 2
-        while out.exists():
-            if _picture_source(out) == picture.name:
-                log.info("replacing %s — same picture, adopted again", out.name)
-                break
-            out = motifs_dir / f"{stem}-{n:02d}{RASTER_SUFFIX}"
-            n += 1
-        out.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(picture, out)
-        record.setdefault("adopted_from", picture.name)
-        out.with_suffix(".json").write_text(json.dumps({
-            "kind": kind, "name": name or said, "description": said,
-            "tags": list(tags or []), "stretch": stretch, **record,
-        }, indent=2), encoding="utf-8")
-        _cache.pop(motifs_dir, None)
-        log.info("adopted %s as a picture -> %s", picture.name, out.name)
-        return read_picture(out)
-
     record.setdefault("traced_from", picture.name)
     trace_png(picture, out, colours=colours, kind=kind, name=name or said,
               description=said, tags=list(tags or []), stretch=stretch,
               provenance=record)
     _cache.pop(motifs_dir, None)          # the library changed under us
     return read(out)
+
+
+def _adopt_picture(picture: Path, motifs_dir: Path, *, stem: str, said: str,
+                   kind: str, name: str, tags, stretch: bool,
+                   record: dict) -> MotifEntry:
+    """Keep the artwork as it is, and use it as it is.
+
+    A trace is a redrawing — fewer colours, simplified edges — which is right
+    for a flat icon and wrong for a watercolour or anything with shading in it.
+    The owner sells cards whose artwork is artwork and whose TEXT is what a
+    buyer edits, so an object that stays a picture is the product rather than a
+    compromise.
+    """
+    out = motifs_dir / f"{stem}{RASTER_SUFFIX}"
+    n = 2
+    while out.exists():
+        if _picture_source(out) == picture.name:
+            log.info("replacing %s — same picture, adopted again", out.name)
+            break
+        out = motifs_dir / f"{stem}-{n:02d}{RASTER_SUFFIX}"
+        n += 1
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(picture, out)
+    record.setdefault("adopted_from", picture.name)
+    out.with_suffix(".json").write_text(json.dumps({
+        "kind": kind, "name": name or said, "description": said,
+        "tags": list(tags or []), "stretch": stretch, **record,
+    }, indent=2), encoding="utf-8")
+    _cache.pop(motifs_dir, None)
+    log.info("adopted %s as a picture -> %s", picture.name, out.name)
+    return read_picture(out)
+
+
+def shadowed_by_a_drawing(motifs_dir: Path) -> list[str]:
+    """Pictures the library holds but will never use, because a drawing of the
+    same name wins.
+
+    The owner ran `motifs trace --as-picture` over a library that already held
+    a trace of every one of those pictures. Thirty-two objects adopted, and not
+    one of them would ever be drawn — the run reported success and changed
+    nothing. Silence about that is the worst of both.
+    """
+    out: list[str] = []
+    for art in sorted(motifs_dir.glob(f"*{RASTER_SUFFIX}")):
+        if (motifs_dir / f"{picture_id(art)}.svg").is_file():
+            out.append(picture_id(art))
+    return out
 
 
 def _picture_source(art: Path) -> str:
