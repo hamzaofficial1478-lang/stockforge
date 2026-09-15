@@ -400,3 +400,107 @@ def test_no_converter_at_all_says_so_rather_than_handing_over_blanks(shop, tmp_p
     with pytest.raises(ValueError, match="nothing to compare them against"):
         compare_sheet(cfg.motifs_dir, tmp_path / "sheet.png")
     assert not (tmp_path / "sheet.png").exists()
+
+
+# --- settling it once for the whole library --------------------------------
+#
+# The owner, after looking at the comparison:
+#
+#   "if am selling the design then definatly i have to give the editable file
+#    but for the objects they should be editable is not the important thing ...
+#    make texts editable into the design just it"
+#
+# Which is the right call for what they sell, and it turns thirty-one
+# judgements into one.
+
+def test_preferring_pictures_removes_the_traces_in_front_of_them(shop, tmp_path):
+    _, cfg = shop
+    src = _painted(tmp_path / "ghost.png")
+    m.adopt(src, cfg.motifs_dir, description="a painted ghost")
+    m.adopt(src, cfg.motifs_dir, description="a painted ghost", as_picture=True)
+
+    settled = m.prefer(cfg.motifs_dir, "pictures")
+
+    assert settled == ["a-painted-ghost"]
+    assert not (cfg.motifs_dir / "a-painted-ghost.svg").exists()
+    assert (cfg.motifs_dir / f"a-painted-ghost{m.RASTER_SUFFIX}").is_file()
+    assert [e for e in m.load(cfg.motifs_dir) if e.library_id == "a-painted-ghost"][0].raster
+
+
+def test_preferring_drawings_does_the_opposite(shop, tmp_path):
+    _, cfg = shop
+    src = _painted(tmp_path / "ghost.png")
+    m.adopt(src, cfg.motifs_dir, description="a painted ghost")
+    m.adopt(src, cfg.motifs_dir, description="a painted ghost", as_picture=True)
+
+    m.prefer(cfg.motifs_dir, "drawings")
+
+    assert (cfg.motifs_dir / "a-painted-ghost.svg").is_file()
+    assert not (cfg.motifs_dir / f"a-painted-ghost{m.RASTER_SUFFIX}").exists()
+    # The sidecar sits next to the picture as `<name>.art.json` — `with_suffix`
+    # replaces only the last suffix. Checking `<name>.json` asserts that a file
+    # which never existed still does not, which is how the first version of
+    # this test passed with the sidecar deletion deleted.
+    leftovers = sorted(p.name for p in cfg.motifs_dir.glob("a-painted-ghost*"))
+    assert leftovers == ["a-painted-ghost.svg"], f"left behind: {leftovers}"
+
+
+def test_an_object_with_only_one_form_is_left_alone(shop, tmp_path):
+    """There is nothing to settle, and deleting the only copy of something
+    because of a preference about a choice that was never offered would be the
+    worst bug in this file."""
+    _, cfg = shop
+    m.adopt(_painted(tmp_path / "only.png"), cfg.motifs_dir,
+            description="only a picture", as_picture=True)
+    before = sorted(p.name for p in cfg.motifs_dir.iterdir())
+
+    assert m.prefer(cfg.motifs_dir, "pictures") == []
+    assert m.prefer(cfg.motifs_dir, "drawings") == []
+    assert sorted(p.name for p in cfg.motifs_dir.iterdir()) == before
+
+
+def test_a_nonsense_preference_is_refused(shop):
+    _, cfg = shop
+    with pytest.raises(ValueError, match="pictures.*drawings|drawings.*pictures"):
+        m.prefer(cfg.motifs_dir, "whatever")
+
+
+def test_the_command_line_settles_it_and_says_what_it_did(tmp_path, monkeypatch, capsys):
+    from stockforge import cli
+    from stockforge.config import settings as live
+
+    build_font_library(tmp_path / "fonts")
+    build_motif_library(tmp_path / "motifs")
+    src = _painted(tmp_path / "ghost.png")
+    m.adopt(src, tmp_path / "motifs", description="a painted ghost")
+    m.adopt(src, tmp_path / "motifs", description="a painted ghost", as_picture=True)
+
+    for key, value in {"SF_ROOT": str(tmp_path / "work"),
+                       "SF_FONTS": str(tmp_path / "fonts"),
+                       "SF_MOTIFS": str(tmp_path / "motifs")}.items():
+        monkeypatch.setenv(key, value)
+    live.reload()
+    live.ensure_dirs()
+
+    assert cli.main(["motifs", "prefer", "pictures"]) == 0
+    said = capsys.readouterr().out
+    assert "1 object" in said
+    assert "trace" in said, "it did not say the traces can be rebuilt"
+    assert not (tmp_path / "motifs" / "a-painted-ghost.svg").exists()
+
+
+def test_the_command_line_refuses_an_unclear_preference(tmp_path, monkeypatch, capsys):
+    from stockforge import cli
+    from stockforge.config import settings as live
+
+    build_font_library(tmp_path / "fonts")
+    build_motif_library(tmp_path / "motifs")
+    for key, value in {"SF_ROOT": str(tmp_path / "work"),
+                       "SF_FONTS": str(tmp_path / "fonts"),
+                       "SF_MOTIFS": str(tmp_path / "motifs")}.items():
+        monkeypatch.setenv(key, value)
+    live.reload()
+    live.ensure_dirs()
+
+    assert cli.main(["motifs", "prefer"]) == 1
+    assert "prefer what?" in capsys.readouterr().out

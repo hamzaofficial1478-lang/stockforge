@@ -894,6 +894,49 @@ def shadowed_by_a_drawing(motifs_dir: Path) -> list[str]:
     return out
 
 
+def prefer(motifs_dir: Path, what: str) -> list[str]:
+    """Settle the drawing-or-picture question for every object that has both.
+
+    The owner, deciding it once for the whole library:
+
+        "if am selling the design then definatly i have to give the editable
+         file but for the objects they should be editable is not the important
+         thing ... make texts editable into the design just it"
+
+    Which is the right call for what they sell, and it turns thirty-one
+    judgements into one. `pictures` removes the traces standing in front of the
+    artwork; `drawings` removes the pictures and keeps the line work.
+
+    Nothing is lost that cannot be made again: the PNGs in `_harvested/` and
+    `_drawn/` stay where they are, so a trace removed today is one
+    `motifs trace` away from coming back.
+    """
+    if what not in ("pictures", "drawings"):
+        raise ValueError(f"prefer what? — 'pictures' or 'drawings', not {what!r}")
+
+    gone: list[str] = []
+    for art in sorted(motifs_dir.glob(f"*{RASTER_SUFFIX}")):
+        ident = picture_id(art)
+        drawing = motifs_dir / f"{ident}.svg"
+        if not drawing.is_file():
+            continue                       # nothing to settle
+        try:
+            if what == "pictures":
+                drawing.unlink()
+            else:
+                art.unlink()
+                art.with_suffix(".json").unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("could not remove for %s: %s", ident, exc)
+            continue
+        gone.append(ident)
+
+    if gone:
+        _cache.pop(motifs_dir, None)
+        log.info("%s now win for %d object(s)", what, len(gone))
+    return gone
+
+
 def _picture_source(art: Path) -> str:
     """Which picture this object was adopted from, per its sidecar."""
     sidecar = art.with_suffix(".json")

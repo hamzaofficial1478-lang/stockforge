@@ -308,6 +308,37 @@ def cmd_motifs(args, pipe: Pipeline) -> int:
         # ever reachable from inside it, which meant `motifs draw` at the top
         # level fell through to `match` and answered "say what to match".
         return cmd_motifs_harvest(args, pipe)
+    if args.action == "prefer":
+        from .stages import motifs as motifs_stage
+
+        want = (args.description or "").strip().lower()
+        if want not in ("pictures", "drawings"):
+            print("prefer what? — `stockforge motifs prefer pictures` keeps the "
+                  "artwork as it is\nand removes the traces in front of it; "
+                  "`prefer drawings` does the opposite.")
+            return 1
+        try:
+            settled = motifs_stage.prefer(settings.motifs_dir, want)
+        except ValueError as exc:
+            print(str(exc))
+            return 1
+        if not settled:
+            print("nothing to settle — no object in this library exists both "
+                  "as a drawing and as a picture.")
+            return 0
+        print(f"{want} now win for {len(settled)} object(s).")
+        if want == "pictures":
+            print("The artwork is used exactly as it is. It can be placed, "
+                  "sized and positioned\nin a design but not recoloured, and "
+                  "the text stays live and editable.")
+        else:
+            print("The line work is used. It recolours with the design and "
+                  "scales without limit.")
+        print("\nNothing is lost for good: the PNGs in _harvested/ and _drawn/ "
+              "are untouched,\nso `stockforge motifs trace` builds the traces "
+              "again whenever you want them.")
+        return 0
+
     if args.action == "compare":
         # Before the library is loaded, like `trace`: this is what you run when
         # you cannot decide what the library should contain.
@@ -690,8 +721,11 @@ def main(argv: list[str] | None = None) -> int:
 
     m = sub.add_parser("motifs", help="inspect the motif library and grow it")
     m.add_argument("action",
-                   choices=["list", "match", "todo", "harvest", "draw", "trace", "compare"])
-    m.add_argument("description", nargs="?", help="for `match` — what the analyser saw")
+                   choices=["list", "match", "todo", "harvest", "draw", "trace",
+                            "compare", "prefer"])
+    m.add_argument("description", nargs="?",
+                   help="for `match` — what the analyser saw; "
+                        "for `prefer` — 'pictures' or 'drawings'")
     m.add_argument("--kind", default="icon",
                    help="for `match` — botanical, seasonal, frame, ...")
     m.add_argument("--limit", type=int, default=20, help="for `todo` — how many to show")
