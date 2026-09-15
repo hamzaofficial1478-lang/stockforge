@@ -18,9 +18,9 @@ from stockforge.config import Settings
 from stockforge.pipeline import Pipeline, out_dir_for
 from stockforge.providers.base import VisionProvider
 from stockforge.schema import (
-    Background, Box, ColourRole, Critique, DesignSpec, FontClass, Grid,
-    MotifElement, MotifKind, Provenance, RasterElement, ShapeElement, TextElement,
-    TypeRole,
+    Background, Box, Canvas, ColourRole, Critique, DesignDNA, DesignSpec,
+    FontClass, Grid, MotifElement, MotifKind, Page, Palette, Provenance,
+    RasterElement, ShapeElement, Swatch, TextElement, TypeRole,
 )
 from stockforge.sources import open_source
 from stockforge.stages import analyse as analyse_stage
@@ -142,6 +142,53 @@ class ScriptedProvider(VisionProvider):
                              box=Box(x=0.74, y=0.08, w=0.16, h=0.22), flip_x=True),
             ],
             motif_vocabulary=["eucalyptus", "botanical"])
+
+    # --- a design written from a brief, not read from an image ---------
+    def _invented(self):
+        """No image was sent, so this stands in for the model writing a design.
+
+        Each one differs in wording and in where the headline sits: a provider
+        that answers identically produces identical drawings, and the twin
+        check would throw all but the first away — which is right, and would
+        make any test past the first design meaningless.
+        """
+        from stockforge.stages.invent import Invented
+        self.nth += 1
+        titles = ["Spooky Soiree", "Haunted House Party", "Witching Hour",
+                  "Monster Mash", "Trick or Treat"]
+        n = self.nth % len(titles)
+        return Invented(
+            dna=DesignDNA(
+                category="invitation", occasion=self.occasion,
+                style_tags=["vintage", "spooky"],
+                grid=Grid(margin_x=0.09, margin_y=0.08, symmetry="centred"),
+                background=Background(treatment="solid", base=ColourRole.BACKGROUND),
+                palette=Palette(swatches=[
+                    Swatch(role=ColourRole.BACKGROUND, hex="#f4efe6", coverage=0.72),
+                    Swatch(role=ColourRole.INK, hex="#1d1b19", coverage=0.16),
+                    Swatch(role=ColourRole.ACCENT, hex=self.accent, coverage=0.12)]),
+                type_pairing=[FontClass(category="serif", weight=400, contrast="high"),
+                              FontClass(category="sans", weight=400)],
+                motif_vocabulary=["eucalyptus"]),
+            pages=[Page(name="front",
+                        canvas=Canvas(width_mm=127, height_mm=178, bleed_mm=3),
+                        elements=[
+                            TextElement(role=TypeRole.TITLE, content=titles[n],
+                                        box=Box(x=0.1, y=0.22 + 0.04 * n, w=0.8, h=0.16),
+                                        font=FontClass(category="serif", weight=400,
+                                                       contrast="high"),
+                                        size_ratio=0.052),
+                            TextElement(role=TypeRole.BODY,
+                                        content=f"Saturday the {20 + n} of October",
+                                        box=Box(x=0.1, y=0.60, w=0.8, h=0.06),
+                                        font=FontClass(category="sans", weight=400),
+                                        size_ratio=0.022, placeholder=True),
+                            MotifElement(motif=MotifKind.BOTANICAL,
+                                         description="a sprig of eucalyptus, oval "
+                                                     "leaves on a slender stem",
+                                         box=Box(x=0.10, y=0.05, w=0.16, h=0.14)),
+                        ])],
+            notes="")
 
     # --- derivation and critique -------------------------------------
     def _newcopy(self):

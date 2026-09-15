@@ -26,6 +26,7 @@ import logging
 import re
 from pathlib import Path
 from collections.abc import Callable
+from dataclasses import replace
 
 from .config import Settings, settings as default_settings
 from .db import FIT_TO_LEARN_FROM, Store
@@ -42,6 +43,7 @@ from .stages import export as export_stage
 from .stages import fonts as fonts_stage
 from .stages import duplicates as duplicates_stage
 from .stages import ingest as ingest_stage
+from .stages import invent as invent_stage
 from .stages import motifs as motifs_stage
 from .stages.analyse import analyse
 from .stages.render import render, write_svg
@@ -736,6 +738,125 @@ class Pipeline:
             log.warning("[%s] %s %s", design_id[:8], page_name, twin.line())
         self.store.save_fingerprint(design_id, page_name, phash, aspect)
         return twin
+
+    # ------------------------------------------------------------------
+    # making from a brief, with nothing read
+    # ------------------------------------------------------------------
+
+    def invent(self, count: int, brief: invent_stage.Brief,
+               on_each=None) -> dict:
+        """Designs written from a brief instead of mixed from the catalogue.
+
+        The other way to make something, and the one that needs no seeding: no
+        twenty-four, no donor pool, no reading. Use it to start a niche with
+        nothing in it, or to go somewhere the catalogue cannot reach.
+
+        It still goes out through the same exporter as everything else, so it
+        gets the same files, the same niche folder, and the same twin check —
+        a design that comes out looking like one you already have is thrown
+        away and another is asked for, which is what `make` does too. Handing
+        back a pile of near-identical designs is the work this removes.
+
+        One model call per design, against the batch path's one for
+        forty-eight, so this is not the way to produce a thousand a month. It
+        is the way to produce the first one.
+        """
+        niche = brief.niche or self.cfg.collection
+        if not niche:
+            return {"made": 0, "asked": count, "discarded": 0, "designs": [],
+                    "failed": [], "collection": "",
+                    "note": "Choose which niche you are working on first. Even a "
+                            "design written from scratch has to be filed somewhere."}
+        record = self.store.collection(niche)
+        if record is None:
+            return {"made": 0, "asked": count, "discarded": 0, "designs": [],
+                    "failed": [], "collection": niche,
+                    "note": f"There is no niche called {niche!r}. Create it first."}
+
+        # What we can actually draw. Asking a model for a design without this
+        # produces a beautiful brief full of motifs the library has never heard
+        # of, and every one of them is an empty space and a trip to review.
+        available = invent_stage.available_motifs(self.cfg.motifs_dir)
+        if not available:
+            log.info("no motifs in the library — invented designs will carry "
+                     "type, colour and shape only")
+        brief = replace(brief, niche=niche, available=available)
+        made: list[dict] = []
+        failed: list[str] = []
+        repeats = 0
+        # What the shop already has, told to the model so it does not have to
+        # be discovered after the drawing. The twin check still stands behind
+        # it — this is the cheap half, not the guarantee.
+        already = self._made_already(niche)
+
+        # Twice the asked-for number of attempts, because a discarded twin has
+        # to be replaced rather than quietly subtracted from the total.
+        for attempt in range(count * 2):
+            if len(made) >= count:
+                break
+            self.on_progress(f"Writing design {len(made) + 1} of {count} from the brief")
+            try:
+                spec = invent_stage.invent(replace(brief, avoid=already))
+            except Exception as exc:
+                log.warning("could not write a design: %s", str(exc)[:200])
+                failed.append(str(exc)[:200])
+                continue
+
+            # Point every motif at a drawing we hold. `build` does this after
+            # reading and this path did not, so every invented design came out
+            # with library_id unset and the renderer reported a hole for a
+            # eucalyptus that was sitting in the library all along.
+            holes = motifs_stage.resolve(spec, self.cfg.motifs_dir,
+                                         self.cfg.motif_threshold)
+            if holes:
+                log.info("invented design wants %d drawing(s) we have not got: %s",
+                         len(holes), "; ".join(sorted(set(holes))[:3]))
+
+            design_id = _new_id("invent", f"{niche}:{attempt}:{spec.dna.category}:"
+                                          f"{'|'.join(t.content for t in spec.texts())[:200]}")
+            try:
+                self.store.add_made_design(
+                    design_id, f"written from a brief: {brief.category}", design_id,
+                    collection=niche)
+                self.store.save_spec(design_id, spec.model_dump(mode="json"))
+                self.on_progress(f"Drawing and exporting {len(made) + 1} of {count}")
+                outcome = self._export(spec, design_id, distinct=1.0, on_twin="discard")
+                if outcome == "twin":
+                    repeats += 1
+                    self.store.remove_design(design_id)
+                    continue
+                headline = next((t.content for t in spec.texts()), spec.dna.category)
+                already.append(headline[:60])
+                made.append({"design_id": design_id, "state": outcome,
+                             "recipe": f"written from a brief — {headline[:40]}"})
+            except Exception as exc:
+                log.exception("could not build an invented design")
+                failed.append(str(exc)[:200])
+            if on_each:
+                on_each(len(made), count)
+
+        return {"made": len(made), "asked": count, "discarded": repeats,
+                "designs": made, "failed": failed, "collection": niche,
+                "note": "" if len(made) >= count else
+                        (f"Wrote {len(made)} of {count}. "
+                         + (f"{repeats} came out too close to something you already "
+                            f"have and were thrown away. " if repeats else "")
+                         + ("The model refused or failed on the rest."
+                            if failed else "Ask again for more."))}
+
+    def _made_already(self, niche: str, cap: int = 12) -> list[str]:
+        """Headlines of what is already in this niche, newest first.
+
+        Told to the model so a repeat is avoided before it is drawn rather than
+        detected after. Cheap, and not relied on: the perceptual twin check in
+        `_export` is what actually stops one shipping.
+        """
+        out: list[str] = []
+        for spec in self._specs(cap=cap, collection=niche):
+            line = next((t.content for t in spec.texts() if t.content.strip()), "")
+            if line:
+                out.append(line[:60])
+        return out
 
     # ------------------------------------------------------------------
     # making many at once

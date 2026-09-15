@@ -671,6 +671,31 @@ class Handler(BaseHTTPRequestHandler):
                                "near": found.near,
                                "collections": pipe.store.collections()})
 
+        if route == "/api/invent":
+            """New designs written from a brief, with nothing read.
+
+            The other way to make something, and the one that works on an empty
+            niche: no twenty-four, no donor pool. One model call per design
+            rather than one for the whole run, so it is for starting a niche,
+            not for filling one.
+            """
+            from ..stages.invent import Brief
+            try:
+                count = max(1, min(48, int(body.get("count") or 4)))
+            except (TypeError, ValueError):
+                return self._json({"error": "count must be a number"}, 400)
+            pipe = Pipeline(self.cfg)
+            started = time.monotonic()
+            result = pipe.invent(count, Brief(
+                niche=str(body.get("collection") or self.cfg.collection or ""),
+                category=str(body.get("category") or "invitation"),
+                occasion=str(body.get("occasion") or ""),
+                style=str(body.get("style") or ""),
+                trim=str(body.get("trim") or "5x7in"),
+                wording=str(body.get("wording") or "")))
+            result["seconds"] = round(time.monotonic() - started, 1)
+            return self._json(result)
+
         if route == "/api/make":
             """New designs from what has already been read.
 

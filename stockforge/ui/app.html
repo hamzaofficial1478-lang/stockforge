@@ -539,6 +539,31 @@
       </div>
       <div id="make-out" class="log" style="border:0;margin-top:10px"></div>
     </div>
+
+    <div class="card">
+      <h3>Write new designs from a brief</h3>
+      <p class="hint">Works on an empty niche &mdash; nothing read first. One model
+        call each, so it is for starting a niche rather than filling one.</p>
+      <div class="grid" style="max-width:720px">
+        <div><label for="inv-count">How many</label>
+          <input id="inv-count" type="number" min="1" max="48" value="4"></div>
+        <div><label for="inv-category">What it is</label>
+          <input id="inv-category" placeholder="invitation" value="invitation"></div>
+        <div><label for="inv-occasion">Occasion</label>
+          <input id="inv-occasion" placeholder="halloween"></div>
+        <div><label for="inv-style">Style</label>
+          <input id="inv-style" placeholder="vintage, spooky, hand-drawn"></div>
+        <div><label for="inv-trim">Trim</label>
+          <input id="inv-trim" placeholder="5x7in" value="5x7in"></div>
+        <div><label for="inv-wording">Wording to work in</label>
+          <input id="inv-wording" placeholder="Trick or Treat"></div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" onclick="doInvent()">Write them</button>
+        <span id="inv-msg" class="mono"></span>
+      </div>
+      <div id="inv-out" class="log" style="border:0;margin-top:10px"></div>
+    </div>
   </section>
 
   <!-- ── QUEUE ─────────────────────────────────────────────── -->
@@ -1323,6 +1348,38 @@ async function chooseNiche(){
       + r.near.map(c => esc(c.name)).join(', ') + '</p>';
   paintNiches(); loadTotals(); loadDesigns();
   setTimeout(() => $('niche-msg').textContent = '', 8000);
+}
+
+async function doInvent(){
+  const btn = event && event.target;
+  if (btn) btn.disabled = true;
+  $('inv-msg').textContent = 'writing…';
+  $('inv-out').innerHTML = '';
+  try {
+    const r = await api('/api/invent', {
+      count: +$('inv-count').value || 4,
+      category: $('inv-category').value.trim(),
+      occasion: $('inv-occasion').value.trim(),
+      style: $('inv-style').value.trim(),
+      trim: $('inv-trim').value.trim(),
+      wording: $('inv-wording').value.trim(),
+    });
+    if (r.error) { $('inv-msg').textContent = r.error; return; }
+    $('inv-msg').textContent = `${r.made} of ${r.asked}`
+      + (r.discarded ? ` · ${r.discarded} repeat${r.discarded === 1 ? '' : 's'} thrown away` : '')
+      + (r.seconds ? ` · ${r.seconds}s` : '');
+    $('inv-out').innerHTML = [
+      ...(r.note ? [`<div>${esc(r.note)}</div>`] : []),
+      ...(r.designs || []).map(d => `<div>${esc(d.recipe)} &rarr; ${esc(d.state)}</div>`),
+      ...(r.failed || []).map(f => `<div class="fail">${esc(f)}</div>`),
+    ].join('');
+    refresh();
+  } catch (e) {
+    $('inv-msg').textContent = '';
+    $('inv-out').innerHTML = `<div class="fail">${esc(e.message || e)}</div>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function doMake(){

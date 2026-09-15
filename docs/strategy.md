@@ -468,6 +468,76 @@ was never asked.
 A chain exists so that a dead credential costs a second of latency, not a
 design. 400 stays where it was.
 
+## The second way to make something: written from a brief
+
+    "if we are having a good vision llm model i think there will be no any
+     need to make program firstly read 24 designs"
+
+Half right, and the half that is right matters.
+
+The twenty-four exist because the mixer builds a design out of *parts of
+designs it has read* — a grid from one, a palette from another, decoration from
+a third. Take the bag of ingredients away and there is nothing to mix; that is
+the whole reason a pool of two produced the original with its hue nudged.
+
+But the renderer has never cared where a spec came from. A model can write one
+from a brief, and then the same drawing, the same fonts, the same exporter and
+the same twin check all apply. So `stockforge invent` — and the "Write new
+designs from a brief" card in the panel — makes designs with **nothing read at
+all**. No twenty-four, no donor pool, no gate.
+
+What it costs, and it is worth saying plainly because it is the whole trade:
+
+  - the result is not derived from the shop's catalogue, so it carries the
+    shop's style only as far as the brief described it;
+  - it is one model call per design, where the batch path does forty-eight in
+    one request.
+
+So it is the way to *start* a niche, not the way to fill one. Write four, read
+those four back in if you like them, and the mixer has something to work with.
+
+**The line that made it usable.** The first run produced three designs and all
+three went to review: *"no library match for a sprig of eucalyptus"* — for a
+eucalyptus that was sitting in the library under a different form of words. Two
+causes. The invent path never called `motifs.resolve`, which `build` does after
+reading, so every motif came out with `library_id` unset. And the model was
+being asked to design in the dark. It is now told exactly what the library can
+draw, in the library's own wording:
+
+    Drawings available to you, and ONLY these: Arched frame; Thin rule;
+    Eucalyptus sprig
+
+Asking for a motif in the words the library already uses scores 1.00 against
+0.84 for a good paraphrase, and against nothing at all for a reasonable request
+the library has never heard of. With an empty library it is told to use no
+motifs and carry the design on type, colour and shape, which is a real design;
+a page full of holes is not.
+
+**Why this may still go to an agency.** The layout comes from a model, and
+every mark on the page is set in our own fonts and drawn from our own motif
+library. Nothing third-party is embedded, which is the same footing a mixed
+design stands on. Anything that does not resolve is reported as a hole and the
+design goes to a human — the existing behaviour, and the reason provenance can
+be set here rather than guessed at.
+
+## Pointing the program at a local bridge
+
+Any server that speaks OpenAI's `/v1/chat/completions` is a first-class model
+here — that is how NIM, vLLM, Ollama and LM Studio are run, and it is equally
+how a web-to-API bridge is run. Verified end to end against a stand-in server
+that speaks `/v1` and nothing else: saved, tested, made live, and a real design
+sent through it carrying its images.
+
+Setup → Models → **Add a connection**, base URL `http://127.0.0.1:8000/v1`,
+the model name the bridge serves, key blank. Test it, then Make live.
+
+That form used to live inside a collapsed `<details>` on a screen that said
+"no connections yet" directly above it, which is why it read as "the feature is
+there but does nothing". It opens by itself now when there is nothing set up.
+
+The thing the panel cannot do is *be* the bridge. Pointing it at an address
+where nothing is listening fails the Test button, correctly.
+
 ## Measuring it on your own models
 
 `stockforge bench --count 12` times a batch against the endpoints actually

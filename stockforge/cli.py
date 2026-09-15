@@ -534,6 +534,15 @@ def main(argv: list[str] | None = None) -> int:
                    help="clear the record of combinations already made, so old "
                         "ones can be revisited")
 
+    s = sub.add_parser("invent", help="new designs written from a brief, with nothing read")
+    s.add_argument("count", type=int, help="how many to write")
+    s.add_argument("--category", default="invitation", help="invitation, greeting card, poster, ...")
+    s.add_argument("--occasion", default="", help="halloween, wedding, christmas, ...")
+    s.add_argument("--style", default="", help="vintage, botanical, minimal, ...")
+    s.add_argument("--trim", default="5x7in", help="5x7in, A5, 4x6in, square, ...")
+    s.add_argument("--wording", default="", help="words to work into the design")
+    s.add_argument("--niche", default="", help="which niche to file them under")
+
     sub.add_parser("check", help="what is ready and what is not, with the fix for each")
     sub.add_parser("status", help="where everything is up to")
 
@@ -733,6 +742,33 @@ def main(argv: list[str] | None = None) -> int:
         if len(result["designs"]) > 10:
             print(f"    … and {len(result['designs']) - 10} more")
         return 0 if result["made"] else 1
+    elif args.cmd == "invent":
+        from .stages.invent import Brief
+
+        started = time.monotonic()
+
+        def tick(done: int, total: int) -> None:
+            print(f"\r  {done}/{total}", end="", flush=True)
+
+        result = pipe.invent(args.count, Brief(
+            niche=args.niche or settings.collection,
+            category=args.category, occasion=args.occasion, style=args.style,
+            trim=args.trim, wording=args.wording), on_each=tick)
+        took = time.monotonic() - started
+        print(f"\r{result['made']} design(s) written in {took:.0f}s"
+              + (f", {took / result['made']:.1f}s each" if result["made"] else "")
+              + " " * 12)
+        if result["discarded"]:
+            print(f"  {result['discarded']} thrown away as too close to something "
+                  f"you already have")
+        if result["note"]:
+            print(f"  {result['note']}")
+        for made in result["designs"][:10]:
+            print(f"    {made['design_id'][:12]}  {made['state']:<12} {made['recipe']}")
+        for why in result["failed"][:3]:
+            print(f"    failed: {why}")
+        return 0 if result["made"] else 1
+
     elif args.cmd == "status":
         print(json.dumps(pipe.status(), indent=2))
     elif args.cmd == "review":
