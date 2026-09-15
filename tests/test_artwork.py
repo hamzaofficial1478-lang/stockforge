@@ -291,3 +291,51 @@ def test_adopting_a_picture_does_not_log_about_tracing(tmp_path, caplog):
                 description="a painted ghost")
 
     assert "traced again" not in caplog.text, caplog.text
+
+
+# --- a decision nobody can make from a log ---------------------------------
+#
+# The owner has 32 objects that exist both ways and has to choose per object.
+# A path count cannot tell them apart: a silhouette traced to one path is
+# perfect and recolours with the design; a watercolour traced to three has had
+# everything that made it a watercolour thrown away. Both read the same in a
+# log. So render them side by side and let the person who knows the shop look.
+
+def test_the_comparison_sheet_shows_both_versions(shop, tmp_path):
+    from stockforge.stages.trace import compare_sheet
+
+    _, cfg = shop
+    src = _painted(tmp_path / "ghost.png")
+    m.adopt(src, cfg.motifs_dir, description="a painted ghost")
+    m.adopt(src, cfg.motifs_dir, description="a painted ghost", as_picture=True)
+
+    out, count = compare_sheet(cfg.motifs_dir, tmp_path / "sheet.png")
+    assert count == 1
+    sheet = cv2.imread(str(out))
+    assert sheet is not None and sheet.shape[1] > sheet.shape[0] // 2, (
+        "the sheet is not a side-by-side")
+
+
+def test_only_objects_that_exist_both_ways_are_compared(shop, tmp_path):
+    """A picture with no trace, or a trace with no picture, is not a choice —
+    putting it on the sheet asks the owner to decide something already decided."""
+    from stockforge.stages.trace import compare_sheet
+
+    _, cfg = shop
+    both = _painted(tmp_path / "both.png")
+    m.adopt(both, cfg.motifs_dir, description="in both forms")
+    m.adopt(both, cfg.motifs_dir, description="in both forms", as_picture=True)
+    m.adopt(_painted(tmp_path / "only.png"), cfg.motifs_dir,
+            description="only a picture", as_picture=True)
+
+    _, count = compare_sheet(cfg.motifs_dir, tmp_path / "sheet.png")
+    assert count == 1, "it put an object with nothing to compare on the sheet"
+
+
+def test_nothing_to_compare_says_so_rather_than_writing_a_blank(shop, tmp_path):
+    from stockforge.stages.trace import compare_sheet
+
+    _, cfg = shop
+    with pytest.raises(ValueError, match="nothing to compare"):
+        compare_sheet(cfg.motifs_dir, tmp_path / "sheet.png")
+    assert not (tmp_path / "sheet.png").exists()

@@ -308,6 +308,26 @@ def cmd_motifs(args, pipe: Pipeline) -> int:
         # ever reachable from inside it, which meant `motifs draw` at the top
         # level fell through to `match` and answered "say what to match".
         return cmd_motifs_harvest(args, pipe)
+    if args.action == "compare":
+        # Before the library is loaded, like `trace`: this is what you run when
+        # you cannot decide what the library should contain.
+        from .stages.trace import compare_sheet
+
+        out = settings.root / "motif-comparison.png"
+        try:
+            path, count = compare_sheet(settings.motifs_dir, out)
+        except Exception as exc:
+            print(str(exc))
+            return 1
+        print(f"{count} object(s), traced beside kept:\n\n    {path}\n")
+        print("Open it. Left is the trace, right is the picture.\n"
+              "Where the trace holds up, keep it — a drawing recolours with the\n"
+              "design and scales without limit. Where it has thrown away what\n"
+              "made the artwork worth having, delete that one trace and the\n"
+              "picture takes over:\n")
+        print(f"    Remove-Item '{settings.motifs_dir}\\<name>.svg'")
+        return 0
+
     if args.action == "trace":
         # Before the library is loaded, because tracing is exactly what you do
         # when the library is empty and everything is coming back as a hole.
@@ -669,7 +689,8 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("action", choices=["scan", "list", "install", "download"])
 
     m = sub.add_parser("motifs", help="inspect the motif library and grow it")
-    m.add_argument("action", choices=["list", "match", "todo", "harvest", "draw", "trace"])
+    m.add_argument("action",
+                   choices=["list", "match", "todo", "harvest", "draw", "trace", "compare"])
     m.add_argument("description", nargs="?", help="for `match` — what the analyser saw")
     m.add_argument("--kind", default="icon",
                    help="for `match` — botanical, seasonal, frame, ...")

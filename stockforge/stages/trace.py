@@ -41,6 +41,10 @@ import numpy as np
 
 log = logging.getLogger("stockforge.trace")
 
+# Imported lazily where used: motifs imports trace for `adopt`, so a
+# module-level import here would close the circle.
+
+
 # The same seed the critique stage uses, and for the same reason: k-means picks
 # its starting centres at random, so without this the same picture traces to a
 # different drawing every run and nothing about a motif is reproducible.
@@ -334,3 +338,86 @@ def _clean(text: str) -> str:
     able to close a tag or open a comment."""
     text = re.sub(r"[<>&]", " ", str(text))
     return re.sub(r"--+", "-", text).strip()
+
+
+def compare_sheet(motifs_dir: Path, out: Path, cell: int = 220,
+                  columns: int = 4) -> tuple[Path, int]:
+    """One picture showing every object both ways: traced, and kept as it is.
+
+    The decision this exists for cannot be made from a path count. A silhouette
+    traced to one path is perfect and recolours with the design; a watercolour
+    traced to three paths has had everything that made it a watercolour thrown
+    away. Both look the same in a log.
+
+    So: render the drawing, put the picture beside it, label them, and let the
+    person who knows the shop look once. Thirty-two objects fit on one sheet.
+
+    Returns the file and how many pairs are on it.
+    """
+    import cairosvg
+
+    from .motifs import RASTER_SUFFIX, picture_id as motif_id
+
+    pairs = []
+    for art in sorted(motifs_dir.glob(f"*{RASTER_SUFFIX}")):
+        drawing = motifs_dir / f"{motif_id(art)}.svg"
+        if drawing.is_file():
+            pairs.append((motif_id(art), drawing, art))
+    if not pairs:
+        raise ValueError(
+            f"nothing to compare in {motifs_dir} — this shows objects that "
+            f"exist BOTH as a drawing and as a picture, and there are none")
+
+    def fit(img: np.ndarray) -> np.ndarray:
+        """On a white square, keeping its shape — the way it will be placed."""
+        pad = np.full((cell, cell, 3), 255, np.uint8)
+        if img is None or img.size == 0:
+            return pad
+        if img.ndim == 3 and img.shape[2] == 4:
+            alpha = img[:, :, 3:4].astype(np.float32) / 255.0
+            img = (img[:, :, :3] * alpha + 255 * (1 - alpha)).astype(np.uint8)
+        h, w = img.shape[:2]
+        scale = min((cell - 16) / w, (cell - 16) / h)
+        small = cv2.resize(img, (max(1, int(w * scale)), max(1, int(h * scale))),
+                           interpolation=cv2.INTER_AREA)
+        y, x = (cell - small.shape[0]) // 2, (cell - small.shape[1]) // 2
+        pad[y:y + small.shape[0], x:x + small.shape[1]] = small
+        return pad
+
+    tiles = []
+    for ident, drawing, art in pairs:
+        try:
+            png = cairosvg.svg2png(url=str(drawing), output_width=cell - 16,
+                                   output_height=cell - 16,
+                                   background_color="white")
+            drawn = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+        except Exception as exc:                          # pragma: no cover
+            log.warning("could not render %s: %s", drawing.name, exc)
+            drawn = None
+        pair = np.hstack([fit(drawn),
+                          np.full((cell, 2, 3), 210, np.uint8),
+                          fit(cv2.imread(str(art), cv2.IMREAD_UNCHANGED))])
+        label = np.full((34, pair.shape[1], 3), 255, np.uint8)
+        cv2.putText(label, ident[:38], (6, 14), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.38, (20, 20, 20), 1, cv2.LINE_AA)
+        cv2.putText(label, "traced", (6, 29), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.36, (150, 60, 40), 1, cv2.LINE_AA)
+        cv2.putText(label, "picture", (cell + 8, 29), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.36, (40, 110, 60), 1, cv2.LINE_AA)
+        tiles.append(np.vstack([label, pair]))
+
+    width = max(t.shape[1] for t in tiles)
+    height = max(t.shape[0] for t in tiles)
+    rows = []
+    for i in range(0, len(tiles), columns):
+        row = tiles[i:i + columns]
+        row = [np.pad(t, ((0, height - t.shape[0]), (0, width - t.shape[1]), (0, 0)),
+                      constant_values=255) for t in row]
+        while len(row) < columns:
+            row.append(np.full((height, width, 3), 255, np.uint8))
+        rows.append(np.hstack(row))
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out), np.vstack(rows))
+    log.info("wrote %s — %d object(s), traced beside kept", out, len(pairs))
+    return out, len(pairs)
