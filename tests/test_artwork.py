@@ -339,3 +339,64 @@ def test_nothing_to_compare_says_so_rather_than_writing_a_blank(shop, tmp_path):
     with pytest.raises(ValueError, match="nothing to compare"):
         compare_sheet(cfg.motifs_dir, tmp_path / "sheet.png")
     assert not (tmp_path / "sheet.png").exists()
+
+
+def test_the_comparison_sheet_does_not_need_cairo(shop, tmp_path, monkeypatch):
+    """It did, and that is how it reached the owner broken:
+
+        no library called "cairo-2" was found
+        cannot load library 'libcairo-2.dll'
+
+    `cairosvg` needs a native cairo DLL that a pip install does not bring, and
+    the machine already had the Inkscape this project uses for every PDF and
+    EPS it writes. Calling cairosvg directly walked past it.
+    """
+    import builtins
+    from stockforge.stages.trace import compare_sheet
+
+    _, cfg = shop
+    src = _painted(tmp_path / "ghost.png")
+    m.adopt(src, cfg.motifs_dir, description="a painted ghost")
+    m.adopt(src, cfg.motifs_dir, description="a painted ghost", as_picture=True)
+
+    real = builtins.__import__
+
+    def without_cairo(name, *a, **k):
+        if name.startswith("cairosvg"):
+            raise OSError('no library called "cairo-2" was found')
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", without_cairo)
+    out, count = compare_sheet(cfg.motifs_dir, tmp_path / "sheet.png")
+
+    sheet = cv2.imread(str(out))
+    assert sheet is not None and count == 1
+    left = sheet[34:, : sheet.shape[1] // 2]
+    assert int((left < 240).sum()) > 400, "the drawing half came out blank"
+
+
+def test_no_converter_at_all_says_so_rather_than_handing_over_blanks(shop, tmp_path, monkeypatch):
+    """Half an empty sheet is worse than an error: it asks the owner to compare
+    their pictures against nothing and looks like the pictures won."""
+    import builtins
+    from stockforge.stages import trace as trace_mod
+    from stockforge.stages.trace import compare_sheet
+
+    _, cfg = shop
+    src = _painted(tmp_path / "ghost.png")
+    m.adopt(src, cfg.motifs_dir, description="a painted ghost")
+    m.adopt(src, cfg.motifs_dir, description="a painted ghost", as_picture=True)
+
+    real = builtins.__import__
+
+    def nothing_works(name, *a, **k):
+        if name.startswith("cairosvg"):
+            raise OSError('no library called "cairo-2" was found')
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", nothing_works)
+    monkeypatch.setattr("stockforge.stages.export._inkscape", lambda: None)
+
+    with pytest.raises(ValueError, match="nothing to compare them against"):
+        compare_sheet(cfg.motifs_dir, tmp_path / "sheet.png")
+    assert not (tmp_path / "sheet.png").exists()

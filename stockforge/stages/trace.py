@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -354,8 +355,7 @@ def compare_sheet(motifs_dir: Path, out: Path, cell: int = 220,
 
     Returns the file and how many pairs are on it.
     """
-    import cairosvg
-
+    from .export import svg_to_png
     from .motifs import RASTER_SUFFIX, picture_id as motif_id
 
     pairs = []
@@ -384,15 +384,23 @@ def compare_sheet(motifs_dir: Path, out: Path, cell: int = 220,
         pad[y:y + small.shape[0], x:x + small.shape[1]] = small
         return pad
 
+    import tempfile
+
     tiles = []
+    unrendered: list[str] = []
+    scratch = Path(tempfile.mkdtemp(prefix="sf-compare-"))
     for ident, drawing, art in pairs:
+        # Through the project's own converter, which tries Inkscape before
+        # cairosvg. Calling cairosvg here directly is what broke this on
+        # Windows the first time: it needs a native cairo DLL that a pip
+        # install does not bring, while the machine already had the Inkscape
+        # this project uses for every PDF and EPS it writes.
         try:
-            png = cairosvg.svg2png(url=str(drawing), output_width=cell - 16,
-                                   output_height=cell - 16,
-                                   background_color="white")
-            drawn = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
-        except Exception as exc:                          # pragma: no cover
-            log.warning("could not render %s: %s", drawing.name, exc)
+            shot = svg_to_png(drawing, scratch / f"{ident}.png", width=cell - 16)
+            drawn = cv2.imread(str(shot), cv2.IMREAD_UNCHANGED)
+        except Exception as exc:
+            log.warning("could not render %s: %s", drawing.name, str(exc)[:160])
+            unrendered.append(str(exc)[:160])
             drawn = None
         pair = np.hstack([fit(drawn),
                           np.full((cell, 2, 3), 210, np.uint8),
@@ -417,7 +425,20 @@ def compare_sheet(motifs_dir: Path, out: Path, cell: int = 220,
             row.append(np.full((height, width, 3), 255, np.uint8))
         rows.append(np.hstack(row))
 
+    if len(unrendered) == len(pairs):
+        # Every drawing came back blank, so the sheet would be half empty and
+        # the owner would compare their pictures against nothing. Neither
+        # converter is there — say which, rather than hand over a useless file.
+        shutil.rmtree(scratch, ignore_errors=True)
+        raise ValueError(
+            "none of the drawings could be rendered, so there is nothing to "
+            "compare them against.\n"
+            "This needs Inkscape — the same Inkscape that writes every PDF and "
+            "EPS here — or a working cairosvg.\n"
+            f"What it said: {unrendered[0]}")
+
     out.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out), np.vstack(rows))
+    shutil.rmtree(scratch, ignore_errors=True)
     log.info("wrote %s — %d object(s), traced beside kept", out, len(pairs))
     return out, len(pairs)
