@@ -24,6 +24,7 @@ embedded, which is what keeps the output submittable.
 from __future__ import annotations
 
 import logging
+import tempfile
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
@@ -254,6 +255,42 @@ def fit_type(spec: DesignSpec, fonts_dir: Path) -> list[str]:
     return changed
 
 
+# How big a reference needs to be. A listing photo is 1588px and half a
+# megabyte, and every byte of it is uploaded again on every retry — a single
+# design through a web bridge sent the same picture five times. What the model
+# is being asked for is the mood, the hierarchy and the weight of colour, none
+# of which needs the fine print on the RSVP line to be legible. Reading a
+# design to rebuild it is a different job and keeps its own, larger, limit.
+REFERENCE_EDGE = 640
+
+
+def _reference(picture) -> "Path | None":
+    """A copy of the reference small enough to send cheaply.
+
+    Written beside the original rather than over it: the owner pointed at a
+    file of theirs and it is not this function's business to modify it.
+    """
+    import cv2
+
+    path = Path(picture)
+    img = cv2.imread(str(path))
+    if img is None:
+        log.warning("could not read the reference %s — writing from the brief alone",
+                    path.name)
+        return None
+    h, w = img.shape[:2]
+    if max(h, w) <= REFERENCE_EDGE:
+        return path
+    scale = REFERENCE_EDGE / max(h, w)
+    small = cv2.resize(img, (max(1, int(w * scale)), max(1, int(h * scale))),
+                       interpolation=cv2.INTER_AREA)
+    out = Path(tempfile.gettempdir()) / f"sf-reference-{path.stem[:24]}.jpg"
+    cv2.imwrite(str(out), small, [cv2.IMWRITE_JPEG_QUALITY, 82])
+    log.info("reference %s shrunk %dx%d -> %dx%d for sending",
+             path.name, w, h, small.shape[1], small.shape[0])
+    return out
+
+
 def invent(brief: Brief, provider: VisionProvider | None = None) -> DesignSpec:
     """One design from one brief.
 
@@ -261,7 +298,8 @@ def invent(brief: Brief, provider: VisionProvider | None = None) -> DesignSpec:
     model as happily as a vision one, and costs a fraction of a read.
     """
     provider = provider or vision()
-    look_at = [brief.like] if brief.like and Path(brief.like).is_file() else []
+    look_at = [_reference(brief.like)] if brief.like and Path(brief.like).is_file() else []
+    look_at = [p for p in look_at if p is not None]
     made = provider.structured(
         SYSTEM + (LIKE_THIS if look_at else ""),
         brief.as_prompt() + "\n\nReturn the design.",

@@ -431,3 +431,43 @@ def test_a_reference_that_is_neither_a_file_nor_a_design_is_survivable(shop):
     assert pipe._picture_for("no-such-thing-anywhere") is None
     out = pipe.invent(1, Brief(niche="halloween-cards", like="no-such-thing-anywhere"))
     assert out["made"] == 1, out["note"]
+
+
+def test_a_big_reference_is_shrunk_before_it_is_sent(tmp_path):
+    """Every retry re-uploads the picture. A real listing photo is 1588px and
+    half a megabyte, and one design through a web bridge sent the same image
+    five times before it gave up — so the thing being uploaded should be the
+    smallest thing that still carries a mood."""
+    import cv2
+    import numpy as np
+    from stockforge.stages.invent import REFERENCE_EDGE, _reference
+
+    big = tmp_path / "listing.jpg"
+    cv2.imwrite(str(big), np.random.default_rng(1).integers(
+        0, 255, (1588, 1588, 3), dtype=np.uint8))
+
+    sent = _reference(big)
+    assert sent is not None and sent != big, "the owner's own file was handed over"
+    assert max(cv2.imread(str(sent)).shape[:2]) <= REFERENCE_EDGE
+    assert sent.stat().st_size < big.stat().st_size / 4, (
+        "shrinking it saved almost nothing")
+    assert big.stat().st_size > 0 and cv2.imread(str(big)).shape[0] == 1588, (
+        "it modified the file the owner pointed at")
+
+
+def test_a_reference_that_is_already_small_is_sent_as_it_is(tmp_path):
+    import cv2
+    import numpy as np
+    from stockforge.stages.invent import _reference
+
+    small = tmp_path / "small.png"
+    cv2.imwrite(str(small), np.full((400, 280, 3), 220, np.uint8))
+    assert _reference(small) == small, "it re-encoded something already small"
+
+
+def test_an_unreadable_reference_loses_the_picture_not_the_run(tmp_path):
+    from stockforge.stages.invent import _reference
+
+    broken = tmp_path / "broken.jpg"
+    broken.write_bytes(b"this is not an image")
+    assert _reference(broken) is None
