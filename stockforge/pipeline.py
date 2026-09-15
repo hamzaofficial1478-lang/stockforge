@@ -37,6 +37,7 @@ from .sources import Design, Source
 from .stages import critique as critique_stage
 from . import collections as collections_stage
 from .stages import batch as batch_stage
+from .stages import collide as collide_stage
 from .stages import compose as compose_stage
 from .stages import derive as derive_stage
 from .stages import export as export_stage
@@ -46,7 +47,7 @@ from .stages import ingest as ingest_stage
 from .stages import invent as invent_stage
 from .stages import motifs as motifs_stage
 from .stages.analyse import analyse
-from .stages.render import render, write_svg
+from .stages.render import MM_PER_PX, render, write_svg
 
 log = logging.getLogger("stockforge")
 
@@ -401,6 +402,7 @@ class Pipeline:
         toothless: list[str] = []
         cramped: list[str] = []
         unrendered: list[str] = []
+        struck: list[str] = []
         twins: list[duplicates_stage.Twin] = []
         # A format that did not come out. Not a judgement call for the review
         # queue — the tool that writes it is missing — so it fails the design
@@ -433,6 +435,16 @@ class Pipeline:
             typeless.extend(result.unmatched_fonts)
             toothless.extend(result.missing_glyphs)
             unrendered.extend(f"'{page.name}': {u}" for u in result.unrendered)
+            # Type and decoration are placed from the same spec and neither
+            # knows the other is there, so a drawing lands through a line of
+            # words and every check here still passes. The critic would catch
+            # it if it could see the page; without a model that reads pictures
+            # it cannot, and four cards shipped `ready` with the headline
+            # sliced by an arch.
+            struck.extend(
+                st.line() for st in collide_stage.struck_type(
+                    result.svg, result.text_ink,
+                    (page.canvas.width_mm / MM_PER_PX, page.canvas.height_mm / MM_PER_PX)))
             for label, scale in result.refits:
                 log.info("[%s] %s set at %.0f%% to fit its box",
                          design_id[:8], label, scale * 100)
@@ -548,6 +560,8 @@ class Pipeline:
                            + "; ".join(sorted(set(toothless))[:3]))
         if cramped:
             reasons.append("type does not fit its box: " + "; ".join(cramped[:3]))
+        if struck:
+            reasons.append("a drawing is through the type: " + "; ".join(struck[:3]))
         if unrendered:
             reasons.append("nothing here can draw " + "; ".join(unrendered[:3]))
         if twins:

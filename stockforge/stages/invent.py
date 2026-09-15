@@ -111,7 +111,12 @@ sends the design to a human. Separate items with a hyphen or start a new line.
 
 DECORATION. You will be given the list of drawings actually available. Use \
 those, described in plain words the way you would ask an illustrator — "a \
-carved pumpkin, lit from within". Anything you ask for that is not in the list \
+carved pumpkin, lit from within". A drawing is opaque and it is drawn where \
+you put it, so a motif box and a text box that overlap come out as a line of \
+words with a line of ink through it. Keep them apart. An arch, a frame or a \
+wreath is not a hollow shape you may set type inside: give it a box, and put \
+the words in the gap it leaves, inset far enough that no letter reaches the \
+stroke. Anything you ask for that is not in the list \
 comes out as an empty space on the page and sends the design to a human, so \
 design with what is there. A design with two motifs that exist beats one with \
 six that do not. If the list is empty, use none at all and carry the design on \

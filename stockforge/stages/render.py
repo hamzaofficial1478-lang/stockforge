@@ -34,7 +34,8 @@ class RenderResult:
                  refits: list[tuple[str, float]] | None = None,
                  unrendered: list[str] | None = None,
                  unmatched_fonts: list[str] | None = None,
-                 missing_glyphs: list[str] | None = None):
+                 missing_glyphs: list[str] | None = None,
+                 text_ink: list[tuple[str, tuple[float, float, float, float]]] | None = None):
         self.svg = svg
         self.missing_motifs = missing_motifs
         self.font_scores = font_scores
@@ -53,6 +54,12 @@ class RenderResult:
         # box every design app shows, and the line measures as though it fitted
         # perfectly, so a page of boxes looks like a page of type from here.
         self.missing_glyphs = missing_glyphs or []
+        # Where each line's ink actually landed, in the SVG's own units, as
+        # (label, (x, y, w, h)). Not el.box: a line is fitted, anchored and
+        # centred inside that box, so the box is where it was *allowed* to go.
+        # Anything asking what the page looks like — whether a drawing is
+        # struck through the type, say — has to work from the ink.
+        self.text_ink = text_ink or []
 
     @property
     def worst_font_score(self) -> float:
@@ -325,10 +332,10 @@ def _guess_width(text: str, size: float, tracking: float = 0.0) -> float:
 
 def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
           library: list[FontEntry], fonts_dir: Path
-          ) -> tuple[str, float, float, list[str]]:
+          ) -> tuple[str, float, float, list[str], tuple[float, float, float, float] | None]:
     """Set one text element. Returns the node, the font match score, how much
-    of the asked-for size survived fitting it to its box, and any characters
-    the matched face has no glyph for."""
+    of the asked-for size survived fitting it to its box, any characters the
+    matched face has no glyph for, and the rectangle the ink lands in."""
     entry, score_ = match(el.font, library)
     family = entry.family if entry else "serif"
     # The weight of the face we actually matched, not the one the analyser
@@ -354,6 +361,7 @@ def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
 
     lines = content.split("\n")
     refit = 1.0
+    widest = 0.0
     if bw > 0:
         # Without a matched face there is no `measure`, and this used to skip
         # fitting altogether — so the one case where the drawn font is a
@@ -375,6 +383,7 @@ def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
             # analyser read, and overflowing is simply broken.
             refit = (bw * FIT_MARGIN) / widest
             size *= refit
+            widest *= refit
 
     anchor = {"left": "start", "center": "middle", "right": "end"}.get(el.align, "middle")
     tx = x if anchor == "start" else (x + bw if anchor == "end" else x + bw / 2)
@@ -399,7 +408,17 @@ def _text(spec: DesignSpec, el: TextElement, w: float, h: float,
     # font either has the letter or it does not — but shipping a page of empty
     # boxes as finished work is not the alternative.
     gone = face.missing(content) if face else []
-    return node, score_, refit, gone
+
+    # Where the ink lands, for anything that needs to reason about the page as
+    # a picture. The block is as wide as its widest line and as tall as the
+    # leading between its first and last, plus one em for the lines
+    # themselves — dominant-baseline is middle, so the first line straddles
+    # y0. A rotated element gets no rectangle rather than a wrong one: the
+    # honest answer to "where is it" is then the whole page.
+    block_h = leading * (len(lines) - 1) + size
+    bx = tx if anchor == "start" else (tx - widest if anchor == "end" else tx - widest / 2)
+    ink = None if el.rotation else (bx, y0 - size / 2, widest, block_h)
+    return node, score_, refit, gone, ink
 
 
 # --------------------------------------------------------------------------
@@ -446,6 +465,7 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
     unrenderable_extra: list[str] = []
     unmatched_fonts: list[str] = []
     missing_glyphs: list[str] = []
+    text_ink: list[tuple[str, tuple[float, float, float, float]]] = []
 
     parts.append('<g id="artwork">')
     for el in page.elements:
@@ -476,9 +496,12 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
     parts.append('<g id="type">')
     for el in page.elements:
         if isinstance(el, TextElement):
-            node, s, refit, gone = _text(spec, el, w, h, library, fonts_dir)
+            node, s, refit, gone, ink = _text(spec, el, w, h, library, fonts_dir)
             parts.append(node)
             scores.append(s)
+            if ink and ink[2] > 0 and ink[3] > 0:
+                first = (el.content.splitlines() or [""])[0]
+                text_ink.append((f"{el.role.value} {first[:40]!r}", ink))
             if gone:
                 first = (el.content.splitlines() or [""])[0]
                 missing_glyphs.append(f"{''.join(gone)} in {first[:40]!r}")
@@ -495,7 +518,7 @@ def render(spec: DesignSpec, fonts_dir: Path, motifs_dir: Path,
 
     gaps = ([unrenderable] if unrenderable else []) + unrenderable_extra
     return RenderResult("\n".join(parts), missing, scores, refits, gaps,
-                        unmatched_fonts, missing_glyphs)
+                        unmatched_fonts, missing_glyphs, text_ink)
 
 
 def _raster(el: RasterElement, page: Page, w: float, h: float) -> tuple[str, str | None]:

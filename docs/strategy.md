@@ -668,6 +668,77 @@ Nobody else can run it. It needs the endpoints and the keys, and the only figure
 that settles an argument about speed is one measured on the hardware the work
 will actually run on.
 
+## A drawing through the type
+
+Four invitations came out of the invent path and were filed `ready`: files
+exported, PDF and EPS written, nothing queued. Every one of them had the
+headline sliced by an arch and a spider's web drawn across the opening line.
+
+Type and decoration are placed from the same spec and neither has ever known
+the other is there. Every check that runs on a finished design asks about one
+element at a time — does this line fit its box, did this motif resolve, does
+this face have that glyph — and a page can pass all of them and still be
+unsellable, because the fault is in the relationship between two elements that
+each passed. The one check that looks at the page as a picture is the critic,
+and the critic needs a model that can see. Through the local bridge there
+isn't one, so nothing was looking.
+
+It is measurable without a model. The renderer already emits the page in
+layers — background, artwork, structure, decoration, type — so the drawings
+and the words rasterise apart and their ink intersects. That is not an
+estimate of what the page looks like. It is what the page looks like.
+
+**Not all overlap is a fault**, and getting that distinction right is the
+whole of it. Type set on a filled banner is ordinary design and the drawing is
+under every letter; type with a rule through it is broken and the drawing
+takes a slice. So what gets flagged is the band between: measured on those
+four cards, as a share of each line's own ink,
+
+    0.0%                    clear of everything
+    0.6%  0.8%              a serif kissing an arch leg
+    2.4%                    a web strand through the B of BY ORDER
+    7.5% – 10.3%            a leg through the last letter
+    16.6%  30.5%  39.8%     the line is wrecked
+
+A twenty-character line is about five percent of its ink per letter, so the
+floor sits at two percent — half a letter struck through. Ink covered nearly
+end to end is left alone as a ground.
+
+Two things this needed that are worth naming. The check works from the ink
+each line actually landed on, not from `el.box`: the box is where a line was
+*allowed* to go, and the renderer fits, anchors and centres it inside that, so
+a short centred line's box is mostly empty paper. And a rotated line gets no
+rectangle rather than a wrong one — the honest answer to "where is it" is then
+the whole page, and guessing would report a strike wherever the drawing is.
+
+A placed picture is a ground too, whatever share of a line it covers, and it
+is not judged at all. A photographic vignette and a painted object adopted
+into the library are areas rather than strokes, and setting type across the
+edge of one is a thing designers do on purpose — it is also what the analyser
+reads back off a listing the owner already sells. The first full run of this
+check sent a design with a small photo in it, and a design carrying a big
+painted ghost, straight to the review queue. Both were ordinary work, and the
+tests that said so had been written long before this existed. The pictures are
+dropped before the drawn layer is rasterised rather than by leaving a whole
+layer out, because a motif in this library may be a drawing or a picture and
+only one of those can be a line through the words.
+
+**What it costs.** 394ms a page, measured, against 14ms to render the page in
+the first place — almost all of it the two Inkscape process spawns, not the
+pixels. Over five thousand designs that is about half an hour of CPU on a job
+whose time goes on model calls, so it is affordable and it is not free. One
+pass would do instead of two if the layers were forced to separate colour
+channels through CSS, but Inkscape and cairosvg do not agree closely enough on
+CSS for that to be worth trusting a correctness check to — and a check that
+quietly measures the wrong thing on somebody else's machine is worse than one
+that costs 200ms more.
+
+The model was told as well, and the telling has a cost worth being honest
+about. Given "an arch is not a hollow shape you may set type inside", it
+stopped asking for arches at all. The four cards that came back were clean and
+they were also plainer. Catching the fault after the fact is what keeps the
+arch usable; the prompt alone trades the problem for a smaller vocabulary.
+
 ## What would move the needle next
 
 - **Measure the real per-call time per model.** Everything above is arithmetic
