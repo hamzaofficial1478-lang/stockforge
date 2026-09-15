@@ -278,7 +278,11 @@ def cmd_motifs(args, pipe: Pipeline) -> int:
 
     if args.action == "todo":
         return cmd_motifs_todo(args, pipe)
-    if args.action == "harvest":
+    if args.action in ("harvest", "draw"):
+        # Both need the same thing first — the list of motifs the library has
+        # not got — so they share the route that works it out. `draw` was only
+        # ever reachable from inside it, which meant `motifs draw` at the top
+        # level fell through to `match` and answered "say what to match".
         return cmd_motifs_harvest(args, pipe)
     if args.action == "trace":
         # Before the library is loaded, because tracing is exactly what you do
@@ -472,9 +476,17 @@ def cmd_motifs_harvest(args, pipe: Pipeline) -> int:
     found = pipe.motif_gaps()
     if not found:
         total = len(pipe.store.designs())
-        print("nothing missing." if total else
-              "no designs have been read yet, so there is nothing to cut out. "
-              "`stockforge pull` and `stockforge run` first.")
+        # Both actions arrive here and they want different sentences: being
+        # told there is nothing to "cut out" when you asked it to draw reads
+        # like the command did not land, which is exactly what `draw` looked
+        # like when it was falling through to `match`.
+        doing = "draw" if args.action == "draw" else "cut out"
+        print("nothing missing — every decorative element a design asked for "
+              "has a drawing in the library." if total else
+              f"no designs have been read yet, so nothing knows what is "
+              f"missing and there is nothing to {doing}. `stockforge pull` and "
+              f"`stockforge run` first, or write designs from a brief with "
+              f"`stockforge invent`.")
         return 0
 
     if args.action == "draw":

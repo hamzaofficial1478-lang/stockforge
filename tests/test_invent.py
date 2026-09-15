@@ -471,3 +471,35 @@ def test_an_unreadable_reference_loses_the_picture_not_the_run(tmp_path):
     broken = tmp_path / "broken.jpg"
     broken.write_bytes(b"this is not an image")
     assert _reference(broken) is None
+
+
+# --- a command that silently does something else ---------------------------
+
+def test_motifs_draw_is_reachable_from_the_command_line(tmp_path, monkeypatch, capsys):
+    """`motifs draw --limit 40` answered "say what to match".
+
+    `draw` was only ever wired up inside the harvest code path, so at the top
+    level it fell through to the `match` branch — which asks for a description,
+    finds none, and prints its own usage. The command looked like it ran. It
+    had not run at all, and nothing in the suite noticed because nothing asked
+    what `motifs draw` actually does.
+    """
+    from stockforge import cli
+    from stockforge.config import settings as live
+
+    build_font_library(tmp_path / "fonts")
+    build_motif_library(tmp_path / "motifs")
+    for key, value in {"SF_ROOT": str(tmp_path / "work"),
+                       "SF_FONTS": str(tmp_path / "fonts"),
+                       "SF_MOTIFS": str(tmp_path / "motifs")}.items():
+        monkeypatch.setenv(key, value)
+    live.reload()
+    live.ensure_dirs()
+
+    cli.main(["motifs", "draw", "--limit", "40"])
+    said = capsys.readouterr().out
+
+    assert "say what to match" not in said, (
+        "`motifs draw` is still falling through to the match branch")
+    assert "draw" in said or "nothing missing" in said, (
+        f"it did not answer as a draw command: {said[:200]}")
