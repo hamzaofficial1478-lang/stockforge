@@ -27,7 +27,7 @@ from enum import Enum
 
 from .config import Settings, settings as default_settings
 from .pipeline import Pipeline
-from .db import Store
+from .db import FIT_TO_LEARN_FROM, Store
 
 log = logging.getLogger("stockforge.worker")
 
@@ -257,6 +257,11 @@ class Worker:
         try:
             pending = store.conn.execute(
                 "SELECT COUNT(*) n FROM designs WHERE state='pending'").fetchone()["n"]
+            # Where the niche is up to. Without this the run looks like it is
+            # producing finished designs when it is reading a catalogue in, and
+            # the owner has no way to tell the difference from the outside —
+            # which is exactly the confusion that made them ask.
+            result["learning"] = self._learning(store)
         finally:
             store.conn.close()
         result["remaining"] = pending
@@ -268,6 +273,26 @@ class Worker:
         result["lane_count"] = len(self.lanes)
         result["lanes_running"] = self.running_lanes
         return result
+
+    def _learning(self, store: Store) -> dict | None:
+        """How far off this niche is from being drawn from, or None once it is
+        there. One line on screen, because the answer is one number."""
+        niche = self.cfg.collection
+        if not niche:
+            return None
+        # The same count the gate uses, from the same definition, because a
+        # screen that says twenty-four while the gate says twenty is worse than
+        # no screen at all.
+        row = store.conn.execute(
+            f"SELECT SUM(CASE WHEN {FIT_TO_LEARN_FROM} THEN 1 ELSE 0 END) AS read "
+            "FROM designs d LEFT JOIN specs s ON s.design_id = d.id "
+            "WHERE d.collection = ?", (niche,)).fetchone()
+        read = (row["read"] if row else 0) or 0
+        if read >= self.cfg.seed_designs:
+            return None
+        record = store.collection(niche)
+        return {"niche": (record or {}).get("name") or niche,
+                "read": read, "needs": self.cfg.seed_designs}
 
     # -- the loop ---------------------------------------------------------
 

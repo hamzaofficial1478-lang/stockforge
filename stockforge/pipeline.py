@@ -28,7 +28,7 @@ from pathlib import Path
 from collections.abc import Callable
 
 from .config import Settings, settings as default_settings
-from .db import Store
+from .db import FIT_TO_LEARN_FROM, Store
 from pydantic import ValidationError
 
 from .schema import DesignSpec
@@ -257,25 +257,39 @@ class Pipeline:
         source_flat = images[0]
         pool = self._spec_pool(exclude=design_id)
 
-        # A variation needs something to vary from. With one other design in
-        # the niche, every round borrows from the same place and the result is
-        # the original with its hue nudged — a real run scored 0.10 twice over
-        # and went to review saying it still read as a copy, which is true and
-        # was never going to stop being true.
+        # --- the learning phase ---------------------------------------
+        # A niche is read before it is drawn from. Until it holds a catalogue,
+        # every design that comes in is an ingredient and nothing else: read it
+        # properly, file its palette, its grid and its type, note the motifs we
+        # cannot draw yet, hand the owner their editable master, and stop.
         #
-        # It costs three model calls and four minutes to learn that. The master
-        # is made instead, with the reason, and the design is ready to vary the
-        # moment there is a catalogue to vary from.
-        if len(pool) < self.cfg.least_donors:
-            log.info("[%s] only %d other design(s) to mix from — master only",
-                     design_id[:8], len(pool))
+        # This used to start varying at design one. With two read, every round
+        # borrowed from the same single donor, so the second draft was the
+        # first with its hue nudged — a real run scored 0.10 twice and went to
+        # review saying it still read as a copy. That was true, and no number
+        # of rounds was going to change it. The cost was three model calls and
+        # four minutes per design, and a review queue filled with designs whose
+        # only fault was that there had been nothing to build them from.
+        #
+        # So: twenty-four read, and the twenty-fifth is the first design worth
+        # looking at. The count is the pool rather than the niche total, which
+        # is the same rule read from the other end — the twenty-fifth design is
+        # exactly the first one with twenty-four others behind it.
+        if len(pool) < self.cfg.seed_designs:
+            niche = self._niche_folder(design_id)
+            read_in = self._collection_counts(niche)["read"]
+            short = self.cfg.seed_designs - len(pool)
+            log.info("[%s] learning — %d read in %s, %d to mix from, %d short",
+                     design_id[:8], read_in, niche, len(pool), short)
             spec.warnings.append(
-                f"made as a recovered master rather than a variation: there "
-                f"{'is' if len(pool) == 1 else 'are'} only {len(pool)} other "
-                f"design{'' if len(pool) == 1 else 's'} read in this niche, and a "
-                f"variation needs at least {self.cfg.least_donors} to borrow from. "
-                f"Read more in and run this one again.")
-            return self._export(spec, design_id, distinct=0.0, master_only=True)
+                f"read and filed, not varied — this is the learning phase. "
+                f"{read_in} of the {self.cfg.seed_designs} designs this niche needs "
+                f"have been read. You have the editable master of this one. Read "
+                f"{short} more and the program starts making designs.")
+            done = self._export(spec, design_id, distinct=0.0,
+                                master_only=True, learning=True)
+            self._harvest_if_seeded(niche, read_in)
+            return done
 
         derived = spec
         distinct = 0.0
@@ -371,8 +385,14 @@ class Pipeline:
         return self._export(derived, design_id, distinct)
 
     def _export(self, derived: DesignSpec, design_id: str, distinct: float,
-                master_only: bool = False, on_twin: str = "review") -> str:
-        """Export every page, including imperfect recoveries that need editing."""
+                master_only: bool = False, on_twin: str = "review",
+                learning: bool = False) -> str:
+        """Export every page, including imperfect recoveries that need editing.
+
+        `learning` marks a design being read in to seed a niche rather than
+        shipped. A gap in our own library is a finding then, not a fault —
+        see where it is used.
+        """
         out_dir = out_dir_for(self.cfg.root, design_id, self._niche_folder(design_id))
         holes: list[str] = []
         typeless: list[str] = []
@@ -471,6 +491,24 @@ class Pipeline:
             return "failed"
 
         reasons: list[str] = []
+
+        # While a niche is being read in, a gap in our library is a finding and
+        # not a fault. Twenty-four designs each queueing "no library match for
+        # a jack-o'-lantern" is twenty-four rows saying one thing, and that one
+        # thing is already on the motif-gaps list ranked by how many designs
+        # are waiting on it. Drawing from that list is the work; clearing the
+        # rows is not, and a review queue that long is read by nobody.
+        #
+        # What still queues is anything that means the READ is wrong — a photo
+        # we could not find the artwork in, a surface that came back as placed
+        # pixels, type that would not fit the box it was given. Those are the
+        # ones that poison the pool, and the pool is the entire point of
+        # reading these in.
+        if learning and (holes or typeless or toothless or unrendered):
+            log.info("[%s] library gaps noted while learning: %s", design_id[:8],
+                     "; ".join(sorted(set(holes + typeless + toothless))[:5]) or "—")
+            holes, typeless, toothless, unrendered = [], [], [], []
+
         # A photo we could not find the artwork inside. Everything after this
         # point measured itself against the whole photograph — the trim, the
         # text positions, the aspect check — so it is the first thing to say,
@@ -569,7 +607,10 @@ class Pipeline:
             # being your own is the reason the file is safe to sell, so a
             # design brought in for reference can be read and listed and looked
             # at, and never lends anything to anything.
-            where.append("s.read_json IS NOT NULL")
+            #
+            # The first of those is FIT_TO_LEARN_FROM, which also rules out a
+            # read taken through an uncropped photograph — see its definition.
+            where.append(FIT_TO_LEARN_FROM)
             where.append("d.owned = 1")
         prefix = "s." if joined else ""
         if exclude:
@@ -849,15 +890,18 @@ class Pipeline:
         a wall with no door in it: three failed reads and the count simply
         stops going up, with nothing on screen saying why or what to do.
         """
-        row = self.store.conn.execute("""
+        row = self.store.conn.execute(f"""
             SELECT COUNT(*) AS designs,
-                   SUM(CASE WHEN s.read_json IS NOT NULL THEN 1 ELSE 0 END) AS read,
+                   SUM(CASE WHEN {FIT_TO_LEARN_FROM} THEN 1 ELSE 0 END) AS read,
                    SUM(CASE WHEN d.state = 'failed' THEN 1 ELSE 0 END) AS failed,
-                   SUM(CASE WHEN d.state = 'pending' THEN 1 ELSE 0 END) AS waiting
+                   SUM(CASE WHEN d.state = 'pending' THEN 1 ELSE 0 END) AS waiting,
+                   SUM(CASE WHEN s.read_json IS NOT NULL AND NOT ({FIT_TO_LEARN_FROM})
+                            THEN 1 ELSE 0 END) AS unsure
               FROM designs d LEFT JOIN specs s ON s.design_id = d.id
              WHERE d.collection = ?""", (slug,)).fetchone()
         return {"designs": row["designs"] or 0, "read": row["read"] or 0,
-                "failed": row["failed"] or 0, "waiting": row["waiting"] or 0}
+                "failed": row["failed"] or 0, "waiting": row["waiting"] or 0,
+                "unsure": row["unsure"] or 0}
 
     def retry_failed(self, collection: str | None = None) -> dict:
         """Put every failed design back in the queue.
@@ -891,6 +935,44 @@ class Pipeline:
         niche = row["collection"] if row else None
         return self._specs(exclude=exclude, cap=cap, collection=niche,
                            donors_only=True)
+
+    def _harvest_if_seeded(self, niche: str, read_in: int) -> None:
+        """When the last seed design lands, cut out what the library is missing.
+
+        The owner asked for this in the same breath as the learning phase —
+        read the twenty-four, and dig the assets out of them ready to use. It
+        runs once, on the read that completes the niche, and not on each of the
+        twenty-four: by then every sighting of a given motif is available, so
+        it picks the best one rather than the first one.
+
+        Costs nothing — no model, just OpenCV cutting the owner's own artwork —
+        and the cutouts land in `_harvested/` as PNG, which the library scan
+        cannot pick up because it only ever globs *.svg. They are reference to
+        trace, not motifs. Failing here must not fail a design that is already
+        read, exported and filed, so it is caught and reported.
+
+        `>=` rather than `==`, because two lanes saving their reads a moment
+        apart can step from twenty-three straight to twenty-five and no single
+        design ever sees the number it was waiting for. Running again is free
+        and overwrites the same filenames, and a later run has more sightings
+        to choose the best one from — so repeating is the cheap mistake and
+        skipping is the expensive one.
+        """
+        if read_in < self.cfg.seed_designs:
+            return
+        try:
+            gaps = motifs_stage.gaps(
+                self._specs(collection=niche), self.cfg.motifs_dir,
+                self.cfg.motif_threshold)
+            cut = motifs_stage.harvest_all(gaps, self.cfg.motifs_dir)
+        except Exception as exc:
+            log.warning("could not collect the artwork for %s: %s", niche, exc)
+            return
+        self.on_progress(
+            f"{niche} is read in — collected {len(cut)} piece"
+            f"{'' if len(cut) == 1 else 's'} of artwork from your own designs")
+        log.info("[%s] seeded; harvested %d of %d gaps into %s",
+                 niche, len(cut), len(gaps), self.cfg.motifs_dir / motifs_stage.HARVEST_DIR)
 
     def motif_gaps(self, limit: int | None = None) -> list[motifs_stage.Gap]:
         """What to draw next, ranked by how many designs are waiting on it.

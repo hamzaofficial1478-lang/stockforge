@@ -117,7 +117,8 @@ def ready(collection: dict | None, least: int = SEED_DESIGNS) -> tuple[bool, str
         return True, ""
     pulled = int(collection.get("designs") or 0)
     failed = int(collection.get("failed") or 0)
-    waiting = max(0, pulled - have - failed)
+    unsure = int(collection.get("unsure") or 0)
+    waiting = max(0, pulled - have - failed - unsure)
     fix = (f"{collection['name']} has {have} design{'' if have == 1 else 's'} read "
            f"in, and needs {least} before it can be mixed from.")
     # Naming the stuck ones is the difference between a wall and a door. Three
@@ -126,9 +127,17 @@ def ready(collection: dict | None, least: int = SEED_DESIGNS) -> tuple[bool, str
     if failed:
         fix += (f" {failed} failed — retry {'it' if failed == 1 else 'them'} "
                 f"rather than pulling more in.")
+    if unsure:
+        # These read, and they read the photograph. Silently not counting them
+        # is the same wall with no door the failures used to be — the number
+        # stops moving and the screen says nothing about why.
+        fix += (f" {unsure} read through the listing photo without finding the "
+                f"artwork in it, so {'it does' if unsure == 1 else 'they do'} not "
+                f"count — crop {'it' if unsure == 1 else 'them'} to the artwork "
+                f"and pull in again, or use the flat file if you have one.")
     if waiting:
         fix += (f" {waiting} more {'is' if waiting == 1 else 'are'} pulled in but "
                 f"not read yet — run the queue.")
-    if not failed and not waiting:
+    if not failed and not waiting and not unsure:
         fix += f" Pull in {least - have} more and run the queue."
     return False, fix

@@ -271,7 +271,7 @@ Text a buyer would personalise — names, dates, venues, phone numbers — is \
 marked placeholder:true. Fixed design text is not."""
 
 
-def typography(flat: Path, provider: VisionProvider) -> TypeRead:
+def typography(flat: Path, provider: VisionProvider, note=None) -> TypeRead:
     lines = ocr.read(flat)
     return provider.structured(
         TYPE_SYSTEM,
@@ -279,6 +279,7 @@ def typography(flat: Path, provider: VisionProvider) -> TypeRead:
         "Describe every one of them as a text element, plus the grid they sit on.",
         [flat],
         TypeRead,
+        note=note,
     )
 
 
@@ -330,13 +331,14 @@ kept exactly as it is, so the rebuild stays faithful, and the design is marked \
 as one to keep rather than one to sell."""
 
 
-def structure(flat: Path, provider: VisionProvider) -> StructureRead:
+def structure(flat: Path, provider: VisionProvider, note=None) -> StructureRead:
     return provider.structured(
         STRUCTURE_SYSTEM,
         "Describe the background treatment, the drawn geometry, and every "
         "decorative element on this surface.",
         [flat],
         StructureRead,
+        note=note,
     )
 
 
@@ -446,10 +448,18 @@ def _read_together(images: list[Path], surfaces: list, primary: Path,
          lambda: palette_from_pixels(dominant_colours(primary))),
         ("provenance", lambda: provenance(images, easy), _unknown_provenance),
     ]
+    # Type and structure have no fallback and cannot have one — they are the
+    # design. What they have instead is the salvage inside `structured`, which
+    # rescues an answer the model gave in prose. It says so when it fires, and
+    # this is where that gets said: onto the design, beside the other things
+    # worth knowing when the result looks a shade soft.
+    salvaged: list[str] = []
     for index, surface in enumerate(surfaces):
         flat = images[surface.image_index]
-        jobs.append((("typography", index), lambda f=flat: typography(f, provider), None))
-        jobs.append((("structure", index), lambda f=flat: structure(f, provider), None))
+        jobs.append((("typography", index),
+                     lambda f=flat: typography(f, provider, note=salvaged.append), None))
+        jobs.append((("structure", index),
+                     lambda f=flat: structure(f, provider, note=salvaged.append), None))
 
     # Named rather than counted. This line is what somebody watches for twenty
     # minutes, and "4 questions" tells them nothing about which one is stuck.
@@ -494,7 +504,9 @@ def _read_together(images: list[Path], surfaces: list, primary: Path,
                 for future in running:
                     future.cancel()
                 raise
-    out["_missed"] = missed
+    # Deduped: a five-page suite that salvaged every page would otherwise say
+    # the same sentence five times on one design.
+    out["_missed"] = missed + list(dict.fromkeys(salvaged))
     return out
 
 

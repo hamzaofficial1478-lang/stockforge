@@ -17,6 +17,27 @@ from typing import Any, Iterator
 
 log = logging.getLogger("stockforge.db")
 
+# What makes a design fit to learn from, as a SQL condition over `designs d`
+# joined to `specs s`.
+#
+# A read taken through an uncropped listing photograph measured the table as
+# well as the card. Its grid, its margins and a good part of its palette belong
+# to somebody's kitchen worktop. The program says so at the time —
+#
+#     the artwork was not found inside the listing photo
+#
+# — and then counted it towards the twenty-four anyway, and let it lend
+# ingredients like any other. So: it can be listed, looked at and recovered as
+# an editable master, and it is not one of the twenty-four and it never lends
+# anything. Twenty-four bad reads is not a catalogue, it is a catalogue-shaped
+# hole, and what comes out of the pool is the whole point of filling it.
+#
+# One definition, because four places counted "read" and they have to agree: a
+# gate that opens on a number the screen does not show is not a gate.
+FIT_TO_LEARN_FROM = (
+    "s.read_json IS NOT NULL AND NOT EXISTS ("
+    "SELECT 1 FROM assets a WHERE a.design_id = d.id AND a.trim = 'unsure')")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS assets (
     id            TEXT NOT NULL,         -- sha256 of the original bytes
@@ -548,7 +569,7 @@ class Store:
             SELECT c.id, c.name, c.created_at, c.notes,
                    (SELECT COUNT(*) FROM designs d WHERE d.collection = c.id) AS designs,
                    (SELECT COUNT(*) FROM designs d JOIN specs s ON s.design_id = d.id
-                     WHERE d.collection = c.id AND s.read_json IS NOT NULL) AS read,
+                     WHERE d.collection = c.id AND """ + FIT_TO_LEARN_FROM + """) AS read,
                    (SELECT COUNT(*) FROM recipes r WHERE r.collection = c.id) AS made
               FROM collections c ORDER BY c.created_at
         """).fetchall()

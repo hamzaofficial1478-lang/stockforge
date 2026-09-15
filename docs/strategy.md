@@ -301,22 +301,101 @@ nothing had asked it.
 
 The second round borrowed every ingredient it could and the score did not move,
 because every ingredient came from the same single donor. Three model calls and
-four minutes to learn something countable in advance. Below `SF_LEAST_DONORS`
-(four) the recovered master is made instead, with the reason on it, and the
-design is ready to vary the moment there is a catalogue to vary from.
+four minutes to learn something countable in advance.
+
+### The learning phase
+
+The fix above was a floor of four donors, and four donors is not a catalogue
+either. The owner put it plainly: the first twenty-four designs are the program
+learning, and the twenty-fifth is the first design worth looking at.
+
+So that is now the whole rule, and there is one number rather than two.
+`SF_SEED_DESIGNS` (twenty-four) governs a single design and a batch of
+forty-eight alike. Until a niche has that many read in, every design that comes
+through is read properly, filed, and handed back as an editable master — and
+nothing is varied, nothing is scored for distinctiveness, and nothing goes to
+review for being too close to its source, because of course it is.
+
+What that buys, beyond correctness: the seeding run is now about four minutes a
+design instead of five and a bit, because the two compose-derive-score rounds
+never happen. Twenty-four designs of reading on two lanes is under an hour, and
+it is a one-off per niche.
+
+A gap in our own library stops queueing a review during that phase. Twenty-four
+designs each saying "no library match for a jack-o'-lantern" is twenty-four rows
+saying one thing, and that one thing is already on the motif-gaps list, ranked
+by how many designs are waiting on it. Drawing from that list is the work;
+clearing the rows is not. What still queues is anything meaning the *read* is
+wrong — a photo we could not find the artwork in, a surface that came back as
+placed pixels, type that would not fit the box. Those poison the pool, and the
+pool is the entire point of reading these in.
+
+### Twenty-four bad reads is not a catalogue
+
+One more thing the same log showed, sitting under the others:
+
+    the artwork was not found inside the listing photo — it looks like a
+    photo of the design rather than the design itself
+
+A read taken that way measured the table as well as the card. Its grid, its
+margins and a good part of its palette belong to somebody's kitchen worktop. The
+program said so at the time, queued the design for review — and then counted it
+towards the twenty-four anyway, and let it lend ingredients like any other.
+
+There is now one definition of a design fit to learn from (`FIT_TO_LEARN_FROM`
+in `db.py`), used by the donor pool and by every place that counts how far a
+niche has got, because a gate that opens on a number the screen does not show is
+not a gate. Such a design can still be listed, looked at, and recovered as an
+editable master. It is not one of the twenty-four, and it lends nothing.
+
+The count stalling is then something the screen has to explain, or it is the
+wall-with-no-door failure in its third costume — so `ready()` says how many were
+read through a photograph and what to do about it (crop to the artwork and pull
+in again, or use the flat file).
+
+### A description is not nothing
+
+Three designs of seven died in one run, both models in the chain the same way:
+
+    could not produce valid TypeRead: no parseable JSON in response
+    It said: The image depicts a Halloween-themed invitation, featuring a
+    white background with a purple border and a central illustration of a
+    haunted house ... * A ghost * Bats * A jack-o'-lantern * A crescent moon
+
+That is the design. It looked, it got it right, and it wrote prose. Retrying
+does not help: a small vision model asked for JSON about a picture is doing two
+hard things at once and the one it drops is always the formatting.
+
+But the looking is the expensive half and it has already happened. So the last
+thing `structured()` tries is handing those words back with **no image
+attached** and asking for the schema — which turns the job into transcription,
+which is the half these models are fine at. It only runs on the failure path, it
+says so on the design when it fires, and a model that genuinely cannot answer
+still fails with what it actually said in the message.
 
 ### How long twenty-four actually takes
 
-From that same log, the design that worked took **5.3 minutes** end to end — not
-the thirty minutes it was before the reading went parallel.
+Timed off a two-lane run of seven designs, stage by stage:
 
-| lanes | 24 designs |
+| stage | lane time |
 |---|---|
-| 1 | about 2 hours |
-| 2 | about 1 hour |
-| 4 | about 30 minutes |
+| read (4 questions, in parallel) | about 2 minutes |
+| compose, derive, score, critique | about 1 minute |
+| a design that failed all three attempts | 3m 45s |
 
-It is a one-off per niche, and it is the only expensive part.
+So a seed design, which now stops after the read, is roughly two minutes of lane
+time — and the failures, which were the most expensive thing in the run, are
+mostly rescued rather than repeated.
+
+| lanes | 24 designs, seeding |
+|---|---|
+| 1 | about 50 minutes |
+| 2 | about 25 minutes |
+| 4 | about 15 minutes |
+
+It is a one-off per niche, and it is the only expensive part. The forty-eight
+designs that come afterwards are the batch path, which is one model call and
+under a minute for the lot.
 
 ## Measuring it on your own models
 

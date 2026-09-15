@@ -24,6 +24,7 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -191,9 +192,16 @@ class VisionProvider(ABC):
         user_text: str,
         images: list[Path],
         model: type[T],
+        note: Callable[[str], None] | None = None,
         **kw: Any,
     ) -> T:
-        """Ask, parse, validate, and repair on failure."""
+        """Ask, parse, validate, and repair on failure.
+
+        `note` is told, in a sentence, about an answer that only survived
+        because of the salvage below. A read that came out of a description
+        rather than out of the schema is worth knowing about later, when the
+        design made from it looks a little off.
+        """
         prompt = (
             f"{user_text}\n\n"
             f"Reply with JSON only — no prose, no explanation, no markdown fence.\n"
@@ -216,6 +224,49 @@ class VisionProvider(ABC):
             except (ProviderError, ValidationError) as exc:
                 last_error = str(exc)[:1500]
                 log.debug("[%s] attempt %d failed: %s", self.name, attempt + 1, last_error[:200])
+
+        # Last resort: it looked properly and then described what it saw.
+        #
+        #   "The image depicts a Halloween-themed invitation, featuring a white
+        #    background with a purple border and a central illustration of a
+        #    haunted house ... A ghost * Bats * A jack-o'-lantern"
+        #
+        # That is the design. It is accurate, it is detailed, and the run threw
+        # it away and failed the design — three of seven in one real run, each
+        # with a good description sitting inside the error message nobody could
+        # use. Asking again does not help: a small vision model is doing two
+        # hard things at once, and the one it drops is always the formatting.
+        #
+        # The looking is the expensive half and it has already happened. Hand
+        # the words back with no image attached and what is left is
+        # transcription, which is the half these models are fine at.
+        if last_said.strip():
+            try:
+                salvaged = model.model_validate(extract_json(self.chat(
+                    "You turn a written description into JSON. You are not "
+                    "looking at a picture — everything you need is in the text.",
+                    f"This is a description of a design:\n\n{last_said}\n\n"
+                    f"Put what it says into this schema, and reply with the JSON "
+                    f"and nothing else:\n{schema_hint(model)}\n\n"
+                    f"Where the description does not cover a field, choose the "
+                    f"plainest sensible value rather than leaving it out. Do not "
+                    f"invent detail the description does not mention.",
+                    [], **kw)))
+            except (ProviderError, ValidationError) as exc:
+                log.debug("[%s] salvage from prose failed too: %s", self.name, exc)
+            else:
+                # Said out loud, every time. This answer was assembled from a
+                # description instead of read off the artwork, and a design
+                # built on it may be a shade further from its source than the
+                # rest — which is fine to ship and not fine to hide.
+                where = " ".join(last_said.split())[:160]
+                log.warning("[%s] %s came back as prose; built it from the "
+                            "description instead: %s", self.name, model.__name__, where)
+                if note:
+                    note(f"the {model.__name__} came back as a description rather "
+                         f"than data, so it was built from the description — the "
+                         f"detail may be softer than usual")
+                return salvaged
 
         # What it actually said, not only that it was wrong. "No parseable JSON
         # in response" describes every one of empty, refused, prose, and a

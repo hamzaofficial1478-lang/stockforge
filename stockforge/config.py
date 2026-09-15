@@ -257,17 +257,17 @@ class Settings:
     # coming back the next morning to find the program quietly filing into a
     # different niche is the same mistake by another route.
     collection: str = field(default_factory=lambda: os.environ.get("SF_COLLECTION", "").strip(), metadata={"env": "SF_COLLECTION"})
-    # How many designs a niche needs before it can be mixed from. Below this
-    # there are so few combinations that a run repeats itself whatever the
-    # ledger does: the mixer is drawing from too small a bag.
+    # How many designs a niche must have read in before anything is made from
+    # it — the whole of the rule, for one design at a time and for a batch of
+    # forty-eight alike. Below it there are so few combinations that a run
+    # repeats itself whatever the ledger does, and at one or two donors a
+    # "variation" is the original with its hue nudged.
+    #
+    # There were briefly two numbers here, a low floor for single designs and
+    # this one for batches. Two numbers meant a design could pass the low bar
+    # and produce a variation out of four donors, which is not a catalogue
+    # either. Read the niche in first, then draw from it.
     seed_designs: int = field(default_factory=lambda: _i("SF_SEED_DESIGNS", 24), metadata={"env": "SF_SEED_DESIGNS"})
-    # The fewest other designs a single variation will attempt to borrow from.
-    # Lower than the batch's twenty-four because one design at a time is a
-    # smaller ask — but not one, which is the case that cannot work at all: with
-    # a single donor every ingredient comes from the same place and the result
-    # is the original with its hue nudged. Below this the recovered master is
-    # made instead, with the reason on it.
-    least_donors: int = field(default_factory=lambda: _i("SF_LEAST_DONORS", 4), metadata={"env": "SF_LEAST_DONORS"})
 
     # --- did we actually rebuild it ---------------------------------------
     # How much of a surface may be placed photograph before we stop calling it

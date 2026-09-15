@@ -551,6 +551,7 @@
       <p id="worker-alert" class="fail" role="alert" hidden></p>
       <div class="bar" id="worker-track"><i id="worker-bar" style="width:0%"></i></div>
       <p class="hint" id="worker-counts">Checking queue…</p>
+      <p class="hint" id="worker-learning" hidden></p>
       <div class="grid" style="margin-top:14px">
         <div class="stat"><div class="n" id="w-done">0</div><div class="k">done</div></div>
         <div class="stat"><div class="n" id="w-review">0</div><div class="k">to review</div></div>
@@ -1170,6 +1171,11 @@ function paintWorker(w){
     + (w.state === 'pausing' || w.state === 'stopping' ? ' · Finishing the current design before ' + (w.state === 'pausing' ? 'pausing.' : 'stopping.') : '');
   $('worker-counts').textContent = `${w.done + w.review + w.failed} of ${total} designs finished · ${w.remaining} remaining`
     + (busy && w.current_design_id ? ' · Processing current design (stage duration varies)' : ` · ${pct}% of queue finished`);
+  const learn = w.learning;
+  $('worker-learning').hidden = !learn;
+  if (learn) $('worker-learning').textContent =
+    `Learning ${learn.niche} — ${learn.read} of ${learn.needs} read. `
+    + `Masters only until then; design ${learn.needs + 1} is the first one made.`;
   const lanes = w.lanes || [];
   $('lanes').hidden = lanes.length < 2;
   if (lanes.length > 1){
