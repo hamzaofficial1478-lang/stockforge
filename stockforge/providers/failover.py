@@ -44,8 +44,9 @@ class Failover(VisionProvider):
     def chat(self, system: str, user_text: str, images, **kw) -> str:
         # A wrong request is wrong at every model, so a 400 is raised rather
         # than walked down the chain — four models refusing the same malformed
-        # call is four times the wait and the same answer. Silence and the
-        # server's own faults are what the others exist for.
+        # call is four times the wait and the same answer. Silence, the
+        # server's own faults, and a key that has stopped working are what the
+        # others exist for.
         trouble: list[str] = []
         for number, provider in enumerate(self.providers):
             try:
@@ -74,12 +75,26 @@ class Failover(VisionProvider):
 def _worth_moving_on(exc: ProviderError) -> bool:
     """Is this the endpoint's problem rather than the request's?
 
-    A 400 means the request itself was refused and the next model will refuse
+    A 400 means the request itself was refused, and the next model will refuse
     it in the same way. Everything else — a 500, a gateway error, a model that
     came back empty — is worth another model's opinion.
+
+    401 and 403 used to be on the wrong side of that line, and it was the most
+    expensive mistake in this file. They are not about the request at all; they
+    are about THIS endpoint's key. The owner, on a bulk run:
+
+        "each time one or 2 keys remains unanswerable, that making program
+         failure"
+
+    Exactly so. One expired or over-quota key raised straight out of the chain
+    and killed the design, while the model sitting behind it — a different
+    endpoint, a different key, perfectly able to answer — was never asked. The
+    whole point of a chain is that a dead credential costs you a second of
+    latency, not a design.
+
+    400 stays where it is: a malformed request really is malformed everywhere.
     """
-    text = str(exc)
-    return "HTTP 400" not in text and "HTTP 401" not in text and "HTTP 403" not in text
+    return "HTTP 400" not in str(exc)
 
 
 def chain(providers: list[VisionProvider], on_switch=None) -> VisionProvider:

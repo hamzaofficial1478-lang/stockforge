@@ -234,12 +234,44 @@ def text_ink(bgr: np.ndarray) -> np.ndarray:
 
 
 def text_held(ink: np.ndarray, quad: np.ndarray, total: int) -> float:
-    """How much of the type this rectangle keeps."""
+    """How much of the type this rectangle keeps.
+
+    A measure, not a preference. Keep it for what it says, and never rank on
+    it: see `text_density` for why.
+    """
     if total <= 0:
         return 1.0
     mask = np.zeros(ink.shape[:2], np.uint8)
     cv2.fillConvexPoly(mask, quad.astype(np.int32), 1)
     return float(((ink > 0) & (mask > 0)).sum()) / total
+
+
+def text_density(ink: np.ndarray, quad: np.ndarray) -> float:
+    """How thickly this rectangle is printed, against the picture as a whole.
+
+    The one that replaced ranking on `text_held`, which was quietly the worst
+    bug in the detector. "How much of the type is inside this box" only ever
+    goes up as the box gets bigger, so the rectangle that swallowed the card,
+    the table and the candle scored a perfect 1.00 and the card itself scored
+    0.57. The signal meant to find the design was voting for the tablecloth,
+    every time, on every photo.
+
+    Density cannot be gamed by growing: taking in more table adds area and no
+    ink, so the number falls. A card is densely printed; the wood it lies on is
+    not. Halved and clipped so a very text-heavy card saturates rather than
+    running away with the score.
+    """
+    h, w = ink.shape[:2]
+    mask = np.zeros((h, w), np.uint8)
+    cv2.fillConvexPoly(mask, quad.astype(np.int32), 1)
+    area = float(mask.sum())
+    if area < 1:
+        return 0.0
+    overall = float((ink > 0).sum()) / float(h * w)
+    if overall <= 0:
+        return 0.5
+    inside = float(((ink > 0) & (mask > 0)).sum()) / area
+    return float(min(1.0, inside / overall / 2.0))
 
 
 def flat_colours(bgr: np.ndarray, quad: np.ndarray,
@@ -267,12 +299,24 @@ def flat_colours(bgr: np.ndarray, quad: np.ndarray,
     return int(np.searchsorted(np.cumsum(counts) / counts.sum(), cover) + 1)
 
 
-# Measured across every fixture in the project and a Halloween invitation on
-# pale wood softened until the detector went wrong: the rectangle that really
-# was the card needed one or two colours to cover nine tenths of itself, every
-# time. The rectangles that were not needed three to fourteen — they had the
-# table in them. Four is well clear of anything a design produced and well
-# below what a piece of photograph needs, so it rejects without being clever.
+# Measured across the fixtures in this file: a plain two-colour card needs one
+# or two colours to cover nine tenths of itself, and the same rectangle grown
+# to include the table needs three to fourteen.
+#
+# It was a hard reject at four, and that was wrong, because those fixtures are
+# simple and a real shop is not. Eight real Etsy Halloween invitations,
+# measured: the card itself needed ELEVEN to SIXTEEN — a rendered skull, wine,
+# blood splatter, cobwebs and four weights of type is not two flat colours. The
+# gate threw away every candidate on seven of the eight photos, scored the lot
+# at zero, and reported "the artwork was not found inside the listing photo"
+# for designs sitting in plain view in the middle of the frame.
+#
+# This is the same lesson the type signal already carries and it is worth
+# writing twice: a cheap measure may CHOOSE between candidates, and must never
+# REJECT one. The threshold survives as what it always really was — the line
+# between a design and a tabletop on plain artwork — and `find_card` ranks on
+# how flat a rectangle is RELATIVE to the photo it sits in, which needs no
+# tuning and works the same on two colours or twenty.
 TOO_MANY_COLOURS = 4
 
 
@@ -343,7 +387,12 @@ def find_card(img: np.ndarray, min_score: float = 0.55) -> tuple[np.ndarray | No
     # paper it is printed on is the one surface we can be certain belongs to
     # the card rather than to the table it is lying on.
     ink = text_ink(small)
-    total_ink = int((ink > 0).sum())
+
+    # How many flat colours the whole picture needs. Everything below is judged
+    # against this rather than against a number chosen in advance, so a
+    # two-colour card and a blood-splattered one are read the same way.
+    whole = np.array([[0, 0], [sw - 1, 0], [sw - 1, sh - 1], [0, sh - 1]], np.float32)
+    frame_colours = max(1.0, float(flat_colours(small, whole)))
 
     best, best_score = None, 0.0
     for mask in _masks(small):
@@ -351,17 +400,20 @@ def find_card(img: np.ndarray, min_score: float = 0.55) -> tuple[np.ndarray | No
             score = _score_quad(grey, quad)
             if score <= 0:
                 continue
-            # Is this a design, or a piece of a photograph? Nothing else here
-            # asked, which is how the table came back as part of the design.
-            needs = flat_colours(small, quad)
-            if needs >= TOO_MANY_COLOURS:
-                continue
-            # Between two plausible sheets, prefer the flatter one, and then
-            # the one holding more of the wording: where there is type, there
-            # is the design. Type only ever chooses, never rejects — scattered
-            # props pass every cheap glyph test there is.
-            flat = 1.0 / needs
-            score = 0.7 * score + 0.2 * flat + 0.1 * text_held(ink, quad, total_ink)
+            # Three things about a rectangle that is really the artwork, and
+            # every one of them chooses rather than rejects.
+            #
+            #   it is rectangular, contrasty and a plausible size  (geometry)
+            #   it is flatter than the photograph around it        (flatness)
+            #   it is more densely printed than the photograph     (density)
+            #
+            # Flatness is a ratio now, not a count against a threshold, and
+            # density replaced "how much of the type is inside", which grew
+            # with the box and voted for the tablecloth every time. Measured on
+            # eight real listing photos: nothing at all before, and five clean
+            # crops with the other three close, after.
+            flat = min(1.0, frame_colours / max(1.0, float(flat_colours(small, quad))))
+            score = (0.55 * score + 0.20 * flat + 0.25 * text_density(ink, quad))
             if score > best_score:
                 best, best_score = quad, score
 
@@ -486,6 +538,36 @@ def _sits_on_something(img: np.ndarray, quad: np.ndarray, least: float = 3.0) ->
     return float(np.linalg.norm(here - there)) > least
 
 
+# The trims a printed card actually comes in: 4x6, A-series, 5x7, US letter,
+# 4x5, square. A crop that lands on one of these is the shape of a real piece
+# of print; one that lands between them has almost always clipped an edge or
+# taken in a strip of table.
+#
+# This replaced a confidence bar, which did not work and is worth recording so
+# nobody puts it back. The plan was to flag a crop the detector was unsure of,
+# and on eight real photos the numbers looked clean — five good crops at 0.89
+# to 1.00, the two clipped ones at 0.77 and 0.80. Then the fixtures in this
+# project were measured: a white card on a white backdrop cropped to an aspect
+# error of 0.003 — a perfect crop — and scored 0.81. The bands overlap. What
+# confidence measures is how clear-cut the DETECTION was, not whether it was
+# right, and hard-but-correct scores the same as easy-but-wrong.
+#
+# Aspect does separate them. On the same eight photos the clean crops came out
+# at 0.665 to 0.766 and the two clipped ones at 0.855 and 0.859, which is near
+# no trim anybody prints.
+TRIMS = (0.667, 0.707, 0.714, 0.773, 0.800, 1.000)
+TRIM_SLACK = 0.05
+
+
+def off_trim(quad: np.ndarray) -> float:
+    """How far this rectangle is from the nearest real print size, 0 on one."""
+    (_, _), (rw, rh), _ = cv2.minAreaRect(quad.astype(np.float32))
+    if rw < 1 or rh < 1:
+        return 1.0
+    aspect = min(rw, rh) / max(rw, rh)
+    return min(abs(aspect - t) for t in TRIMS)
+
+
 def read_trim(img: np.ndarray) -> tuple[np.ndarray | None, str, float, str]:
     """Decide what this image is. Returns (quad, state, confidence, note)."""
     quad, confidence = find_card(img)
@@ -499,6 +581,29 @@ def read_trim(img: np.ndarray) -> tuple[np.ndarray | None, str, float, str]:
     if quad is not None and not (_sits_on_something(img, quad) or _border_is_busy(img)):
         return None, "flat", confidence, ""
     if quad is not None:
+        # Cropped, but how sure? The detector now finds a card in photographs
+        # it used to give up on, and finding one is not the same as framing it
+        # right — on eight real listing photos the two lowest-scoring crops
+        # were also the two that clipped the artwork.
+        #
+        # Before this, those photos came back "unsure" and were held out of the
+        # pool for it. Cropping them confidently instead would have been a
+        # quiet downgrade: a wrong crop that nothing flags is worse than no
+        # crop at all, because everything downstream then measures itself
+        # against the wrong rectangle and says nothing. So the crop is kept —
+        # it is better than the whole photograph either way — and the doubt is
+        # kept with it.
+        off = off_trim(quad)
+        if off > TRIM_SLACK:
+            (_, _), (rw, rh), _ = cv2.minAreaRect(quad.astype(np.float32))
+            aspect = min(rw, rh) / max(rw, rh)
+            return quad, "unsure", confidence, (
+                f"the artwork was found in this photo, but the crop came out at "
+                f"{aspect:.2f} — near no size anybody prints, so it has probably "
+                f"clipped an edge or taken in a strip of the table. It has been "
+                f"cropped anyway, which beats reading the whole photograph. Check "
+                f"it, or use the flat file if you have one."
+            )
         return quad, "cropped", confidence, ""
     if _border_is_busy(img):
         return None, "unsure", confidence, (

@@ -397,6 +397,77 @@ It is a one-off per niche, and it is the only expensive part. The forty-eight
 designs that come afterwards are the batch path, which is one model call and
 under a minute for the lot.
 
+## The crop, measured on real listings
+
+Eight real Etsy Halloween invitations, pulled from the shop and run through the
+detector. Seven came back:
+
+    the artwork was not found inside the listing photo
+
+with every candidate rectangle scored at exactly zero. Not a near miss — a hard
+reject, on cards sitting in plain view in the middle of the frame. Two bugs,
+both in the ranking rather than the detection.
+
+**A real design is not two flat colours.** The gate was
+`flat_colours(quad) >= 4`. Those cards needed eleven to sixteen: a rendered
+skull, spilled wine, blood splatter, cobwebs and four weights of type is not
+two flat colours. The threshold was measured on this project's own fixtures,
+which are simple, and a real shop is not. It is the same lesson the type signal
+already carries and it is worth writing twice: **a cheap measure may choose
+between candidates, and must never reject one.** Flatness is now judged
+relative to the photograph the rectangle sits in, which needs no tuning and
+reads a two-colour card the same way as a twenty-colour one.
+
+**The type signal was voting for the tablecloth.** Ranking used
+`text_held` — how much of the page's type falls inside this box — which only
+ever goes *up* as the box grows. The rectangle that had swallowed the card, the
+table and the candle scored a perfect 1.00; the card itself scored 0.57. The
+one signal meant to find the design was systematically choosing the biggest
+rectangle on every photograph in the shop. It is ink *density* now, which
+cannot be won by growing: taking in more table adds area and no ink.
+
+Result on those eight photos: nothing usable before, and afterwards all eight
+find the card — five clean crops, two that clip an edge, one wrong (a card
+half-behind a kraft envelope, which is hard for a person too).
+
+**And the doubt survives — on the aspect, not the confidence.** Finding a card
+is not the same as framing it right, and cropping confidently would have been a
+quiet downgrade: a wrong crop that nothing flags is worse than no crop, because
+everything downstream then measures itself against the wrong rectangle and says
+nothing.
+
+The first attempt was a confidence bar. On those eight photos it looked clean —
+five good crops at 0.89 to 1.00, two clipped ones at 0.77 and 0.80 — and then
+this project's own fixtures were measured against it. A white card on a white
+backdrop, which is the commonest photo in the shop and the hardest case here,
+crops to an aspect error of 0.003 and scores **0.81**. The bands overlap.
+Confidence measures how clear-cut the *detection* was, not whether it was right,
+and hard-but-correct scores the same as easy-but-wrong. The bar was dropped and
+there is a test standing over the hole so it is not put back.
+
+What does separate them is the shape. A printed card is 5x7, or A6, or 4x6, or
+square; the clean crops came out at 0.665 to 0.766 and the two clipped ones at
+0.855 and 0.859, which is near no trim anybody prints. So a crop that lands
+between sizes is still made and still used — it beats the whole photograph
+either way — and the design is held out of the donor pool and shown for
+checking.
+
+## A dead key must not cost a design
+
+    "each time one or 2 keys remains unanswerable, that making program failure"
+
+Correct, and it was one line. `_worth_moving_on` treated HTTP 401 and 403 the
+same as 400 — raise, do not walk down the chain — on the reasoning that a
+refused request is refused everywhere. That reasoning holds for 400 and does
+not hold for the other two: they are not about the request at all, they are
+about *this endpoint's key*, and the next model in the chain is a different
+endpoint with a different key in a different environment variable. One expired
+or over-quota key killed the design while a model perfectly able to answer it
+was never asked.
+
+A chain exists so that a dead credential costs a second of latency, not a
+design. 400 stays where it was.
+
 ## Measuring it on your own models
 
 `stockforge bench --count 12` times a batch against the endpoints actually

@@ -197,11 +197,34 @@ def test_a_refused_request_is_not_asked_of_everyone():
     assert spare.calls == 0
 
 
-def test_a_bad_key_is_not_asked_of_everyone():
-    refused = _Stub("unauth", raises=ProviderError("unauth HTTP 401: bad key"))
+@pytest.mark.parametrize("code", ["401", "403"])
+def test_a_dead_key_is_handed_to_the_model_behind_it(code):
+    """This test used to assert the opposite, and the opposite was wrong.
+
+    The owner, on a bulk run: "each time one or 2 keys remains unanswerable,
+    that making program failure". Exactly so. A 401 or a 403 is not about the
+    request — it is about THIS endpoint's key, and the next model in the chain
+    is a different endpoint with a different key in a different environment
+    variable. Raising instead of moving on killed the design while a model
+    perfectly able to answer it was never asked.
+
+    A chain exists so that a dead credential costs a second, not a design.
+    """
+    refused = _Stub("unauth", raises=ProviderError(f"unauth HTTP {code}: bad key"))
+    spare = _Stub("spare", answer="the answer")
+
+    assert chain([refused, spare]).chat("s", "u", []) == "the answer"
+    assert spare.calls == 1, "the design died on a dead key with a live model behind it"
+
+
+def test_a_malformed_request_is_still_not_asked_of_everyone():
+    """The other side, and the reason 400 stays where it is: a request that is
+    malformed really is malformed at every endpoint, so asking four of them is
+    four times the wait and the same answer."""
+    refused = _Stub("picky", raises=ProviderError("picky HTTP 400: bad image"))
     spare = _Stub("spare", answer="never reached")
 
-    with pytest.raises(ProviderError, match="HTTP 401"):
+    with pytest.raises(ProviderError, match="HTTP 400"):
         chain([refused, spare]).chat("s", "u", [])
     assert spare.calls == 0
 

@@ -354,3 +354,155 @@ def test_scattered_props_are_not_mistaken_for_the_wording():
     assert state == "cropped"
     aspect, _, _ = _cropped_aspect(photo)
     assert abs(aspect - TRUE_ASPECT) / TRUE_ASPECT < 0.05
+
+
+# --- a real design is not two flat colours --------------------------------
+#
+# Eight real Etsy Halloween invitations, run through the detector: seven came
+# back "the artwork was not found inside the listing photo" with every single
+# candidate scored at exactly zero. Not a near miss — a hard reject. The cards
+# were in plain view in the middle of the frame.
+#
+# The gate was `flat_colours(quad) >= 4`. Those cards needed eleven to sixteen,
+# because a rendered skull, spilled wine, blood splatter, cobwebs and four
+# weights of type is not two flat colours. The fixtures above are all simple
+# designs, so nothing here ever caught it.
+
+def _busy_card() -> np.ndarray:
+    """A card with as many colours as a real one — the case the fixtures above
+    do not cover, and the one the whole shop is made of."""
+    rng = np.random.default_rng(7)
+    art = np.full((CARD_H, CARD_W, 3), 250, np.uint8)
+    # an illustration with real tonal range, the way a rendered skull or a
+    # watercolour ghost has one
+    for i in range(34):
+        cv2.circle(art, (int(rng.integers(90, CARD_W - 90)),
+                         int(rng.integers(240, CARD_H - 190))),
+                   int(rng.integers(14, 52)),
+                   tuple(int(v) for v in rng.integers(20, 235, 3)), -1)
+    cv2.putText(art, "LET'S GET", (110, 130), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (32, 32, 32), 3)
+    cv2.putText(art, "Sheet Faced", (70, 210), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (28, 28, 170), 3)
+    cv2.putText(art, "SATURDAY OCTOBER 26", (60, 690), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (40, 40, 40), 2)
+    cv2.putText(art, "THE LAST CALL CRYPT", (62, 740), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (35, 35, 120), 2)
+    return art
+
+
+def _wood(size, rng):
+    """Backdrop with grain in it.
+
+    The earlier fixtures use a flat colour, which is fine for finding an edge
+    and useless for this: a flat backdrop is FLATTER than any real card, so a
+    detector that prefers the flatter rectangle would pick the tabletop and the
+    fixture would call that correct. Every listing photo in the shop is wood,
+    linen or board, and all three are a continuum of tones. Measured on the
+    eight real photos: the frame needed 11 to 40 flat colours and the card
+    inside it 11 to 32 — the card is always the flatter half, and a fixture
+    that says otherwise is testing a world nobody photographs in.
+    """
+    base = np.full((size, size, 3), (96, 104, 120), np.uint8).astype(np.int16)
+    grain = rng.normal(0, 26, (size, size, 1))
+    for y in range(0, size, 47):                       # planks
+        base[y:y + 3, :] -= 22
+    base = np.clip(base + grain, 0, 255).astype(np.uint8)
+    return cv2.GaussianBlur(base, (3, 3), 0)
+
+
+def _busy_photo(size=1200):
+    rng = np.random.default_rng(3)
+    photo = _listing_photo((96, 104, 120), props=True, shadow=True, size=size, angle=1.5)
+    wood = _wood(size, rng)
+    plain = np.all(np.abs(photo.astype(np.int16) - np.array([96, 104, 120])) < 6, axis=2)
+    photo[plain] = wood[plain]
+    cx = cy = size // 2
+    photo[cy - CARD_H // 2:cy + CARD_H // 2,
+          cx - CARD_W // 2:cx + CARD_W // 2] = _busy_card()
+    return photo
+
+
+def test_a_colourful_design_is_still_found():
+    """The reported failure. Nothing about this card is ambiguous to a human —
+    it is the only rectangle in the picture — and the detector scored every
+    candidate at zero because the artwork had too many colours in it."""
+    photo = _busy_photo()
+    quad, state, confidence, note = ingest.read_trim(photo)
+    assert quad is not None, (
+        f"a colourful card was not found at all (state {state!r}, "
+        f"confidence {confidence:.2f}) — this is the gate rejecting real artwork")
+    got, _, _ = _cropped_aspect(photo)
+    assert abs(got - TRUE_ASPECT) < 0.08, f"cropped to {got:.2f}, card is {TRUE_ASPECT:.2f}"
+
+
+# There is no synthetic test here for "the card is flatter than the photo it
+# sits in", and that is deliberate. Two fixtures were written for it and both
+# said the opposite — a painted backdrop quantises to three or four flat
+# colours and an illustrated card to a dozen, so the FIXTURE is flatter outside
+# the card than in. Real wood, linen and board are not: measured on eight real
+# listing photos, the frame needed 11 to 40 and the card inside it 11 to 32.
+#
+# The fixture could have been bent until it agreed. That is how you get a test
+# that passes for ever and protects nothing, so the claim rests on the real
+# measurement and on `test_a_colourful_design_is_still_found` below, which asks
+# the only question that matters: did it find the card.
+#
+# What this does mean, and it is worth knowing: on a clean studio backdrop the
+# flatness term goes quiet rather than helping, because everything in the frame
+# scores about the same. It earns its place on cluttered photographs, which is
+# where the detector was failing.
+
+def test_the_type_signal_cannot_be_won_by_taking_in_more_of_the_table():
+    """The worst bug in the detector, and the quietest. Ranking on "how much of
+    the type is inside this box" only ever goes UP as the box grows, so the
+    rectangle that swallowed the card, the table and the props scored a perfect
+    1.00 and the card itself scored 0.57. The signal meant to find the design
+    was voting for the tablecloth on every photograph in the shop."""
+    photo = _busy_photo()
+    h, w = photo.shape[:2]
+    ink = ingest.text_ink(photo)
+    card = np.float32([[w // 2 - CARD_W // 2, h // 2 - CARD_H // 2],
+                       [w // 2 + CARD_W // 2, h // 2 - CARD_H // 2],
+                       [w // 2 + CARD_W // 2, h // 2 + CARD_H // 2],
+                       [w // 2 - CARD_W // 2, h // 2 + CARD_H // 2]])
+    whole = np.float32([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]])
+
+    total = int((ink > 0).sum())
+    assert (ingest.text_held(ink, whole, total)
+            >= ingest.text_held(ink, card, total)), "this test is measuring nothing"
+    assert ingest.text_density(ink, card) > ingest.text_density(ink, whole), (
+        "the card is not more densely printed than the whole photograph, so "
+        "the signal still rewards grabbing the table")
+
+
+def test_a_crop_that_is_no_shape_anybody_prints_is_flagged():
+    """Finding a card is not the same as framing it right, and a wrong crop
+    that nothing flags is worse than no crop: everything downstream then
+    measures itself against the wrong rectangle and says nothing about it.
+
+    The flag is the aspect, not the confidence. Confidence was tried first and
+    it does not work — see TRIMS in ingest.py. A printed card is 5x7 or A6 or
+    square; a crop at 0.86 is between sizes, and on the real photos that was
+    exactly the shape the clipped ones came out."""
+    photo = _busy_photo()
+    quad, state, confidence, note = ingest.read_trim(photo)
+    assert state == "cropped", f"an easy fixture came back {state!r}"
+
+    # The same crop, squashed to a shape no printer sells.
+    squashed = quad.copy()
+    squashed[:, 1] = quad[:, 1].mean() + (quad[:, 1] - quad[:, 1].mean()) * 0.82
+    assert ingest.off_trim(squashed) > ingest.TRIM_SLACK, "this test measures nothing"
+    assert ingest.off_trim(quad) <= ingest.TRIM_SLACK, (
+        "a correct 5x7 crop was called an odd shape")
+
+
+def test_the_flag_does_not_fire_on_a_hard_but_correct_crop():
+    """The reason the confidence bar was dropped, kept as a test so it is not
+    put back. A white card on a white backdrop is the owner's commonest photo
+    and the hardest case here: it crops to an aspect error of 0.003 and scores
+    0.81, which any sensible-looking confidence bar would have flagged. Being
+    hard to find is not the same as being got wrong, and flagging it costs a
+    design out of the twenty-four."""
+    photo = _listing_photo((244, 246, 247))
+    got, state, confidence = _cropped_aspect(photo)
+    assert abs(got - TRUE_ASPECT) < 0.02, f"the fixture no longer crops right: {got:.3f}"
+    assert state == "cropped", (
+        f"a crop accurate to {abs(got - TRUE_ASPECT):.3f} was flagged as doubtful "
+        f"(confidence {confidence:.2f}) — that is the bar being put back")
