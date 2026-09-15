@@ -18,6 +18,7 @@ forty-eight in one.
 """
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -355,3 +356,78 @@ def test_the_fitting_pass_runs_before_a_design_is_exported(shop):
     finally:
         invent_mod.fit_type = real
     assert called.get("yes"), "invented designs go to the renderer unfitted"
+
+
+# --- working in the spirit of a design you already have --------------------
+#
+# The owner's workflow, in their words: "i added design like a photo or a link,
+# program sync that and made me new design on the bases of" it. Twelve designs
+# from one command and one reference, with no reading and no donor pool.
+
+def test_the_reference_picture_is_actually_shown_to_the_model(shop, tmp_path):
+    """Otherwise --like is a flag that changes a log line and nothing else."""
+    import cv2
+    import numpy as np
+
+    pipe, _ = shop
+    ref = tmp_path / "reference.png"
+    cv2.imwrite(str(ref), np.full((400, 280, 3), 240, np.uint8))
+
+    seen = {}
+
+    class Watching(ScriptedProvider):
+        def structured(self, system, user_text, images, model, **kw):
+            if model.__name__ == "Invented":
+                seen["images"] = [Path(i).name for i in images]
+                seen["system"] = system
+            return super().structured(system, user_text, images, model, **kw)
+
+    providers.set_provider("vision", Watching())
+    pipe.invent(1, Brief(niche="halloween-cards", like=ref))
+
+    assert seen.get("images") == ["reference.png"], (
+        f"the reference never reached the model: {seen.get('images')}")
+    assert "in its spirit" in seen.get("system", ""), (
+        "it was shown a picture with no instruction about what to do with it")
+
+
+def test_without_a_reference_no_image_is_sent(shop):
+    """The plain path stays cheap: a brief with no reference is words only, and
+    runs on a text model."""
+    pipe, _ = shop
+    carried = []
+
+    class Watching(ScriptedProvider):
+        def structured(self, system, user_text, images, model, **kw):
+            if model.__name__ == "Invented":
+                carried.append(len(images))
+            return super().structured(system, user_text, images, model, **kw)
+
+    providers.set_provider("vision", Watching())
+    pipe.invent(1, Brief(niche="halloween-cards"))
+    assert carried == [0]
+
+
+def test_a_reference_can_be_a_design_already_pulled_in(shop, tmp_path):
+    """So "pull this link, then make me designs like it" is one continuous
+    thing rather than a hunt through the workspace for the file it landed in."""
+    from stockforge.sources import open_source
+    from test_pipeline import _listing
+
+    pipe, cfg = shop
+    _listing(tmp_path / "in", "card")
+    pipe.pull(open_source("folder", str(tmp_path / "in")))
+    design_id = pipe.store.designs()[0]["id"]
+
+    found = pipe._picture_for(design_id[:8])
+    assert found is not None and found.is_file(), (
+        f"the id {design_id[:8]} did not resolve to its artwork")
+
+
+def test_a_reference_that_is_neither_a_file_nor_a_design_is_survivable(shop):
+    """A typo in a path must not lose the run — the brief still works without
+    a picture, and saying so beats stopping."""
+    pipe, _ = shop
+    assert pipe._picture_for("no-such-thing-anywhere") is None
+    out = pipe.invent(1, Brief(niche="halloween-cards", like="no-such-thing-anywhere"))
+    assert out["made"] == 1, out["note"]

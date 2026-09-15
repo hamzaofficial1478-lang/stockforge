@@ -109,18 +109,18 @@ def test_the_soft_rim_round_a_shape_is_not_traced_as_a_halo(tmp_path):
     assert got.paths, "it rejected everything"
 
 
-def test_a_shape_with_an_inside_is_kept(tmp_path):
-    """The other side of that test. The rule is "a rim has no inside" — a pass
-    that dropped anything small would throw away a stalk, a dot or an eye."""
-    from stockforge.stages.trace import _is_only_an_edge
+def test_thinness_is_measured_but_does_not_decide_alone(tmp_path):
+    """`_is_thin` is half the halo test and was briefly all of it, which cost
+    half a real library. It still has to measure what it says it measures."""
+    from stockforge.stages.trace import _is_thin
 
     solid = np.zeros((200, 200), np.uint8)
     cv2.circle(solid, (100, 100), 30, 255, -1)
-    assert not _is_only_an_edge(solid), "a solid disc was called a rim"
+    assert not _is_thin(solid), "a solid disc was called thin"
 
     rim = np.zeros((200, 200), np.uint8)
     cv2.circle(rim, (100, 100), 60, 255, 3)
-    assert _is_only_an_edge(rim), "a three-pixel ring was called a shape"
+    assert _is_thin(rim), "a three-pixel ring was not called thin"
 
 
 def test_the_same_picture_traces_the_same_way_every_time(tmp_path):
@@ -204,3 +204,76 @@ def test_two_motifs_with_the_same_description_do_not_overwrite_each_other(tmp_pa
     second = m.adopt(_cutout(tmp_path / "b.png"), tmp_path, description=said)
     assert first.library_id != second.library_id
     assert len(m.scan(tmp_path)) == 2
+
+
+# --- thin is not the same as smudged ---------------------------------------
+#
+# From a real run over a real shop: 32 motifs harvested, and 16 came back
+# "nothing traceable in ...". Every one of them was something harvest had
+# already marked `thin` — a spiderweb, a rule, a chevron, a spider on a thread.
+# The halo test was "has it got an inside", and a web has not got an inside
+# either. Half a library thrown away as smudges.
+#
+# Thinness is necessary for a halo and nowhere near sufficient. What actually
+# marks one is its COLOUR: an anti-aliased rim is not a colour anybody chose,
+# it is the two colours it lies between, mixed.
+
+def _web(path: Path) -> Path:
+    """A spiderweb cutout — all line, no inside, and a real motif."""
+    web = np.zeros((300, 300, 4), np.uint8)
+    for a in range(0, 360, 30):
+        end = (int(150 + 140 * np.cos(np.radians(a))),
+               int(150 + 140 * np.sin(np.radians(a))))
+        cv2.line(web, (150, 150), end, (40, 40, 45, 255), 2)
+    for r in (50, 90, 130):
+        cv2.circle(web, (150, 150), r, (40, 40, 45, 255), 2)
+    cv2.imwrite(str(path), web)
+    return path
+
+
+@pytest.mark.parametrize("draw,label", [
+    (_web, "a spiderweb"),
+    (lambda p: (cv2.imwrite(str(p), _chevrons()), p)[1], "a row of chevrons"),
+])
+def test_thin_artwork_is_traced_rather_than_thrown_away(tmp_path, draw, label):
+    got = trace(draw(tmp_path / "thin.png"), tmp_path / "thin.svg")
+    assert got.paths > 0, f"{label} was thrown away as a smudge"
+
+
+def _chevrons() -> np.ndarray:
+    art = np.zeros((200, 400, 4), np.uint8)
+    for i in range(6):
+        pts = np.array([[40 + i * 60, 60], [70 + i * 60, 100], [40 + i * 60, 140]])
+        cv2.polylines(art, [pts], False, (60, 60, 70, 255), 3)
+    return art
+
+
+def test_a_rim_is_still_dropped_once_thin_alone_stops_deciding(tmp_path):
+    """The other half. Loosening the halo test must not bring the halo back —
+    and it did, for one round: the pale ring around a pumpkin blends into the
+    PAPER, and with the paper masked out there was no second end to the blend
+    for the test to find."""
+    import re
+    got = trace(_flat_drawing(tmp_path / "p.png", blur=9), tmp_path / "out.svg",
+                colours=5)
+    fills = re.findall(r'fill="#([0-9a-f]{6})"', (tmp_path / "out.svg").read_text())
+
+    def pale(hexc):
+        r, g, b = (int(hexc[i:i + 2], 16) for i in (0, 2, 4))
+        return min(r, g, b) > 170 and max(r, g, b) < 250
+
+    assert not any(pale(f) for f in fills), f"the halo is back: {[f for f in fills if pale(f)]}"
+    assert got.paths, "and it threw away the drawing as well"
+
+
+def test_a_colour_that_is_two_others_mixed_is_recognised(tmp_path):
+    """The test itself, on its own. A blend sits between two colours and close
+    to the straight line between them; ink does not."""
+    from stockforge.stages.trace import _is_a_blend
+
+    orange, white = (40, 120, 235), (255, 255, 255)
+    halo = tuple(int((a + b) / 2) for a, b in zip(orange, white))
+    assert _is_a_blend(halo, [orange, white]), "a midpoint was not called a blend"
+    assert not _is_a_blend((40, 40, 45), [orange, white]), (
+        "near-black ink was called a blend of orange and white")
+    assert not _is_a_blend(orange, [orange, white]), "an endpoint is not a blend"

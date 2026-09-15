@@ -57,6 +57,20 @@ class Invented(BaseModel):
     notes: str = Field(default="", description="anything you were unsure about")
 
 
+LIKE_THIS = """
+
+YOU ARE ALSO SHOWN A DESIGN. Work in its spirit — the same mood, the same \
+weight of colour, the same kind of hierarchy, the same sort of decoration. \
+Then make something else.
+
+Not a copy, and not a near-copy with the words swapped. Different wording, a \
+different arrangement, a different centrepiece. Someone who owned the design \
+you were shown should want this one too, and should not feel they had already \
+bought it. If the one you are shown is a pumpkin card in cream and orange, a \
+different pumpkin card in cream and orange is a failure; a cauldron card in \
+cream and orange that sits beside it on a shelf is the job."""
+
+
 SYSTEM = """You are a print designer. You are given a brief and you return one \
 design as structured data — not a picture, and not a description. Something \
 else draws it.
@@ -134,6 +148,12 @@ class Brief:
     # "make me a Halloween card" and "make me one out of THESE drawings" are
     # different asks, and only the second one can be drawn.
     available: list[str] = field(default_factory=list)
+    # A design to work in the spirit of, as a picture. The owner's ask, in
+    # their words: "i added design like a photo or a link, program sync that
+    # and made me new design on the bases of" it. With this set the model is
+    # shown the picture and writes something in the same voice; without it, it
+    # works from the words alone.
+    like: Path | None = None
 
     def as_prompt(self) -> str:
         lines = [f"Niche: {self.niche}",
@@ -241,10 +261,11 @@ def invent(brief: Brief, provider: VisionProvider | None = None) -> DesignSpec:
     model as happily as a vision one, and costs a fraction of a read.
     """
     provider = provider or vision()
+    look_at = [brief.like] if brief.like and Path(brief.like).is_file() else []
     made = provider.structured(
-        SYSTEM,
+        SYSTEM + (LIKE_THIS if look_at else ""),
         brief.as_prompt() + "\n\nReturn the design.",
-        [],
+        look_at,
         Invented,
     )
 

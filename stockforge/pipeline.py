@@ -780,7 +780,12 @@ class Pipeline:
         if not available:
             log.info("no motifs in the library — invented designs will carry "
                      "type, colour and shape only")
-        brief = replace(brief, niche=niche, available=available)
+        # A design to work in the spirit of. Given a design id rather than a
+        # file, its flattened artwork is used — which is what makes "pull this
+        # link, then make me designs like it" one continuous thing rather than
+        # a hunt through the workspace for the file it landed in.
+        like = self._picture_for(brief.like) if brief.like else None
+        brief = replace(brief, niche=niche, available=available, like=like)
         made: list[dict] = []
         failed: list[str] = []
         repeats = 0
@@ -849,6 +854,28 @@ class Pipeline:
                             f"have and were thrown away. " if repeats else "")
                          + ("The model refused or failed on the rest."
                             if failed else "Ask again for more."))}
+
+    def _picture_for(self, what) -> "Path | None":
+        """The picture to work in the spirit of, from a file or a design id.
+
+        A path is taken as it is. Anything else is looked up as a design —
+        whole id or the start of one — and its flattened artwork is used, so a
+        link pulled in five minutes ago can be referred to by the id the
+        catalogue shows rather than by hunting for the file on disk.
+        """
+        if what is None:
+            return None
+        candidate = Path(str(what)).expanduser()
+        if candidate.is_file():
+            return candidate
+        row = self.store.conn.execute(
+            "SELECT flat_path FROM assets WHERE design_id LIKE ? AND flat_path IS NOT NULL "
+            "ORDER BY is_mockup ASC, width DESC LIMIT 1", (f"{what}%",)).fetchone()
+        if row and Path(row["flat_path"]).is_file():
+            return Path(row["flat_path"])
+        log.warning("nothing to work from: %r is neither a file nor a design "
+                    "that has been read", str(what)[:60])
+        return None
 
     def _made_already(self, niche: str, cap: int = 12) -> list[str]:
         """Headlines of what is already in this niche, newest first.

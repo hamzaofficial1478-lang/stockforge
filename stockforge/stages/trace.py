@@ -63,7 +63,7 @@ class Traced:
     note: str = ""
 
 
-def _foreground(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _foreground(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple | None]:
     """The picture, and a mask of what is actually drawn on it.
 
     Alpha where there is alpha — the harvested cutouts carry it, and it is
@@ -73,7 +73,9 @@ def _foreground(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     if img.shape[2] == 4:
         bgr = img[:, :, :3]
-        return bgr, (img[:, :, 3] > 128).astype(np.uint8)
+        # No paper: the cutout was lifted off it, so a rim here blends into
+        # transparency rather than into a colour there is any way to name.
+        return bgr, (img[:, :, 3] > 128).astype(np.uint8), None
 
     bgr = img
     h, w = bgr.shape[:2]
@@ -90,7 +92,7 @@ def _foreground(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     # Close the pinholes an anti-aliased edge leaves, then drop the dust.
     k = np.ones((3, 3), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
-    return bgr, mask
+    return bgr, mask, tuple(int(v) for v in paper)
 
 
 def _quantise(bgr: np.ndarray, mask: np.ndarray, colours: int) -> tuple[np.ndarray, list[tuple]]:
@@ -133,7 +135,8 @@ def _curve(points: np.ndarray) -> str:
     return "".join(bits)
 
 
-def _paths_for(region: np.ndarray, smooth: float) -> list[str]:
+def _paths_for(region: np.ndarray, smooth: float,
+               blended: bool = False) -> list[str]:
     """SVG path data for one flat-coloured region, holes included.
 
     RETR_CCOMP gives outers and their holes in one pass; both are emitted into
@@ -161,10 +164,16 @@ def _paths_for(region: np.ndarray, smooth: float) -> list[str]:
         # because the stalk itself is solid the colour passed — then painted
         # green rims around both eyes and the mouth. The stalk has an inside.
         # The rims do not.
-        piece = np.zeros(region.shape, np.uint8)
-        cv2.drawContours(piece, [contour], -1, 255, -1)
-        if _is_only_an_edge(piece):
-            continue
+        if blended:
+            # Only where the colour itself could be a boundary tone. The green
+            # of a pumpkin's stalk also picked up the rim around its eyes, and
+            # because the stalk is solid the colour passed — then painted green
+            # rings. But if the colour is nobody's blend, a thin piece of it is
+            # a thin piece of a drawing and must be kept.
+            piece = np.zeros(region.shape, np.uint8)
+            cv2.drawContours(piece, [contour], -1, 255, -1)
+            if _is_thin(piece):
+                continue
         eps = smooth * cv2.arcLength(contour, True)
         points = cv2.approxPolyDP(contour, eps, True).reshape(-1, 2).astype(np.float64)
         if len(points) < 3:
@@ -173,19 +182,51 @@ def _paths_for(region: np.ndarray, smooth: float) -> list[str]:
     return out
 
 
-def _is_only_an_edge(region: np.ndarray, keep: float = 0.16) -> bool:
-    """Is this colour a shape, or the soft rim between two other shapes?
+def _is_thin(region: np.ndarray, keep: float = 0.16) -> bool:
+    """Is there anything left of this once you take a few pixels off all round?
 
-    A shape has an inside: erode it and most of it is still there. A rim is a
-    few pixels wide everywhere, so erosion all but erases it. Measuring the
-    inside is what separates them, and it needs no threshold on colour — it
-    works the same on a light halo and a dark one.
+    True of a soft rim between two shapes — and equally true of a spiderweb, a
+    rule, a chevron and a thread, which is the whole problem with using it
+    alone. Thinness is necessary for a halo and nowhere near sufficient.
     """
     inside = cv2.erode(region, np.ones((5, 5), np.uint8), iterations=1)
     before = float((region > 0).sum())
     if before <= 0:
         return True
     return float((inside > 0).sum()) / before < keep
+
+
+def _is_a_blend(colour: tuple, others: list[tuple], tol: float = 26.0) -> bool:
+    """Is this colour simply two of the others mixed?
+
+    The test that tells a halo from a thin drawing, and the reason the first
+    version of this threw away half a real library. An anti-aliased rim is not
+    a colour anybody chose — it is literally the average of the two colours it
+    lies between, produced by the renderer smoothing one into the other. A
+    spiderweb thread is its own ink and sits nowhere near the line between two
+    other colours in the picture.
+
+    Sixteen of thirty-two motifs harvested out of a real shop came back
+    "nothing traceable" because thinness alone was the test: every web, rule,
+    chevron and thread in the library was thrown away as though it were a
+    smudge.
+    """
+    here = np.array(colour, dtype=np.float64)
+    for i, a in enumerate(others):
+        for b in others[i + 1:]:
+            pa, pb = np.array(a, dtype=np.float64), np.array(b, dtype=np.float64)
+            span = pb - pa
+            length = float(np.dot(span, span))
+            if length <= 1.0:
+                continue
+            # Where along a→b this colour falls, and how far off that line it
+            # sits. A blend is between the two ends and close to the line.
+            t = float(np.dot(here - pa, span) / length)
+            if not 0.15 < t < 0.85:
+                continue
+            if float(np.linalg.norm(here - (pa + t * span))) < tol:
+                return True
+    return False
 
 
 def trace(source: Path, out: Path, *, colours: int = 5, smooth: float = 0.0025,
@@ -205,7 +246,7 @@ def trace(source: Path, out: Path, *, colours: int = 5, smooth: float = 0.0025,
     if img.ndim == 2:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-    bgr, mask = _foreground(img)
+    bgr, mask, paper = _foreground(img)
     h, w = mask.shape
     if not mask.any():
         raise ValueError(f"nothing but background in {source.name} — "
@@ -229,15 +270,23 @@ def trace(source: Path, out: Path, *, colours: int = 5, smooth: float = 0.0025,
         share = float(region.any(axis=None) and (region > 0).mean())
         if share < SPECK:
             continue
-        if _is_only_an_edge(region):
+        # The paper counts as a colour for this test even though nothing is
+        # drawn in it. The commonest halo of all is the rim where a shape
+        # fades into the background, and with the background masked out there
+        # was no second end to the blend — so the pale ring around a pumpkin
+        # came back the moment thinness stopped being enough on its own.
+        others = [c for j, c in enumerate(centres) if j != i]
+        if paper is not None:
+            others = others + [paper]
+        if _is_thin(region) and _is_a_blend(centres[i], others):
             # A colour k-means spent on the soft pixels along a boundary rather
             # than on anything anybody drew. Traced, it comes back as a halo
             # around the shape it borders — the first pumpkin had a pale ring
-            # right round its body, and it is the single ugliest thing a
-            # tracer can produce. It has no inside, so it is not a shape.
-            log.debug("dropping colour %d — it is an edge, not a shape", i)
+            # right round its body, and it is the ugliest thing a tracer can
+            # produce. Both tests, because thin alone throws away spiderwebs.
+            log.debug("dropping colour %d — it is a boundary, not a shape", i)
             continue
-        data = _paths_for(region, smooth)
+        data = _paths_for(region, smooth, blended=_is_a_blend(centres[i], others))
         if not data:
             continue
         b, g, r = centres[i]

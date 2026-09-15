@@ -601,6 +601,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--trim", default="5x7in", help="5x7in, A5, 4x6in, square, ...")
     s.add_argument("--wording", default="", help="words to work into the design")
     s.add_argument("--niche", default="", help="which niche to file them under")
+    s.add_argument("--like", default="",
+                   help="a design to work in the spirit of — an image file, or "
+                        "the id of one already pulled in")
 
     sub.add_parser("check", help="what is ready and what is not, with the fix for each")
     sub.add_parser("status", help="where everything is up to")
@@ -816,7 +819,8 @@ def main(argv: list[str] | None = None) -> int:
         result = pipe.invent(args.count, Brief(
             niche=args.niche or settings.collection,
             category=args.category, occasion=args.occasion, style=args.style,
-            trim=args.trim, wording=args.wording), on_each=tick)
+            trim=args.trim, wording=args.wording,
+            like=args.like or None), on_each=tick)
         took = time.monotonic() - started
         print(f"\r{result['made']} design(s) written in {took:.0f}s"
               + (f", {took / result['made']:.1f}s each" if result["made"] else "")
