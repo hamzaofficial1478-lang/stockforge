@@ -25,14 +25,30 @@ per-request proof-of-work.
 
 ## Install it
 
-In PowerShell:
+In PowerShell. **Start with the `cd`** — a PowerShell window opened from the
+Start menu, and every window opened as Administrator, starts in
+`C:\WINDOWS\System32`, where Windows refuses to let you create anything:
+
+    fatal: could not create work tree dir 'gemini-web2api': Permission denied
 
 ```powershell
+cd "$env:USERPROFILE\Desktop"
 git clone https://github.com/Sophomoresty/gemini-web2api.git
 cd gemini-web2api
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install httpx
+```
+
+Nothing here wants Administrator. If the title bar says so, close it and open
+an ordinary window — the bridge is a program you run as yourself, and it needs
+to write its config beside itself.
+
+If `Activate.ps1` is refused with an execution-policy error, allow it for that
+window only:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 `httpx` is the only dependency, and it is optional — without it the bridge
