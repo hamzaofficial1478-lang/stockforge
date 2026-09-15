@@ -277,3 +277,49 @@ def test_a_colour_that_is_two_others_mixed_is_recognised(tmp_path):
     assert not _is_a_blend((40, 40, 45), [orange, white]), (
         "near-black ink was called a blend of orange and white")
     assert not _is_a_blend(orange, [orange, white]), "an endpoint is not a blend"
+
+
+# --- running it twice ------------------------------------------------------
+
+def test_tracing_the_same_picture_again_replaces_its_drawing(tmp_path):
+    """The owner re-ran `motifs trace` after a fix and the library came back
+    holding `pumpkin.svg` AND `pumpkin-02.svg`, traced from the identical PNG.
+
+    The matcher then has two answers to every question about a pumpkin, and one
+    of them is an older, worse trace. Nothing tells them apart by eye.
+    """
+    src = _flat_drawing(tmp_path / "pumpkin-abc123.png")
+    first = m.adopt(src, tmp_path, description="a carved pumpkin")
+    second = m.adopt(src, tmp_path, description="a carved pumpkin")
+
+    assert first.library_id == second.library_id, "it made a second copy"
+    assert len(list(tmp_path.glob("*.svg"))) == 1, (
+        f"library holds {sorted(p.name for p in tmp_path.glob('*.svg'))}")
+
+
+def test_two_different_pictures_still_get_their_own_drawings(tmp_path):
+    """The suffix is kept for what it was for: two genuinely different
+    pictures that happen to describe themselves the same way. Collapsing those
+    would silently throw one of them away."""
+    a = m.adopt(_flat_drawing(tmp_path / "one-aaa.png"), tmp_path,
+                description="a carved pumpkin")
+    b = m.adopt(_cutout(tmp_path / "two-bbb.png"), tmp_path,
+                description="a carved pumpkin")
+
+    assert a.library_id != b.library_id
+    assert len(list(tmp_path.glob("*.svg"))) == 2
+
+
+def test_a_drawing_with_no_record_of_its_source_is_not_overwritten(tmp_path):
+    """A motif drawn by hand and dropped in the library has no `traced_from`.
+    Tracing something that describes itself the same way must not land on top
+    of it."""
+    by_hand = tmp_path / "a-carved-pumpkin.svg"
+    by_hand.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" '
+                       'data-kind="seasonal"><title>Mine</title>'
+                       '<path fill="#000" d="M0 0L10 0L10 10Z"/></svg>\n')
+
+    m.adopt(_flat_drawing(tmp_path / "p.png"), tmp_path, description="a carved pumpkin")
+
+    assert "Mine" in by_hand.read_text(), "it overwrote a hand-drawn motif"
+    assert len(list(tmp_path.glob("*.svg"))) == 2

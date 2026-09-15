@@ -750,8 +750,21 @@ def adopt(picture: Path, motifs_dir: Path, *, kind: str = "icon",
     said = (description or name or picture.stem).strip()
     stem = slug_for(said) or picture.stem
     out = motifs_dir / f"{stem}.svg"
+
+    # Re-tracing the same picture replaces its drawing rather than adding a
+    # second one. Running `motifs trace` twice used to leave the library with
+    # `pumpkin.svg` and `pumpkin-02.svg` traced from the identical PNG — the
+    # matcher then has two answers to every question about a pumpkin, and one
+    # of them is from an older, worse trace. The owner hit this the first time
+    # they re-ran it after a fix.
+    #
+    # The suffix stays for the case it was meant for: two DIFFERENT pictures
+    # that happen to describe themselves the same way.
     n = 2
     while out.exists():
+        if _traced_from(out) == picture.name:
+            log.info("replacing %s — same picture, traced again", out.name)
+            break
         out = motifs_dir / f"{stem}-{n:02d}.svg"
         n += 1
 
@@ -762,6 +775,16 @@ def adopt(picture: Path, motifs_dir: Path, *, kind: str = "icon",
               provenance=record)
     _cache.pop(motifs_dir, None)          # the library changed under us
     return read(out)
+
+
+def _traced_from(svg: Path) -> str:
+    """Which picture this drawing was traced from, if it says so."""
+    try:
+        body = svg.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    found = re.search(r'"traced_from":\s*"([^"]+)"', body)
+    return found.group(1) if found else ""
 
 
 def slug_for(said: str) -> str:
